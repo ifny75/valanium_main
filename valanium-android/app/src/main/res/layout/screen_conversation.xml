@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/screen_conversation"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:visibility="gone">
+
+    <LinearLayout style="@style/Valanium.TopBar" android:layout_height="54dp">
+        <Button android:id="@+id/chat_back" style="@style/Valanium.Button.IconDark" android:contentDescription="@string/back" android:text="@string/back" />
+        <TextView android:id="@+id/peer_avatar" android:layout_width="38dp" android:layout_height="38dp" android:layout_marginStart="6dp" android:background="@drawable/input_glass" android:gravity="center" android:textColor="@color/valanium_white" android:textSize="13sp" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/peer_name" style="@style/Valanium.ConversationTitle" />
+            <TextView android:id="@+id/peer_state" style="@style/Valanium.Micro" android:layout_marginTop="2dp" android:text="@string/secure_chat" />
+        </LinearLayout>
+        <Button android:id="@+id/verify_peer" style="@style/Valanium.Button.IconDark" android:contentDescription="@string/verify_peer" android:text="◎" />
+    </LinearLayout>
+
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <ListView
+            android:id="@+id/messages_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:divider="@null"
+            android:listSelector="@android:color/transparent"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:scrollbars="none"
+            android:stackFromBottom="true"
+            android:transcriptMode="normal" />
+        <Button android:id="@+id/scroll_to_bottom" style="@style/Valanium.Button.IconCircle" android:layout_width="46dp" android:layout_height="46dp" android:layout_gravity="end|bottom" android:layout_marginEnd="8dp" android:layout_marginBottom="12dp" android:contentDescription="@string/scroll_to_new" android:elevation="10dp" android:text="↓" android:textSize="22sp" android:visibility="gone" />
+    </FrameLayout>
+
+    <TextView style="@style/Valanium.Micro" android:gravity="center" android:text="@string/e2e_note" android:visibility="gone" />
+
+    <LinearLayout android:id="@+id/recording_bar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="8dp" android:background="@drawable/recording_pill" android:gravity="center_vertical" android:orientation="horizontal" android:paddingStart="16dp" android:paddingTop="6dp" android:paddingEnd="6dp" android:paddingBottom="6dp" android:visibility="gone">
+        <View android:id="@+id/recording_dot" android:layout_width="9dp" android:layout_height="9dp" android:background="@drawable/recording_dot" />
+        <TextView android:id="@+id/recording_time" style="@style/Valanium.Device" android:layout_width="0dp" android:layout_weight="1" android:layout_marginStart="10dp" android:text="0:00" />
+        <Button android:id="@+id/recording_cancel" style="@style/Valanium.Button.Dark.Small" android:minWidth="0dp" android:text="@string/voice_cancel" />
+        <Button android:id="@+id/recording_stop" style="@style/Valanium.Button.Dark.Small" android:layout_marginStart="6dp" android:minWidth="0dp" android:text="@string/voice_send" />
+    </LinearLayout>
+
+    <LinearLayout android:id="@+id/reply_bar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="6dp" android:background="@drawable/card_flat" android:gravity="center_vertical" android:orientation="horizontal" android:padding="9dp" android:visibility="gone">
+        <TextView android:id="@+id/reply_text" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:ellipsize="end" android:maxLines="1" android:textColor="@color/valanium_muted" android:textSize="11sp" />
+        <Button android:id="@+id/reply_cancel" style="@style/Valanium.Segment" android:layout_marginStart="8dp" android:text="@string/cancel" />
+    </LinearLayout>
+
+    <LinearLayout android:id="@+id/composer_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/composer_pill" android:gravity="center_vertical" android:orientation="horizontal" android:padding="4dp">
+        <Button android:id="@+id/attach_photo" style="@style/Valanium.Button.IconCircle" android:text="＋" />
+        <EditText android:id="@+id/composer" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:autofillHints="" android:background="@null" android:hint="@string/message" android:inputType="textMultiLine|textCapSentences" android:maxLines="4" android:minHeight="46dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:textColor="@color/valanium_white" android:textColorHint="@color/valanium_dim" android:textSize="15sp" />
+        <ImageButton android:id="@+id/record_voice" style="@style/Valanium.Icon.Composer" android:contentDescription="@string/voice_record" android:src="@drawable/ic_mic" />
+        <Button android:id="@+id/send" style="@style/Valanium.Button.Round" android:layout_marginStart="4dp" android:text="@string/send" />
+    </LinearLayout>
+</LinearLayout>
