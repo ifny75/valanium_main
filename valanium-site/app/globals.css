@@ -585,12 +585,30 @@ h1, h2, h3 { text-wrap: balance; }
 /* Блик по верхней грани: у стекла всегда есть подсвеченный край. */
 .glass::before { content: ''; position: absolute; inset: 0 0 auto; height: 1px; background: linear-gradient(90deg, transparent 6%, rgba(255,255,255,.3) 40%, rgba(255,255,255,.1) 64%, transparent 94%); background-size: 180% 100%; animation: glass-sheen 11s ease-in-out infinite; }
 .glass-inner { position: relative; z-index: 1; padding: clamp(46px, 5.4vw, 84px) clamp(22px, 5vw, 70px) clamp(28px, 3.2vw, 44px); text-align: center; }
-.stage-signal-field { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; }
-.stage-signal-field i { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #d29aff; box-shadow: 0 0 13px 2px rgba(169,85,247,.3); opacity: 0; animation: stage-signal-rise 9s linear infinite; }
-.stage-signal-field i:nth-child(1) { left: 13%; bottom: 16%; animation-delay: -1.2s; }
-.stage-signal-field i:nth-child(2) { left: 34%; bottom: 4%; animation-delay: -4.8s; }
-.stage-signal-field i:nth-child(3) { left: 70%; bottom: 11%; animation-delay: -3.1s; }
-.stage-signal-field i:nth-child(4) { left: 88%; bottom: 21%; animation-delay: -6.2s; }
+/*
+  Сигналы, уходящие вверх по краям панели.
+
+  Раньше это были четыре одиночные точки, разбросанные по всей ширине. Точка
+  без следа и без соседей не читается как эффект — она читается как пыль на
+  экране или битый пиксель, и две из них вдобавок всплывали прямо под
+  заголовком.
+
+  Теперь у каждой есть хвост, и они собраны в два столбца по краям: середина,
+  где стоит текст, остаётся чистой. Маска гасит их у верхней и нижней кромки,
+  чтобы искры не рождались и не обрывались на видимой границе стекла.
+*/
+.stage-signal-field { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; mask-image: linear-gradient(to top, transparent, #000 14%, #000 64%, transparent 88%); -webkit-mask-image: linear-gradient(to top, transparent, #000 14%, #000 64%, transparent 88%); }
+.stage-signal-field i { position: absolute; bottom: -8%; width: 1px; height: 32px; border-radius: 1px; background: linear-gradient(to top, transparent, rgba(203,150,255,.8)); opacity: 0; animation: stage-signal-rise 12s linear infinite; }
+/* Голова искры: без неё хвост выглядит царапиной, а не летящей точкой. */
+.stage-signal-field i::after { content: ''; position: absolute; left: 50%; top: -2px; width: 3px; height: 3px; border-radius: 50%; background: #e6ceff; box-shadow: 0 0 11px 2px rgba(178,108,255,.45); transform: translateX(-50%); }
+.stage-signal-field i:nth-child(1) { left: 5%;  --drift: 12px; animation-duration: 13s; animation-delay: -1.2s; }
+.stage-signal-field i:nth-child(2) { left: 11%; --drift: -8px; animation-duration: 10s; animation-delay: -6.4s; }
+.stage-signal-field i:nth-child(3) { left: 19%; --drift: 16px; animation-duration: 14s; animation-delay: -3.7s; }
+.stage-signal-field i:nth-child(4) { left: 27%; --drift: -6px; animation-duration: 11s; animation-delay: -8.9s; }
+.stage-signal-field i:nth-child(5) { left: 73%; --drift: 9px;  animation-duration: 12s; animation-delay: -2.5s; }
+.stage-signal-field i:nth-child(6) { left: 81%; --drift: -14px; animation-duration: 14s; animation-delay: -9.8s; }
+.stage-signal-field i:nth-child(7) { left: 89%; --drift: 7px;  animation-duration: 10s; animation-delay: -5.1s; }
+.stage-signal-field i:nth-child(8) { left: 95%; --drift: -11px; animation-duration: 13s; animation-delay: -11.3s; }
 
 /*
   Плашка состояния. Раньше узнать, какой из трёх сервисов уже работает, можно
@@ -718,7 +736,7 @@ h1, h2, h3 { text-wrap: balance; }
 
 @keyframes hero-glow-drift { to { transform: translateX(-48%) translateY(-4%) scale(1.09); opacity: .84; } }
 @keyframes glass-sheen { 0%,100% { background-position: 120% 0; } 50% { background-position: -20% 0; } }
-@keyframes stage-signal-rise { 0% { opacity: 0; transform: translate3d(0,25px,0) scale(.7); } 16%,70% { opacity: .65; } 100% { opacity: 0; transform: translate3d(24px,-260px,0) scale(1.2); } }
+@keyframes stage-signal-rise { 0% { opacity: 0; transform: translate3d(0,0,0) scaleY(.45); } 14% { opacity: .55; } 74% { opacity: .45; } 100% { opacity: 0; transform: translate3d(var(--drift,10px),-430px,0) scaleY(1.1); } }
 @keyframes network-scan { from { left: -18%; } to { left: 118%; } }
 @keyframes manifesto-drift { to { transform: translate3d(-2.5vw,-.7vw,0); color: rgba(168,85,247,.06); } }
 @keyframes route-float { 0%,100% { transform: translateY(0) rotate(-.25deg); } 50% { transform: translateY(-11px) rotate(.35deg); } }
@@ -775,6 +793,7 @@ h1, h2, h3 { text-wrap: balance; }
 }
 
 @media (max-width: 620px) {
+  .stage-signal-field i:nth-child(n+3):nth-child(-n+6) { display: none; }
   .stage-status { gap: 7px; padding: 6px 12px 6px 9px; font-size: 11px; }
   .stage-status b { font-size: 11px; }
   /* Уточнение про платформы уводим: на узком экране плашка переносится на две

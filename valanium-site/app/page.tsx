@@ -53,7 +53,7 @@ export default function Home() {
       <section className="stage shell">
         <div className="glass">
           <span className="glass-glow" aria-hidden="true" />
-          <span className="stage-signal-field" aria-hidden="true"><i /><i /><i /><i /></span>
+          <span className="stage-signal-field" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></span>
 
           <div className="glass-inner">
             {/*
