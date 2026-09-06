@@ -666,6 +666,7 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             | Command::ChannelDelete { .. }
             | Command::ChannelUpdate { .. }
             | Command::ChannelAdmin { .. }
+            | Command::RevokeDevice { .. }
             | Command::RevokeOtherDevices
             | Command::AdminAction { .. }
             | Command::RecoverySetup { .. }
@@ -2459,11 +2460,14 @@ async fn pump(
                                 // повторить просьбу человек сможет.
                                 if for_both {
                                     if let Some(device) = peer {
+                                        // На все устройства: удаление,
+                                        // доехавшее до одного, оставляет
+                                        // сообщение на остальных, и «удалить у
+                                        // обоих» оказывается неправдой.
                                         let body = crate::access::delete_request(&[id.clone()]);
-                                        let waiting = PendingSend { device, body, stored: true };
-                                        if let Err(err) = deliver(
-                                            &mut socket, store, mls, sink, &mut pending, waiting,
-                                            &mut live.outbox,
+                                        if let Err(err) = deliver_to_person(
+                                            &mut socket, store, mls, sink, &mut pending,
+                                            device, body, true, &mut live.outbox,
                                         ).await {
                                             if is_transport(&err) {
                                                 return Ok(Outcome::Retry);
@@ -2484,12 +2488,11 @@ async fn pump(
                                 // исправлено, а повторить человек сможет.
                                 if for_both {
                                     if let Some(device) = peer {
+                                        // Как и удаление — на все устройства.
                                         let request = crate::access::edit_request(&id, &body);
-                                        let waiting =
-                                            PendingSend { device, body: request, stored: true };
-                                        if let Err(err) = deliver(
-                                            &mut socket, store, mls, sink, &mut pending, waiting,
-                                            &mut live.outbox,
+                                        if let Err(err) = deliver_to_person(
+                                            &mut socket, store, mls, sink, &mut pending,
+                                            device, request, true, &mut live.outbox,
                                         ).await {
                                             if is_transport(&err) {
                                                 return Ok(Outcome::Retry);
@@ -2819,6 +2822,29 @@ async fn pump(
                     Command::ChannelAdmin { channel, who, admin } => {
                         send(&mut socket, proto::channel_frame(op::CHANNEL_ADMIN,
                             &serde_json::json!({ "channel": channel, "who": who, "admin": admin }))?).await?;
+                    }
+                    Command::RevokeDevice { device } => {
+                        // Своё текущее сервер откажется отзывать, и правильно
+                        // сделает. Проверять это ещё и здесь незачем: два
+                        // места, решающих одно, расходятся, и расходится
+                        // обычно то, что снаружи.
+                        let credentials = match store.load_credentials() {
+                            Ok(credentials) => credentials,
+                            Err(err) => { fail(sink, "no_identity", &err.to_string()); continue; }
+                        };
+                        let Ok(target) = hex::decode(&device) else {
+                            fail(sink, "bad_device", "device must be hex");
+                            continue;
+                        };
+                        let message = crate::keys::revoke_device_message(
+                            &credentials.identity_pub(), &target,
+                        );
+                        let signature = credentials.identity.sign(&message);
+                        send(&mut socket, proto::json_frame(op::DEVICE_REVOKE,
+                            &serde_json::json!({
+                                "device": device,
+                                "signature": hex::encode(signature),
+                            }))?).await?;
                     }
                     Command::RevokeOtherDevices => {
                         let credentials = match store.load_credentials() {
@@ -3507,6 +3533,84 @@ async fn on_key_package(
     encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
 }
 
+/// Все устройства человека, которому адресовано сообщение.
+///
+/// Названное устройство остаётся в списке всегда — даже если о личности мы
+/// ничего не знаем: тогда список из него одного, и отправка ведёт себя ровно
+/// как прежде.
+///
+/// Порядок не случайный: сначала те, с кем беседа уже заведена. Своя копия
+/// сообщения ложится в базу первой отправкой, а заведение новой беседы —
+/// это поход за KeyPackage и ответ отдельным кадром. Поставь мы такое
+/// устройство первым, копия ждала бы ответа сервера, и при отказе человек
+/// увидел бы, что его сообщение исчезло.
+fn recipients(store: &Store, device: &[u8; KEY_LEN]) -> Vec<[u8; KEY_LEN]> {
+    let Ok(Some(identity)) = store.identity_of_device(device) else {
+        return vec![*device];
+    };
+    let known: std::collections::BTreeMap<String, Vec<String>> = store
+        .load_setting(PEER_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    let Some(list) = known.get(&hex::encode(device)) else {
+        return vec![*device];
+    };
+
+    let mut devices: Vec<[u8; KEY_LEN]> = Vec::new();
+    for entry in list {
+        let Ok(raw) = hex::decode(entry) else { continue };
+        let Ok(key): std::result::Result<[u8; KEY_LEN], _> = raw.clone().try_into() else {
+            continue;
+        };
+        // Список хранится под каждым устройством человека, но принадлежать он
+        // мог другому: сверяем личность, а не верим ключу настройки.
+        if store.identity_of_device(&raw).ok().flatten().as_deref() != Some(&identity) {
+            continue;
+        }
+        devices.push(key);
+    }
+    if !devices.contains(device) {
+        devices.push(*device);
+    }
+    devices.sort_by_key(|entry| {
+        matches!(store.conversation_with(entry), Ok(None) | Err(_))
+    });
+    devices
+}
+
+/// Отправка человеку, а не устройству.
+///
+/// Одно сообщение — по конверту на каждое его устройство. Иначе оно уходит
+/// только туда, где человек был активнее, и до телефона, лежащего в кармане,
+/// не доезжает никогда: выглядит это не как потеря, а как «ему не пришло».
+///
+/// Своя копия в базу ложится **один раз** — с первой отправки. Остальные
+/// помечены как уже сохранённые, иначе одно написанное сообщение появилось бы
+/// в собственной переписке столько раз, сколько у собеседника устройств.
+#[allow(clippy::too_many_arguments)]
+async fn deliver_to_person(
+    socket: &mut Socket,
+    store: &Store,
+    mls: &mut Mls,
+    sink: &EventSink,
+    pending: &mut HashMap<[u8; ID_LEN], Claim>,
+    device: [u8; KEY_LEN],
+    body: String,
+    stored: bool,
+    outbox: &mut Outbox,
+) -> Result<()> {
+    let devices = recipients(store, &device);
+    let mut saved = stored;
+    for target in devices {
+        let waiting = PendingSend { device: target, body: body.clone(), stored: saved };
+        deliver(socket, store, mls, sink, pending, waiting, outbox).await?;
+        saved = true;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn on_send(
     socket: &mut Socket,
@@ -3521,7 +3625,7 @@ async fn on_send(
     let device = hex::decode(recipient_device).map_err(|_| CoreError::BadFrame)?;
     let device: [u8; KEY_LEN] = device.try_into().map_err(|_| CoreError::BadKeyLength)?;
 
-    deliver(socket, store, mls, sink, pending, PendingSend { device, body, stored: false }, outbox).await
+    deliver_to_person(socket, store, mls, sink, pending, device, body, false, outbox).await
 }
 
 /// Общий путь для новой отправки и для досылки из ящика.
@@ -3921,5 +4025,82 @@ mod tests {
             ensure_pin_allows(&store.0, &"bb".repeat(32)),
             Err(CoreError::Encoding(_))
         ));
+    }
+
+    // --- веер по устройствам --------------------------------------------------
+
+    #[test]
+    fn an_unknown_person_is_still_one_recipient() {
+        // Пока о личности собеседника ничего не известно, отправка обязана
+        // вести себя ровно как прежде: одно устройство, один конверт. Иначе
+        // первое же сообщение незнакомцу уходило бы в никуда.
+        let temp = TempStore::new("fanout-unknown");
+        let device = [1u8; KEY_LEN];
+        assert_eq!(recipients(&temp.0, &device), vec![device]);
+    }
+
+    #[test]
+    fn every_device_of_a_person_gets_a_copy() {
+        /*
+          То, ради чего весь этап. Сообщение, ушедшее на одно устройство, до
+          телефона, лежащего в кармане, не доезжает никогда — и выглядит это не
+          как потеря, а как «ему не пришло».
+        */
+        let temp = TempStore::new("fanout-all");
+        let store = &temp.0;
+        let identity = [9u8; KEY_LEN];
+        let phone = [1u8; KEY_LEN];
+        let laptop = [2u8; KEY_LEN];
+        store.remember_peer_identity(&identity, &[phone, laptop]).unwrap();
+        remember_peer_devices(store, &[phone, laptop]);
+
+        let mut got = recipients(store, &phone);
+        got.sort();
+        assert_eq!(got, vec![phone, laptop]);
+        // С какого бы устройства человек ни написал, отвечаем на все.
+        let mut back = recipients(store, &laptop);
+        back.sort();
+        assert_eq!(back, vec![phone, laptop]);
+    }
+
+    #[test]
+    fn devices_with_a_conversation_come_first() {
+        /*
+          Своя копия сообщения ложится в базу первой отправкой. Заведение новой
+          беседы — это поход за KeyPackage и ответ отдельным кадром; поставь мы
+          такое устройство первым, копия ждала бы ответа сервера, а при отказе
+          человек увидел бы, что его сообщение исчезло.
+        */
+        let temp = TempStore::new("fanout-order");
+        let store = &temp.0;
+        let identity = [9u8; KEY_LEN];
+        let fresh = [1u8; KEY_LEN];
+        let known = [2u8; KEY_LEN];
+        store.remember_peer_identity(&identity, &[fresh, known]).unwrap();
+        remember_peer_devices(store, &[fresh, known]);
+        store.set_conversation(&known, b"group").unwrap();
+
+        assert_eq!(recipients(store, &fresh).first(), Some(&known),
+            "первым обязано идти устройство с уже заведённой беседой");
+    }
+
+    #[test]
+    fn a_list_belonging_to_someone_else_is_ignored() {
+        /*
+          Список лежит под каждым устройством человека, но принадлежать он мог
+          другому. Личность сверяется отдельно, а не берётся на веру из ключа
+          настройки: иначе чужое устройство получало бы копии переписки — и это
+          ровно тот исход, ради недопущения которого объявления и подписываются.
+        */
+        let temp = TempStore::new("fanout-foreign");
+        let store = &temp.0;
+        let mine = [1u8; KEY_LEN];
+        let stranger = [2u8; KEY_LEN];
+        // Список говорит, что это одна личность, а записи о личностях — нет.
+        remember_peer_devices(store, &[mine, stranger]);
+        store.remember_peer_identity(&[9u8; KEY_LEN], &[mine]).unwrap();
+        store.remember_peer_identity(&[8u8; KEY_LEN], &[stranger]).unwrap();
+
+        assert_eq!(recipients(store, &mine), vec![mine], "чужое устройство просочилось");
     }
 }

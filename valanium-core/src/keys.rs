@@ -18,6 +18,7 @@ const DOMAIN_DEVICE: &[u8] = b"valanium-device-v1";
 /// `sign(device_priv, "valanium-auth-v1" || nonce || identity_pub || device_pub)`
 const DOMAIN_AUTH: &[u8] = b"valanium-auth-v1";
 const DOMAIN_REVOKE_OTHERS: &[u8] = b"valanium-device-revoke-others-v1";
+const DOMAIN_REVOKE_ONE: &[u8] = b"valanium-device-revoke-v1";
 
 /// Приватный ключ. Зануляется при уничтожении и никогда не сериализуется.
 #[derive(ZeroizeOnDrop)]
@@ -73,6 +74,19 @@ pub fn revoke_other_devices_message(identity_pub: &[u8], keep_device_pub: &[u8])
     out.extend_from_slice(DOMAIN_REVOKE_OTHERS);
     out.extend_from_slice(identity_pub);
     out.extend_from_slice(keep_device_pub);
+    out
+}
+
+/// Отзыв одного устройства. Домен свой, и это не формальность.
+///
+/// Совпади он с доменом «выйти на всех прочих», подпись, снятая для «отозвать
+/// вон то устройство», сгодилась бы для «отозвать все, кроме вон того»: просьба
+/// убрать один старый телефон превратилась бы в выход отовсюду.
+pub fn revoke_device_message(identity_pub: &[u8], device_pub: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(DOMAIN_REVOKE_ONE.len() + identity_pub.len() + device_pub.len());
+    out.extend_from_slice(DOMAIN_REVOKE_ONE);
+    out.extend_from_slice(identity_pub);
+    out.extend_from_slice(device_pub);
     out
 }
 
@@ -277,5 +291,41 @@ mod tests {
         let fp = fingerprint(&[0u8; 32]);
         assert_eq!(fp, fingerprint(&[0u8; 32]));
         assert_eq!(fp.split(' ').count(), 5);
+    }
+
+    #[test]
+    fn revoking_one_device_and_revoking_the_rest_are_different_messages() {
+        /*
+          Домены обязаны расходиться. Совпади они, подпись, снятая для «отозвать
+          вон то устройство», сгодилась бы для «отозвать все, кроме вон того»:
+          перехваченная просьба убрать один старый телефон превратилась бы в
+          выход отовсюду, то есть в захват аккаунта чужими руками.
+        */
+        let creds = Credentials::generate();
+        let identity = creds.identity_pub();
+        let device = creds.device_pub();
+
+        assert_ne!(
+            revoke_device_message(&identity, &device),
+            revoke_other_devices_message(&identity, &device),
+            "две разные просьбы подписываются одним и тем же",
+        );
+
+        // И подпись одной из них не проверяется как другая.
+        let signature = creds.identity.sign(&revoke_device_message(&identity, &device));
+        assert!(verify(&signature, &revoke_device_message(&identity, &device), &identity));
+        assert!(!verify(&signature, &revoke_other_devices_message(&identity, &device), &identity));
+    }
+
+    #[test]
+    fn a_revocation_of_one_device_does_not_verify_for_another() {
+        // Подпись считается по паре (личность, устройство): переставить её на
+        // соседнее устройство не выйдет.
+        let creds = Credentials::generate();
+        let identity = creds.identity_pub();
+        let other = Credentials::generate().device_pub();
+        let signature = creds.identity.sign(&revoke_device_message(&identity, &creds.device_pub()));
+
+        assert!(!verify(&signature, &revoke_device_message(&identity, &other), &identity));
     }
 }

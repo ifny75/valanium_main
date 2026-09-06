@@ -25,7 +25,12 @@ import { NonceStore } from "../src/auth/nonce.ts";
 import { Registry, type Socket } from "../src/ws/registry.ts";
 import { RateLimiter } from "../src/util/ratelimit.ts";
 import { ConnectionCounter } from "../src/util/connections.ts";
-import { authMessage, deviceCertMessage, verify } from "../src/auth/verify.ts";
+import {
+  authMessage,
+  deviceCertMessage,
+  revokeDeviceMessage,
+  verify,
+} from "../src/auth/verify.ts";
 import { handleMessage, handleOpen, newConnData, type Deps } from "../src/ws/session.ts";
 import { OP, jsonFrame } from "../src/proto/frames.ts";
 import { ascii, fromHex, random, toHex } from "../src/util/bytes.ts";
@@ -191,5 +196,98 @@ test("отозванное устройство в свой же список н
   handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_LIST, {}));
   const left = phone.sock.json(OP.DEVICE_OK);
   assert.equal(left.devices.length, 1, "отозванное осталось в списке");
+  store.close();
+});
+
+test("отзывается ровно то устройство, которое назвали", () => {
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const alice = keys();
+  const laptop = second(alice);
+
+  login(deps, store, alice, "alice");
+  const phone = login(deps, store, laptop, "alice");
+  handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_LIST, {}));
+  assert.equal(phone.sock.json(OP.DEVICE_OK).devices.length, 2);
+  phone.sock.clear();
+
+  handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_REVOKE, {
+    device: toHex(alice.devPub),
+    signature: toHex(ed25519.sign(revokeDeviceMessage(alice.idPub, alice.devPub), alice.idPriv)),
+  }));
+  assert.equal(phone.sock.json(OP.DEVICE_OK).revoked, 1);
+  phone.sock.clear();
+
+  handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_LIST, {}));
+  const left = phone.sock.json(OP.DEVICE_OK).devices;
+  assert.equal(left.length, 1, "остаться должно то, откуда отзывали");
+  assert.equal(left[0].device, toHex(laptop.devPub));
+  store.close();
+});
+
+test("своё текущее устройство отозвать нельзя", () => {
+  /*
+    Не вежливость, а работоспособность. Отозвав то, на котором сидишь,
+    человек в ту же секунду теряет и список, и возможность отозвать что-либо
+    ещё — выглядит это как «приложение сломалось», а не как выход.
+  */
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const alice = keys();
+  const phone = login(deps, store, alice, "alice");
+
+  handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_REVOKE, {
+    device: toHex(alice.devPub),
+    signature: toHex(ed25519.sign(revokeDeviceMessage(alice.idPub, alice.devPub), alice.idPriv)),
+  }));
+  assert.ok(phone.sock.has(OP.ERROR), "отзыв себя обязан быть отказан");
+  assert.equal(store.listDevices(alice.idPub).length, 1, "устройство осталось на месте");
+  store.close();
+});
+
+test("ключа устройства для отзыва недостаточно", () => {
+  /*
+    Устройство, отзывающее соседей, — это в точности то, чем занят укравший
+    одно из них. Поэтому подписывает ключ личности, а он на украденном
+    телефоне не лежит в доступном виде.
+  */
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const alice = keys();
+  const laptop = second(alice);
+
+  login(deps, store, alice, "alice");
+  const phone = login(deps, store, laptop, "alice");
+
+  handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_REVOKE, {
+    device: toHex(alice.devPub),
+    // Подписано ключом устройства, а не личности.
+    signature: toHex(ed25519.sign(revokeDeviceMessage(alice.idPub, alice.devPub), laptop.devPriv)),
+  }));
+  assert.ok(phone.sock.has(OP.ERROR), "подпись устройства не должна проходить");
+  assert.equal(store.listDevices(alice.idPub).length, 2, "оба устройства на месте");
+  store.close();
+});
+
+test("подпись отзыва одного не годится для отзыва всех", () => {
+  /*
+    Домены подписи разные именно поэтому. Совпади они, перехваченная просьба
+    убрать один старый телефон превратилась бы в «выйти отовсюду, кроме
+    моего» — то есть в захват аккаунта чужими руками.
+  */
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const alice = keys();
+  const laptop = second(alice);
+
+  login(deps, store, alice, "alice");
+  const phone = login(deps, store, laptop, "alice");
+
+  handleMessage(deps, phone.sock, phone.conn, jsonFrame(OP.DEVICE_REVOKE_OTHERS, {
+    // Подпись настоящая, но снята для отзыва одного устройства.
+    signature: toHex(ed25519.sign(revokeDeviceMessage(alice.idPub, laptop.devPub), alice.idPriv)),
+  }));
+  assert.ok(phone.sock.has(OP.ERROR), "подпись из другого домена не должна проходить");
+  assert.equal(store.listDevices(alice.idPub).length, 2, "оба устройства на месте");
   store.close();
 });

@@ -71,6 +71,8 @@ pub mod op {
     pub const DEVICE_REVOKE_OTHERS: u8 = 0x3e;
     /// Свои собственные устройства: личность сервер берёт из сессии.
     pub const DEVICE_LIST: u8 = 0x42;
+    /// Отозвать одно выбранное устройство; тело подписывает identity-ключ.
+    pub const DEVICE_REVOKE: u8 = 0x44;
     pub const SUPPORT_GET: u8 = 0x41;
     pub const SUPPORT_MARK: u8 = 0x43;
 }

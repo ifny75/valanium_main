@@ -362,6 +362,42 @@ export class Store {
     });
   }
 
+  /**
+   * Отзыв одного выбранного устройства.
+   *
+   * Отдельно от `revokeOtherDevices` не ради удобства: то — аварийное «выйти
+   * везде, кроме этого», применяемое, когда телефон потерян и разбираться
+   * некогда. Обычное управление сессиями выглядит иначе: человек видит список
+   * и убирает из него одну строку.
+   *
+   * Своё текущее устройство отозвать нельзя. Не из вежливости: отозвав его,
+   * человек в ту же секунду теряет и сам список, и возможность отозвать
+   * что-либо ещё — а выглядит это как «приложение сломалось». Выход из
+   * приложения — отдельное действие, и делается оно не здесь.
+   *
+   * Возвращает, нашлось ли что отзывать. `false` — устройство уже отозвано
+   * либо принадлежит не этой личности; различать их наружу не надо, ответ
+   * человеку в обоих случаях один.
+   */
+  revokeDevice(identity: Bytes, devicePub: Bytes, now: number): boolean {
+    return this.#tx(() => {
+      const found = this.#db
+        .prepare("SELECT 1 FROM devices WHERE identity = ? AND device_pub = ? AND revoked_at IS NULL")
+        .get(identity, devicePub);
+      if (!found) return false;
+
+      // Очереди и ключевые пакеты уходят вместе с устройством: конверт,
+      // лежащий для отозванного, ему уже не отдадут, а ключевой пакет иначе
+      // позволил бы завести с ним беседу заново.
+      this.#db.prepare("DELETE FROM envelopes WHERE recipient_device = ?").run(devicePub);
+      this.#db.prepare("DELETE FROM key_packages WHERE device_pub = ?").run(devicePub);
+      this.#db
+        .prepare("UPDATE devices SET revoked_at = ? WHERE identity = ? AND device_pub = ?")
+        .run(now, identity, devicePub);
+      return true;
+    });
+  }
+
   resolveHandle(handle: string): Bytes | undefined {
     const row = this.#db.prepare("SELECT identity FROM users WHERE handle = ?").get(handle) as
       | { identity: Bytes }

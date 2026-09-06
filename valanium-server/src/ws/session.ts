@@ -4,7 +4,8 @@ import { log } from "../log.ts";
 import type { Store } from "../db/index.ts";
 import type { SupportStore } from "../support/store.ts";
 import type { NonceStore } from "../auth/nonce.ts";
-import { authMessage, deviceCertMessage, revokeOtherDevicesMessage, verify } from "../auth/verify.ts";
+import { authMessage, deviceCertMessage, revokeDeviceMessage,
+  revokeOtherDevicesMessage, verify } from "../auth/verify.ts";
 import type { RateLimiter } from "../util/ratelimit.ts";
 import { decodeBase32, verify as verifyTotp } from "../auth/totp.ts";
 import type { ConnectionCounter } from "../util/connections.ts";
@@ -300,6 +301,10 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
       case OP.DEVICE_LIST:
         requireAuth(conn);
         onDeviceList(deps, sock, conn);
+        return;
+      case OP.DEVICE_REVOKE:
+        requireAuth(conn);
+        onDeviceRevoke(deps, sock, conn, body);
         return;
       case OP.DEVICE_REVOKE_OTHERS:
         requireAuth(conn);
@@ -963,6 +968,40 @@ function onDeviceRevokeOthers(deps: Deps, sock: Socket, conn: ConnData, body: Ui
   а дальше пересылает проверенный список собеседникам по шифрованному каналу,
   где сервер уже ничего не решает.
 */
+/*
+  Отзыв одного выбранного устройства.
+
+  Отдельно от «выйти на всех прочих» потому, что это разные действия. То —
+  аварийное: телефон потерян, разбираться некогда, убрать всё. Это —
+  обычное управление сессиями: человек видит список и убирает одну строку.
+  Одним «выйти везде» второе не заменяется, иначе за отключение старого
+  ноутбука человек платит перезаходом со всех устройств сразу.
+
+  Подпись ставит ключ **личности**, и домен у неё свой. Ключа устройства
+  недостаточно: устройство, отзывающее соседей, — это ровно то, чем занят
+  укравший одно из них.
+*/
+function onDeviceRevoke(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): void {
+  const payload = parseJsonBody(body) as { device?: unknown; signature?: unknown };
+  const devicePub = fromHex(payload?.device, KEY_LEN);
+  const signature = fromHex(payload?.signature, SIG_LEN);
+
+  if (!verify(signature, revokeDeviceMessage(conn.identity!, devicePub), conn.identity!)) {
+    sock.send(errorFrame("bad_signature", "identity signature rejected"), true);
+    return;
+  }
+  // Своё текущее — нет. Отозвав его, человек в ту же секунду теряет и список,
+  // и возможность отозвать что-либо ещё, а выглядит это как поломка.
+  if (toHex(devicePub) === toHex(conn.devicePub!)) {
+    sock.send(errorFrame("bad_device", "cannot revoke the current device"), true);
+    return;
+  }
+
+  const revoked = deps.store.revokeDevice(conn.identity!, devicePub, deps.now());
+  if (revoked) deps.registry.disconnect(toHex(devicePub));
+  sock.send(jsonFrame(OP.DEVICE_OK, { revoked: revoked ? 1 : 0 }), true);
+}
+
 function onDeviceList(deps: Deps, sock: Socket, conn: ConnData): void {
   const devices = deps.store.listDevices(conn.identity!);
   sock.send(jsonFrame(OP.DEVICE_OK, {
