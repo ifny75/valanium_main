@@ -1,9 +1,19 @@
 :root {
-  --bg: #050505;
+  /*
+    Нейтральные тона здесь не серые, а чуть уведённые в фиолетовый. Чистый
+    серый рядом с фиолетовым акцентом читается как несогласованный: глаз
+    замечает, что фон и акцент из разных наборов. Сдвиг небольшой — цветным
+    фон не выглядит, но перестаёт выглядеть случайным.
+  */
+  --bg: #06050a;
   --panel: #111111;
   --text: #f7f7f7;
   --line: #343438;
   --violet: #7c00ff;
+  --ink: #f3f1f8;
+  --muted: #9c95ab;
+  --muted-dim: #7b7489;
+  --hairline: rgba(176,150,255,.14);
   --shell: min(1360px, calc(100% - 96px));
 }
 
@@ -532,58 +542,89 @@ h1, h2, h3 { text-wrap: balance; }
 .feature-icon-line { color: rgb(var(--feature-accent)); }
 .feature-icon-line svg { width: 24px; height: 24px; }
 
-/* --- стеклянная панель первого экрана -------------------------------------- */
+/* --- первый экран ----------------------------------------------------------
 
-.stage { padding-block: 96px 40px; }
-/*
-  Жидкое стекло: полупрозрачный слой, размывающий то, что под ним, плюс
-  собственный градиент и светлая грань сверху. Свечение лежит ПОД стеклом —
-  именно его размытие и делает эффект стеклом, а не просто прозрачностью.
+   Панель, а не полотно: тёмная страница во всю ширину не имеет краёв, и глазу
+   не за что зацепиться.
+
+   Свет один и он сбоку. Прежняя версия заливала панель фиолетовым ровно и
+   целиком, а поверх этой заливки фиолетовым же был набран заголовок. Акцент,
+   которым покрашено всё, акцентом быть перестаёт, и заголовок вдобавок терял
+   контраст с собственным фоном. Теперь ground спокойный, источник света
+   смещён к нижнему левому углу, а насыщенный цвет остался ровно на двух
+   вещах: кнопке действия и точке состояния.
 */
+
+.stage { padding-block: 92px 30px; }
 .glass {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 40px;
-  background: linear-gradient(180deg, rgba(20,20,24,.72) 0%, rgba(46,10,74,.55) 62%, rgba(96,24,150,.42) 100%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 40px 120px rgba(0,0,0,.55);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid var(--hairline);
+  border-radius: 36px;
+  background:
+    radial-gradient(108% 96% at 10% 110%, rgba(112,34,192,.26), transparent 58%),
+    linear-gradient(172deg, rgba(23,20,31,.88), rgba(11,10,17,.94));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 44px 130px rgba(0,0,0,.6);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
 }
 /* Источник света под стеклом. Без него размывать нечего. */
-.glass-glow { position: absolute; z-index: 0; left: 50%; bottom: -28%; width: 78%; height: 72%; border-radius: 50%; background: radial-gradient(circle, rgba(150,40,255,.55), rgba(96,0,190,.22) 55%, transparent 72%); filter: blur(90px); transform: translateX(-50%); pointer-events: none; animation: hero-glow-drift 9s ease-in-out infinite alternate; }
+.glass-glow { position: absolute; z-index: 0; left: 22%; bottom: -30%; width: 54%; height: 64%; border-radius: 50%; background: radial-gradient(circle, rgba(146,58,240,.30), rgba(86,18,164,.11) 54%, transparent 72%); filter: blur(104px); transform: translateX(-50%); pointer-events: none; animation: hero-glow-drift 11s ease-in-out infinite alternate; }
 /* Блик по верхней грани: у стекла всегда есть подсвеченный край. */
-.glass::before { content: ''; position: absolute; inset: 0 0 auto; height: 1px; background: linear-gradient(90deg, transparent 5%, rgba(255,255,255,.38) 42%, rgba(255,255,255,.16) 62%, transparent 95%); background-size: 180% 100%; animation: glass-sheen 7s ease-in-out infinite; }
-.glass-inner { position: relative; z-index: 1; padding: clamp(56px, 7vw, 108px) clamp(24px, 5vw, 72px) clamp(44px, 5vw, 72px); text-align: center; }
+.glass::before { content: ''; position: absolute; inset: 0 0 auto; height: 1px; background: linear-gradient(90deg, transparent 6%, rgba(255,255,255,.3) 40%, rgba(255,255,255,.1) 64%, transparent 94%); background-size: 180% 100%; animation: glass-sheen 11s ease-in-out infinite; }
+.glass-inner { position: relative; z-index: 1; padding: clamp(46px, 5.4vw, 84px) clamp(22px, 5vw, 70px) clamp(28px, 3.2vw, 44px); text-align: center; }
 .stage-signal-field { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; }
-.stage-signal-field i { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #d29aff; box-shadow: 0 0 15px 3px rgba(169,85,247,.42); opacity: 0; animation: stage-signal-rise 7s linear infinite; }
+.stage-signal-field i { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #d29aff; box-shadow: 0 0 13px 2px rgba(169,85,247,.3); opacity: 0; animation: stage-signal-rise 9s linear infinite; }
 .stage-signal-field i:nth-child(1) { left: 13%; bottom: 16%; animation-delay: -1.2s; }
 .stage-signal-field i:nth-child(2) { left: 34%; bottom: 4%; animation-delay: -4.8s; }
 .stage-signal-field i:nth-child(3) { left: 70%; bottom: 11%; animation-delay: -3.1s; }
 .stage-signal-field i:nth-child(4) { left: 88%; bottom: 21%; animation-delay: -6.2s; }
 
-.glass-inner h1 { font-size: clamp(38px, 5.4vw, 92px); line-height: .98; }
-.glass-inner h1 span { color: #a855f7; }
-.glass-inner > p { margin-top: 16px; color: #b9b9c2; font: 600 clamp(14px, 1.3vw, 21px) var(--font-unbounded), sans-serif; }
+/*
+  Плашка состояния. Раньше узнать, какой из трёх сервисов уже работает, можно
+  было только прокрутив страницу до списка: первый экран обещал «приватность»
+  и молчал о том, что за ней стоит.
+*/
+.stage-status { display: inline-flex; align-items: center; gap: 9px; padding: 7px 15px 7px 11px; border: 1px solid var(--hairline); border-radius: 999px; background: rgba(255,255,255,.04); font-size: 12px; }
+.stage-status i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #51df99; box-shadow: 0 0 12px rgba(81,223,153,.8); animation: live-pulse 2.4s ease-in-out infinite; }
+.stage-status b { color: #eeebf5; font: 600 12px var(--font-inter), Arial, sans-serif; letter-spacing: 0; }
+.stage-status em { color: var(--muted-dim); font-style: normal; }
 
-.stage-actions { margin-top: 32px; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
-.stage-button { min-height: 56px; padding: 0 34px; display: inline-flex; align-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(255,255,255,.06); font: 600 15px var(--font-unbounded), sans-serif; transition: transform .18s ease, border-color .18s ease, background-color .18s ease; }
-.stage-button:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.11); }
-.stage-button-primary { border-color: rgba(168,85,247,.5); background: linear-gradient(180deg, rgba(140,40,220,.85), rgba(96,10,170,.85)); color: #fff; }
-.stage-button-primary:hover { border-color: rgba(200,140,255,.85); background: linear-gradient(180deg, rgba(158,58,238,.95), rgba(112,18,196,.95)); }
+.glass-inner h1 { margin-top: 26px; font-size: clamp(38px, 5.2vw, 88px); line-height: .96; }
+/* Слово уводим в светлую сирень, а не в чистый акцент: насыщенный фиолетовый
+   текст на фиолетовом же фоне вибрирует и теряет читаемость. */
+.glass-inner h1 span { display: block; color: #d0b6f8; }
+/* Подзаголовок набран Inter, а не выводным Unbounded: выводная гарнитура
+   хороша в заголовке и разваливается на длине предложения. */
+.glass-inner > p { max-width: 46ch; margin: 18px auto 0; color: var(--muted); font: 450 clamp(15px, 1.15vw, 19px)/1.55 var(--font-inter), Arial, sans-serif; letter-spacing: 0; text-wrap: balance; }
 
-.stage-tiles { margin-top: clamp(48px, 6vw, 88px); display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; }
-.stage-tile { width: 128px; display: flex; flex-direction: column; align-items: center; }
+.stage-actions { margin-top: 30px; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.stage-button { min-height: 54px; padding: 0 30px; display: inline-flex; align-items: center; border: 1px solid rgba(255,255,255,.15); border-radius: 999px; background: rgba(255,255,255,.05); font: 600 14px var(--font-unbounded), sans-serif; transition: transform .18s ease, border-color .18s ease, background-color .18s ease; }
+.stage-button:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.38); background: rgba(255,255,255,.1); }
+.stage-button-primary { border-color: transparent; background: linear-gradient(180deg, #a44bf0, #7a1ad6); color: #fff; box-shadow: 0 14px 34px rgba(122,26,214,.34); }
+.stage-button-primary:hover { border-color: transparent; background: linear-gradient(180deg, #b25dfa, #8a26e8); box-shadow: 0 18px 40px rgba(138,38,232,.42); }
+
+/*
+  Три сервиса стоят на разделителе в подвале панели, а не висят в пустоте
+  посреди неё. Прежние крупные значки отделял от кнопок провал почти в сто
+  пикселей: середина панели пустовала, а низ не имел опоры.
+*/
+.stage-tiles { margin-top: clamp(38px, 4.2vw, 60px); padding-top: clamp(22px, 2.4vw, 32px); display: grid; grid-template-columns: repeat(3, minmax(0, 264px)); justify-content: center; gap: 10px; border-top: 1px solid var(--hairline); text-align: left; }
+.stage-tile { display: grid; grid-template-columns: 46px minmax(0, 1fr) 14px; align-items: center; gap: 13px; padding: 13px 15px 13px 13px; border: 1px solid transparent; border-radius: 18px; transition: transform .22s cubic-bezier(.22,1,.36,1), border-color .22s ease, background-color .22s ease; }
+.stage-tile:hover { transform: translateY(-2px); border-color: var(--hairline); background: rgba(255,255,255,.045); }
 /* Форма значка приложения: человеку не нужно объяснять, что на неё нажимают. */
-.stage-tile-icon { width: 96px; height: 96px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.13); border-radius: 26px; background: rgba(255,255,255,.07); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 16px 40px rgba(0,0,0,.4); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: transform .3s cubic-bezier(.22,1,.36,1), border-color .25s ease, box-shadow .25s ease; }
-.stage-tile-icon img { width: 52px; height: 52px; object-fit: contain; animation: tile-breathe 4.8s ease-in-out infinite; }
-.stage-tile:nth-child(2) .stage-tile-icon img { animation-delay: -1.4s; }
-.stage-tile:nth-child(3) .stage-tile-icon img { animation-delay: -2.8s; }
-.stage-tile:hover .stage-tile-icon { transform: translateY(-6px) scale(1.05); border-color: rgba(200,140,255,.6); box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 26px 56px rgba(0,0,0,.5), 0 0 48px rgba(150,40,255,.3); }
-.stage-tile b { margin-top: 14px; font-size: 14px; letter-spacing: -.04em; }
-.stage-tile small { margin-top: 2px; color: #9a9aa4; font-size: 10.5px; }
-.stage-tile.is-soon .stage-tile-icon { opacity: .6; }
-.stage-tile.is-soon:hover .stage-tile-icon { opacity: 1; }
+.stage-tile-icon { width: 46px; height: 46px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.11); border-radius: 15px; background: rgba(255,255,255,.06); box-shadow: inset 0 1px 0 rgba(255,255,255,.09); transition: border-color .22s ease, box-shadow .22s ease; }
+.stage-tile:hover .stage-tile-icon { border-color: rgba(200,140,255,.45); box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 0 30px rgba(150,40,255,.22); }
+.stage-tile-icon img { width: 26px; height: 26px; object-fit: contain; }
+.stage-tile-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.stage-tile b { font-size: 15px; letter-spacing: -.04em; }
+.stage-tile small { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-dim); font-size: 11px; }
+.stage-tile:not(.is-soon) small { color: var(--muted); }
+.stage-tile small i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: #51df99; box-shadow: 0 0 8px rgba(81,223,153,.7); }
+.stage-tile-arrow { width: 7px; height: 7px; justify-self: end; border: solid #6d6679; border-width: 2px 2px 0 0; transform: rotate(45deg); transition: transform .2s ease, border-color .2s ease; }
+.stage-tile:hover .stage-tile-arrow { border-color: #c79bff; transform: translateX(2px) rotate(45deg); }
+.stage-tile.is-soon .stage-tile-icon img { opacity: .55; transition: opacity .22s ease; }
+.stage-tile.is-soon:hover .stage-tile-icon img { opacity: 1; }
 
 /* --- публичная карта сети ------------------------------------------------- */
 .network-overview { position: relative; overflow: hidden; margin-top: 12px; padding-block: clamp(72px,6vw,104px); background: linear-gradient(180deg,transparent,rgba(91,22,145,.075) 52%,transparent); }
@@ -666,7 +707,6 @@ h1, h2, h3 { text-wrap: balance; }
 
 @keyframes hero-glow-drift { to { transform: translateX(-48%) translateY(-4%) scale(1.09); opacity: .84; } }
 @keyframes glass-sheen { 0%,100% { background-position: 120% 0; } 50% { background-position: -20% 0; } }
-@keyframes tile-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.035); } }
 @keyframes stage-signal-rise { 0% { opacity: 0; transform: translate3d(0,25px,0) scale(.7); } 16%,70% { opacity: .65; } 100% { opacity: 0; transform: translate3d(24px,-260px,0) scale(1.2); } }
 @keyframes network-scan { from { left: -18%; } to { left: 118%; } }
 @keyframes manifesto-drift { to { transform: translate3d(-2.5vw,-.7vw,0); color: rgba(168,85,247,.06); } }
@@ -716,6 +756,9 @@ h1, h2, h3 { text-wrap: balance; }
 @media (max-width: 1080px) {
   .glass { border-radius: 28px; }
   .stage { padding-block: 76px 24px; }
+  /* Три карточки в ряд ужимаются до нечитаемого раньше, чем сузится сама
+     панель: имя сервиса и его состояние встают друг на друга. */
+  .stage-tiles { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); justify-content: stretch; }
   .network-overview { padding-block: 80px; }
   .network-overview-inner { grid-template-columns: 1fr; gap: 34px; }
   .network-overview-intro p { max-width: 600px; }
@@ -728,6 +771,14 @@ h1, h2, h3 { text-wrap: balance; }
 }
 
 @media (max-width: 620px) {
+  .stage-status { gap: 7px; padding: 6px 12px 6px 9px; font-size: 11px; }
+  .stage-status b { font-size: 11px; }
+  /* Уточнение про платформы уводим: на узком экране плашка переносится на две
+     строки и перестаёт читаться как одна метка. */
+  .stage-status em { display: none; }
+  .stage-actions { gap: 10px; }
+  .stage-button { flex: 1 1 100%; justify-content: center; }
+  .stage-tiles { grid-template-columns: 1fr; gap: 4px; }
   .network-overview { padding-block: 66px; }
   .network-overview-intro h2 { font-size: 48px; }
   .network-index header { align-items: flex-start; flex-direction: column; gap: 8px; }

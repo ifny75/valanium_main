@@ -56,8 +56,20 @@ export default function Home() {
           <span className="stage-signal-field" aria-hidden="true"><i /><i /><i /><i /></span>
 
           <div className="glass-inner">
+            {/*
+              Что именно уже работает — на первом экране, а не после прокрутки.
+              Из трёх сервисов выпущен один, и человеку это нужно знать до
+              того, как он нажмёт «Скачать».
+            */}
+            <span className="stage-status">
+              <i aria-hidden="true" />
+              <b>Мессенджер работает</b>
+              <em>Windows и Android</em>
+            </span>
+
             <h1><span>Приватность</span> начинается здесь</h1>
-            <p>Шифрование, свои узлы и открытый код</p>
+            <p>Сквозное шифрование, свои узлы и открытый код. Аккаунт заводится
+              в приложении, без номера телефона.</p>
 
             <div className="stage-actions">
               <a className="stage-button stage-button-primary" href="/messenger#download">Скачать</a>
@@ -72,8 +84,14 @@ export default function Home() {
                   href={service.href}
                 >
                   <span className="stage-tile-icon"><img src={service.logo} alt="" /></span>
-                  <b>{service.short}</b>
-                  <small>{service.ready ? service.badge : 'Скоро'}</small>
+                  <span className="stage-tile-copy">
+                    <b>{service.short}</b>
+                    <small>
+                      {service.ready ? <i aria-hidden="true" /> : null}
+                      {service.ready ? service.badge : 'Скоро'}
+                    </small>
+                  </span>
+                  <i className="stage-tile-arrow" aria-hidden="true" />
                 </a>
               ))}
             </div>
