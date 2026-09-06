@@ -90,6 +90,10 @@ pub struct OwnDevices {
 pub struct OwnDevice {
     pub device: String,
     pub cert: String,
+    /// Когда устройство завели. Старый сервер поля не присылает — тогда ноль,
+    /// и интерфейс просто не показывает дату.
+    #[serde(default, rename = "addedAt")]
+    pub added_at: i64,
 }
 
 #[derive(Debug, Deserialize)]

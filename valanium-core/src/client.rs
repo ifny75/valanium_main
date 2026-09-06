@@ -16,7 +16,7 @@ use tokio_socks::tcp::Socks5Stream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{client_async_tls_with_config, MaybeTlsStream, WebSocketStream};
 
-use crate::command::{Command, ConversationItem, Event, HistoryItem};
+use crate::command::{Command, ConversationItem, DeviceItem, Event, HistoryItem};
 use crate::crypto::random_bytes;
 use crate::error::{CoreError, Result};
 use crate::keys::Credentials;
@@ -530,6 +530,35 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
 
         // Список чатов — по нитям, а не по группам: у собеседника с телефоном
         // и ноутбуком групп две, а строка одна.
+        /*
+          Свои устройства.
+
+          Отвечаем из того, что уже лежит: список приезжает при подключении и
+          проверяется нашим же ключом личности. Отдельного похода в сеть нет —
+          значит экран открывается и без связи, показывая то, что было в
+          прошлый раз. Пустой список — не ошибка: список ещё не приезжал, либо
+          сервер старый и такого не умеет.
+
+          Порядок — по времени появления. Не по свежести: она меняется от
+          каждого подключения, и строки прыгали бы при каждом открытии экрана.
+        */
+        Command::Devices => {
+            let mine = store
+                .load_credentials()
+                .map(|creds| hex::encode(creds.device_pub()))
+                .unwrap_or_default();
+            let mut devices: Vec<DeviceItem> = own_devices(store)
+                .into_iter()
+                .map(|(device, (_cert, added_at))| DeviceItem {
+                    current: device == mine,
+                    device,
+                    added_at,
+                })
+                .collect();
+            devices.sort_by_key(|item| item.added_at);
+            sink(Event::Devices { devices });
+        }
+
         Command::Conversations => match store.list_threads() {
             Ok(items) => sink(Event::Conversations {
                 items: items
@@ -925,8 +954,18 @@ fn merge_threads(store: &Store, identity: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Свой проверенный список устройств: hex ключа → hex сертификата.
+/// Свой проверенный список устройств: hex ключа → (hex сертификата, когда завели).
 const OWN_DEVICES: &str = "own_devices";
+
+/// Что лежит в [`OWN_DEVICES`]. Пусто — список ещё не приезжал.
+fn own_devices(store: &Store) -> std::collections::BTreeMap<String, (String, i64)> {
+    store
+        .load_setting(OWN_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
+}
 /// Кому этот список уже разослан. Ключ — hex устройства собеседника.
 const OWN_DEVICES_TOLD: &str = "own_devices_told";
 
@@ -958,7 +997,7 @@ async fn own_devices_arrived(
     let identity = credentials.identity_pub();
     let mine = hex::encode(credentials.device_pub());
 
-    let verified: std::collections::BTreeMap<String, String> = own
+    let verified: std::collections::BTreeMap<String, (String, i64)> = own
         .devices
         .into_iter()
         .filter(|entry| {
@@ -968,14 +1007,14 @@ async fn own_devices_arrived(
             };
             keys::verify(&cert, &keys::device_cert_message(&identity, &device), &identity)
         })
-        .map(|entry| (entry.device, entry.cert))
+        .map(|entry| (entry.device, (entry.cert, entry.added_at)))
         .collect();
 
     if !verified.contains_key(&mine) {
         return Ok(());
     }
 
-    let known: std::collections::BTreeMap<String, String> = store
+    let known: std::collections::BTreeMap<String, (String, i64)> = store
         .load_setting(OWN_DEVICES)
         .ok()
         .flatten()
@@ -1008,18 +1047,13 @@ async fn announce_devices(
     sink: &EventSink,
     live: &mut Live,
 ) -> Result<()> {
-    let entries: std::collections::BTreeMap<String, String> = store
-        .load_setting(OWN_DEVICES)
-        .ok()
-        .flatten()
-        .and_then(|raw| serde_json::from_slice(&raw).ok())
-        .unwrap_or_default();
+    let entries = own_devices(store);
     if entries.is_empty() {
         return Ok(());
     }
 
     let mut pairs: Vec<([u8; KEY_LEN], [u8; keys::SIG_LEN])> = Vec::new();
-    for (device, cert) in &entries {
+    for (device, (cert, _added_at)) in &entries {
         let (Ok(device), Ok(cert)) = (hex::decode(device), hex::decode(cert)) else { continue };
         let (Ok(device), Ok(cert)) = (device.try_into(), cert.try_into()) else { continue };
         pairs.push((device, cert));

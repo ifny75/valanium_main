@@ -970,6 +970,9 @@ function onDeviceList(deps: Deps, sock: Socket, conn: ConnData): void {
     devices: devices.map((row) => ({
       device: toHex(row.device_pub),
       cert: toHex(row.cert),
+      // Когда устройство завели. Единственное, чем человек отличит одно от
+      // другого: имени у устройства нет, а ключ ему ничего не говорит.
+      addedAt: row.created_at,
     })),
   }), true);
 }
