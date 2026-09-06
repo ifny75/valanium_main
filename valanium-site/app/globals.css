@@ -584,16 +584,25 @@ h1, h2, h3 { text-wrap: balance; }
 .glass {
   position: relative;
   overflow: hidden;
-  /* Нижняя грань — единственная видимая: остальные три ушли за края окна. */
-  border-bottom: 1px solid var(--hairline);
   background:
     radial-gradient(72% 118% at 11% 116%, rgba(112,34,192,.25), transparent 60%),
     linear-gradient(172deg, rgba(23,20,31,.88), rgba(11,10,17,.94));
 }
 /* Источник света под стеклом. Без него размывать нечего. */
 .glass-glow { position: absolute; z-index: 0; left: 21%; bottom: -30%; width: min(40%, 720px); height: 64%; border-radius: 50%; background: radial-gradient(circle, rgba(146,58,240,.30), rgba(86,18,164,.11) 54%, transparent 72%); filter: blur(104px); transform: translateX(-50%); pointer-events: none; animation: hero-glow-drift 11s ease-in-out infinite alternate; }
-/* Свет, идущий вдоль нижней грани. */
-.glass::before { content: ''; position: absolute; inset: auto 0 0; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent 6%, rgba(255,255,255,.3) 40%, rgba(255,255,255,.1) 64%, transparent 94%); background-size: 180% 100%; animation: glass-sheen 11s ease-in-out infinite; }
+/*
+  Низ полосы растворяется в фоне страницы.
+
+  Здесь была граница в один пиксель во всю ширину окна. У панели-острова
+  такая грань уместна — у неё есть форма, которую грань очерчивает. У полосы
+  формы нет, и линия через весь экран читалась как шов, а не как край: она
+  обрывала и свечение, и искры на полном ходу.
+
+  Затемнение идёт поверх свечения и искр, но под текстом: оно гасит фон, а не
+  содержимое. Отсюда ::after, а не ::before — первый вставляется последним
+  ребёнком и потому ложится сверху, второй лёг бы под всё, что гасит.
+*/
+.glass::after { content: ''; position: absolute; z-index: 0; inset: auto 0 0; height: 210px; pointer-events: none; background: linear-gradient(to bottom, transparent, var(--bg)); }
 /* Отступ сверху считает и шапку: она висит над полосой, а не над страницей. */
 .glass-inner { position: relative; z-index: 1; width: var(--shell); margin-inline: auto; padding: clamp(136px, 13vw, 210px) 0 clamp(66px, 6.4vw, 108px); text-align: center; }
 /*
@@ -608,7 +617,7 @@ h1, h2, h3 { text-wrap: balance; }
   где стоит текст, остаётся чистой. Маска гасит их у верхней и нижней кромки,
   чтобы искры не рождались и не обрывались на видимой границе стекла.
 */
-.stage-signal-field { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; mask-image: linear-gradient(to top, transparent, #000 14%, #000 64%, transparent 88%); -webkit-mask-image: linear-gradient(to top, transparent, #000 14%, #000 64%, transparent 88%); }
+.stage-signal-field { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; mask-image: linear-gradient(to top, transparent, #000 8%, #000 64%, transparent 88%); -webkit-mask-image: linear-gradient(to top, transparent, #000 8%, #000 64%, transparent 88%); }
 .stage-signal-field i { position: absolute; bottom: -8%; width: 1px; height: 32px; border-radius: 1px; background: linear-gradient(to top, transparent, rgba(203,150,255,.8)); opacity: 0; animation: stage-signal-rise 12s linear infinite; }
 /* Голова искры: без неё хвост выглядит царапиной, а не летящей точкой. */
 .stage-signal-field i::after { content: ''; position: absolute; left: 50%; top: -2px; width: 3px; height: 3px; border-radius: 50%; background: #e6ceff; box-shadow: 0 0 11px 2px rgba(178,108,255,.45); transform: translateX(-50%); }
@@ -650,7 +659,9 @@ h1, h2, h3 { text-wrap: balance; }
   посреди неё. Прежние крупные значки отделял от кнопок провал почти в сто
   пикселей: середина панели пустовала, а низ не имел опоры.
 */
-.stage-tiles { margin-top: clamp(38px, 4.2vw, 60px); padding-top: clamp(22px, 2.4vw, 32px); display: grid; grid-template-columns: repeat(3, minmax(0, 264px)); justify-content: center; gap: 10px; border-top: 1px solid var(--hairline); text-align: left; }
+/* Разделитель гаснет к концам: обрубленная с двух сторон линия — теперь
+   единственная резкая грань в полосе, и на мягком фоне она бросается в глаза. */
+.stage-tiles { margin-top: clamp(38px, 4.2vw, 60px); padding-top: clamp(22px, 2.4vw, 32px); display: grid; grid-template-columns: repeat(3, minmax(0, 264px)); justify-content: center; gap: 10px; background: linear-gradient(90deg, transparent, rgba(176,150,255,.17) 16%, rgba(176,150,255,.17) 84%, transparent) top/100% 1px no-repeat; text-align: left; }
 .stage-tile { display: grid; grid-template-columns: 46px minmax(0, 1fr) 14px; align-items: center; gap: 13px; padding: 13px 15px 13px 13px; border: 1px solid transparent; border-radius: 18px; transition: transform .22s cubic-bezier(.22,1,.36,1), border-color .22s ease, background-color .22s ease; }
 .stage-tile:hover { transform: translateY(-2px); border-color: var(--hairline); background: rgba(255,255,255,.045); }
 /* Форма значка приложения: человеку не нужно объяснять, что на неё нажимают. */
@@ -746,7 +757,6 @@ h1, h2, h3 { text-wrap: balance; }
 .privacy-statement-visual img { width: min(100%,590px); height: auto; object-fit: contain; filter: drop-shadow(0 28px 38px rgba(47,15,72,.16)); animation: route-float 7s ease-in-out infinite; }
 
 @keyframes hero-glow-drift { to { transform: translateX(-48%) translateY(-4%) scale(1.09); opacity: .84; } }
-@keyframes glass-sheen { 0%,100% { background-position: 120% 0; } 50% { background-position: -20% 0; } }
 @keyframes stage-signal-rise { 0% { opacity: 0; transform: translate3d(0,0,0) scaleY(.45); } 14% { opacity: .55; } 74% { opacity: .45; } 100% { opacity: 0; transform: translate3d(var(--drift,10px),-430px,0) scaleY(1.1); } }
 @keyframes network-scan { from { left: -18%; } to { left: 118%; } }
 @keyframes manifesto-drift { to { transform: translate3d(-2.5vw,-.7vw,0); color: rgba(168,85,247,.06); } }
@@ -849,4 +859,32 @@ h1, h2, h3 { text-wrap: balance; }
   .privacy-core { width: 84px; height: 84px; border-radius: 27px; }
   .privacy-core img { width: 45px; height: 54px; }
   .privacy-label { font-size: 8px; }
+}
+
+/*
+  Самые узкие телефоны (320–380 px).
+
+  Слово «Valanium» рядом с логотипом переставало помещаться и наезжало на
+  кнопки: brand — сжимаемый флекс-элемент, а слово в нём одно и переноситься
+  ему некуда, поэтому оно просто вылезало за свою коробку. Ниже 380 остаётся
+  один знак; название всё равно читается в aria-label и в заголовке страницы.
+
+  Порог именно 380, а не 360: на 360 слово формально помещалось, но между ним
+  и кнопками оставалось 28 px — для шапки это уже теснота, а не зазор.
+*/
+@media (max-width: 380px) {
+  .brand b { display: none; }
+  /*
+    Ряды сервисов. «Messenger» в 26 px требует 169 px, и вместе с номером,
+    значком и стрелкой строка запрашивала 309 px при доступных 294 — сетка
+    распирала ряд изнутри, и стрелка уезжала за край экрана.
+
+    minmax(0,1fr) снимает у колонки нижний предел по содержимому: даже если
+    слово однажды снова окажется длиннее места, оно останется внутри ряда, а
+    не вытолкнет соседей наружу.
+  */
+  .rail-item { grid-template-columns: 26px 38px minmax(0,1fr) auto; gap: 8px; }
+  .rail-item h2 { font-size: 21px; }
+  .rail-item > img { width: 34px; height: 34px; }
+  .rail-item p { min-width: 0; }
 }
