@@ -595,7 +595,7 @@ h1, h2, h3 { text-wrap: balance; }
 /* Свет, идущий вдоль нижней грани. */
 .glass::before { content: ''; position: absolute; inset: auto 0 0; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent 6%, rgba(255,255,255,.3) 40%, rgba(255,255,255,.1) 64%, transparent 94%); background-size: 180% 100%; animation: glass-sheen 11s ease-in-out infinite; }
 /* Отступ сверху считает и шапку: она висит над полосой, а не над страницей. */
-.glass-inner { position: relative; z-index: 1; width: var(--shell); margin-inline: auto; padding: clamp(122px, 11vw, 180px) 0 clamp(58px, 5.2vw, 88px); text-align: center; }
+.glass-inner { position: relative; z-index: 1; width: var(--shell); margin-inline: auto; padding: clamp(136px, 13vw, 210px) 0 clamp(66px, 6.4vw, 108px); text-align: center; }
 /*
   Сигналы, уходящие вверх по краям панели.
 
