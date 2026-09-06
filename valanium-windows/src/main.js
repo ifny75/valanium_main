@@ -1150,6 +1150,18 @@ function renderConversations() {
   // Адрес и код в поле — это не запрос к списку: список не фильтруем.
   const raw = $("omni").value.trim();
   const query = looksLikeAddress(raw) ? "" : raw.toLowerCase();
+  /*
+    Список перестраивается целиком на каждое сообщение, и вместе с ним
+    обнулялась прокрутка: человек листал список, приходило чужое сообщение —
+    и его отбрасывало наверх. Со стороны это выглядит как самопроизвольный
+    прыжок интерфейса, причём тем чаще, чем оживлённее переписка.
+
+    Запоминаем позицию до перестройки и возвращаем после. Заодно гасим
+    плавную прокрутку на это время: с ней возврат сам превращается в анимацию.
+  */
+  const keepScroll = list.scrollTop;
+  const smooth = list.style.scrollBehavior;
+  list.style.scrollBehavior = "auto";
   list.innerHTML = "";
   let visible = 0;
 
@@ -1197,7 +1209,20 @@ function renderConversations() {
       badge.textContent = String(group.unread);
       button.appendChild(badge);
     }
-    button.addEventListener("click", () => selectConversation(key));
+  /*
+      Повторное нажатие на уже открытый чат не делает ничего.
+
+      Раньше оно перезапускало открытие целиком: список слева перерисовывался,
+      лента перечитывалась, и всё это дёргалось на глазах — при том, что человек
+      не просил ничего менять, он ткнул в то, что и так открыто.
+
+      Проверка стоит здесь, а не внутри selectConversation: та вызывается ещё и
+      для обновления открытой группы, и ранний выход там сломал бы обновление.
+    */
+    button.addEventListener("click", () => {
+      if (state.current === key) return;
+      selectConversation(key);
+    });
     item.appendChild(button);
     list.appendChild(item);
   }
@@ -1234,7 +1259,11 @@ function renderConversations() {
       badge.textContent = String(entry.unread);
       button.appendChild(badge);
     }
-    button.addEventListener("click", () => selectConversation(peer));
+    button.addEventListener("click", () => {
+      // См. пояснение выше: уже открытый чат не переоткрываем.
+      if (state.current === peer) return;
+      selectConversation(peer);
+    });
     item.appendChild(button);
     list.appendChild(item);
   }
@@ -1247,6 +1276,13 @@ function renderConversations() {
     empty.textContent = query ? "Ничего не найдено" : "Пока нет диалогов";
     list.appendChild(empty);
   }
+
+  // Возвращаем прокрутку туда, где человек её оставил. Ограничение сверху
+  // обязательно: список мог укоротиться, и прежнее значение оказалось бы за
+  // концом — браузер молча приведёт его к максимуму, но уже после отрисовки,
+  // то есть с заметным прыжком.
+  list.scrollTop = Math.min(keepScroll, Math.max(0, list.scrollHeight - list.clientHeight));
+  list.style.scrollBehavior = smooth;
 }
 
 function selectConversation(peer) {
@@ -5879,6 +5915,7 @@ let emojiPanel = null;
 function closeEmoji() {
   emojiPanel?._emojiObserver?.disconnect();
   emojiPanel?.remove();
+  emojiPanel?._scrim?.remove();
   emojiPanel = null;
 }
 
@@ -5946,7 +5983,24 @@ $("emoji-open").addEventListener("click", (event) => {
   openEmojiCategory(0);
   // Внутри панели щелчок не должен её закрывать: выбирают часто по нескольку.
   panel.addEventListener("click", (inner) => inner.stopPropagation());
-  document.querySelector(".composer").appendChild(panel);
+  /*
+    Подложка за панелью.
+
+    Сама панель размывает лишь то, что под ней, и переписка вокруг оставалась
+    резкой — панель висела поверх чужих сообщений и фотографий, как вырезанный
+    прямоугольник. Подложка размывает всё окно разговора, и панель перестаёт
+    спорить с тем, что за ней.
+
+    Отдельным элементом, а не фильтром на самой панели: backdrop-filter
+    действует только под элементом, и растянуть его на окно, не растянув
+    панель, нечем.
+  */
+  const scrim = document.createElement("div");
+  scrim.className = "emoji-scrim";
+  const host = document.querySelector(".composer");
+  host.appendChild(panel);
+  (document.querySelector(".chat-panel") ?? host).appendChild(scrim);
+  panel._scrim = scrim;
   emojiPanel = panel;
 });
 

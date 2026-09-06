@@ -903,6 +903,15 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 
 /* --- этап 3: эмодзи, правка, поиск ------------------------------------------ */
 
+/* Подложка под панелью эмодзи: размывает окно разговора, пока панель открыта.
+
+   Ниже панели по z-index и выше содержимого. Щелчок по ней доходит до
+   документа и закрывает панель — отдельный обработчик для этого не нужен. */
+.emoji-scrim{position:absolute;inset:0;z-index:11;
+  backdrop-filter:blur(14px) saturate(.9);-webkit-backdrop-filter:blur(14px) saturate(.9);
+  background:rgba(0,0,0,.28);animation:card-in .16s ease both}
+@media (prefers-reduced-motion:reduce){.emoji-scrim{animation:none}}
+
 /* Панель эмодзи всплывает над композером, а не отдельным окном: выбирают её,
    глядя на строку, в которую вставляют. */
 .emoji-panel{position:absolute;left:8px;right:8px;bottom:calc(100% + 8px);z-index:12;
@@ -3121,3 +3130,16 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
   .decor-controls { grid-template-columns: minmax(0, 1fr); }
   .profile-detail { padding: 18px 20px; gap: 16px; }
 }
+
+/* Колонка под аватар следует за самим аватаром, а не за числом.
+
+   `.profile-avatar-large` переопределялся трижды и дорос с 68 до 78 пикселей,
+   а колонки сетки остались 68: аватар вылезал за свою колонку и наезжал на
+   имя. Числа, записанные в двух местах, расходятся — вопрос только когда.
+   `auto` берёт ширину у содержимого, и следующая смена размера пройдёт молча.
+
+   Значению в строке гарантирован минимум: при жёсткой колонке подписи от
+   него оставалось «О…» и «с…» — кнопка есть, а прочитать нечего. */
+.peer-head,
+.profile-settings-head{grid-template-columns:auto minmax(0,1fr)}
+.profile-detail{grid-template-columns:minmax(0,auto) minmax(150px,1fr)}

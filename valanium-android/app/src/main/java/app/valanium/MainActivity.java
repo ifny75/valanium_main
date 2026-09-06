@@ -3276,6 +3276,21 @@ public final class MainActivity extends Activity implements Events.Listener {
             text.setTag(R.id.base_text_size_tag, (float) messageTextSp());
             text.setTextSize(messageTextSp() * (interfaceScale.getProgress() + 85) / 100f);
             text.setMaxWidth(maxWidth);
+            /*
+              Свои параметры обязательны, и вот почему.
+
+              LinearLayout для вертикальной ориентации выдаёт детям без
+              параметров MATCH_PARENT по ширине. Пузырь при этом WRAP_CONTENT,
+              то есть его ширину задаёт самый широкий ребёнок — а у исходящих
+              это подпись «✓✓ прочитано». Текст, будучи MATCH_PARENT,
+              подстраивался под неё: 144 пикселя вместо 725, по слову в строке.
+
+              У входящих подписи нет, поэтому там всё выглядело правильно — и
+              именно поэтому ошибку было легко не заметить.
+            */
+            text.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT));
             bubble.addView(text);
         }
         if (outgoing && !id.isEmpty()) {
