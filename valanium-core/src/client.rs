@@ -528,7 +528,9 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             Err(_) => fail(sink, "bad_identity", "identity must be hex"),
         },
 
-        Command::Conversations => match store.list_conversations() {
+        // Список чатов — по нитям, а не по группам: у собеседника с телефоном
+        // и ноутбуком групп две, а строка одна.
+        Command::Conversations => match store.list_threads() {
             Ok(items) => sink(Event::Conversations {
                 items: items
                     .into_iter()
@@ -876,6 +878,51 @@ async fn send_typing(
         stored: true,
     };
     encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
+}
+
+/// Нить для только что заведённой беседы.
+///
+/// Если с этим человеком нить уже есть — новая группа встаёт в неё. Если нет,
+/// нить и есть сама группа, и записывать ничего не нужно: отсутствие записи в
+/// `threads` именно это и означает.
+///
+/// Личность мы знаем не всегда: до первого объявления собеседник для нас —
+/// просто устройство. Тогда группа становится собственной нитью, а когда
+/// объявление придёт, [`merge_threads`] сведёт их вместе.
+fn adopt_thread(store: &Store, device: &[u8], group_id: &[u8]) -> Result<Vec<u8>> {
+    let Some(identity) = store.identity_of_device(device)? else {
+        return Ok(group_id.to_vec());
+    };
+    let Some(thread) = store.thread_of_identity(&identity)? else {
+        return Ok(group_id.to_vec());
+    };
+    if thread == group_id {
+        return Ok(thread);
+    }
+    store.set_thread(group_id, &thread)?;
+    Ok(thread)
+}
+
+/// Сводит все беседы одной личности в одну нить.
+///
+/// Нужно потому, что личность узнаётся задним числом: беседа с человеком могла
+/// начаться до того, как он прислал список устройств, а с его вторым
+/// устройством — и вовсе отдельно. Пока мы не знали, что это один человек, в
+/// списке чатов он двоился.
+///
+/// Нитью становится самая ранняя из групп: под ней уже лежит история, и
+/// переносить сообщения не требуется.
+fn merge_threads(store: &Store, identity: &[u8]) -> Result<()> {
+    let Some(thread) = store.thread_of_identity(identity)? else { return Ok(()) };
+    for (device, group_id) in store.list_conversations()? {
+        if store.identity_of_device(&device)?.as_deref() != Some(identity) {
+            continue;
+        }
+        if group_id != thread {
+            store.set_thread(&group_id, &thread)?;
+        }
+    }
+    Ok(())
 }
 
 /// Свой проверенный список устройств: hex ключа → hex сертификата.
@@ -3029,11 +3076,12 @@ async fn on_envelope(
             remember_stranger(store, sink, &device, "написал первым");
 
             store.set_conversation(&peer_device, &group_id)?;
+            let thread = adopt_thread(store, &peer_device, &group_id)?;
             persist(store, mls, sink);
             check_membership(mls, store, &group_id, sink);
             sink(Event::ConversationStarted {
                 peer_device: device,
-                conversation: hex::encode(&group_id),
+                conversation: hex::encode(&thread),
             });
         }
         Ok(Incoming::Message { group_id, sender_device, plaintext }) => {
@@ -3071,23 +3119,30 @@ async fn on_envelope(
                         }
                     }
                     Some(Control::Delete(ids)) => {
-                        let group = hex::encode(&group_id);
+                        // Нить, а не группа: сообщения лежат под нитью, и
+                        // просьба удалить, пришедшая со второго устройства
+                        // собеседника, обязана находить то же самое.
+                        let thread = store.thread_of(&group_id)?;
                         let mut removed = Vec::new();
                         for id in ids {
-                            if store.delete_message_by_id(&group_id, &id).unwrap_or(false) {
+                            if store.delete_message_by_id(&thread, &id).unwrap_or(false) {
                                 removed.push(id);
                             }
                         }
                         if !removed.is_empty() {
-                            sink(Event::Deleted { conversation: group, ids: removed });
+                            sink(Event::Deleted {
+                                conversation: hex::encode(&thread),
+                                ids: removed,
+                            });
                         }
                     }
                     Some(Control::Edit { id, body }) => {
-                        if store.update_message_by_id(&group_id, &id, body.as_bytes())
+                        let thread = store.thread_of(&group_id)?;
+                        if store.update_message_by_id(&thread, &id, body.as_bytes())
                             .unwrap_or(false)
                         {
                             sink(Event::Edited {
-                                conversation: hex::encode(&group_id),
+                                conversation: hex::encode(&thread),
                                 id,
                                 body,
                             });
@@ -3110,8 +3165,13 @@ async fn on_envelope(
                           сообщение.
                         */
                         if let Ok(from) = <[u8; KEY_LEN]>::try_from(sender_device.as_slice()) {
-                            if let Some(devices) = announcement.accept(&from) {
+                            if let Some((identity, devices)) = announcement.accept(&from) {
                                 remember_peer_devices(store, &devices);
+                                let _ = store.remember_peer_identity(&identity, &devices);
+                                // Беседы с разными устройствами одного человека
+                                // сводятся в одну нить прямо здесь: узнали, что
+                                // это один человек, — значит и переписка одна.
+                                let _ = merge_threads(store, &identity);
                             }
                         }
                     }
@@ -3156,12 +3216,15 @@ async fn on_envelope(
 
             remember_stranger(store, sink, &device, "написал первым");
 
-            store.insert_message(&envelope.id, &group_id, false, envelope.server_ts as i64, &plaintext)?;
+            // Под нить, а не под группу: у собеседника с телефоном и ноутбуком
+            // групп две, и переписка иначе легла бы в две разные ленты.
+            let thread = store.thread_of(&group_id)?;
+            store.insert_message(&envelope.id, &thread, false, envelope.server_ts as i64, &plaintext)?;
             persist(store, mls, sink);
             check_membership(mls, store, &group_id, sink);
             sink(Event::Message {
                 envelope_id: hex::encode(envelope.id),
-                conversation: hex::encode(&group_id),
+                conversation: hex::encode(&thread),
                 sender_device: device,
                 server_ts: envelope.server_ts,
                 body: String::from_utf8_lossy(&plaintext).into_owned(),
@@ -3392,12 +3455,13 @@ async fn on_key_package(
         }
     };
     store.set_conversation(&waiting.device, &group_id)?;
+    let thread = adopt_thread(store, &waiting.device, &group_id)?;
     persist(store, mls, sink);
     // Отправитель узнаёт идентификатор беседы тем же событием, что и
     // получатель: интерфейсу иначе некуда класть исходящие сообщения.
     sink(Event::ConversationStarted {
         peer_device: hex::encode(waiting.device),
-        conversation: hex::encode(&group_id),
+        conversation: hex::encode(&thread),
     });
 
     // Сначала приглашение, потом само сообщение — порядок важен: без Welcome
@@ -3494,7 +3558,8 @@ async fn encrypt_and_send(
     // Своя копия ложится в базу открытым текстом — но в запечатанной записи.
     // При досылке из ящика она там уже есть: повторять нельзя.
     if !waiting.stored {
-        store.insert_message(&client_ref, group_id, true, now_millis(), body.as_bytes())?;
+        let thread = store.thread_of(group_id)?;
+        store.insert_message(&client_ref, &thread, true, now_millis(), body.as_bytes())?;
     }
 
     if let Err(err) =

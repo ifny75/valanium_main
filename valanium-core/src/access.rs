@@ -292,8 +292,13 @@ pub struct Announcement {
 impl Announcement {
     /// Проверяет объявление, пришедшее от устройства `from`.
     ///
-    /// Возвращает список устройств, которым можно писать, или `None`, если
-    /// верить объявлению нельзя.
+    /// Возвращает личность и её устройства — или `None`, если верить
+    /// объявлению нельзя.
+    ///
+    /// Личность нужна не для проверки, а после неё: ею связываются устройства
+    /// одного человека в одну нить переписки. Отдаётся она отсюда именно
+    /// потому, что здесь она уже проверена — брать её откуда-то ещё значило бы
+    /// потерять эту проверку по дороге.
     ///
     /// Проверяется двоё.
     ///
@@ -306,7 +311,7 @@ impl Announcement {
     /// в котором его самого нет, и переписка целиком уезжает к тому, кто в нём
     /// перечислен. Список, не содержащий того, кто его прислал, — не «мои
     /// устройства», а перенаправление.
-    pub fn accept(self, from: &[u8; KEY_LEN]) -> Option<Vec<[u8; KEY_LEN]>> {
+    pub fn accept(self, from: &[u8; KEY_LEN]) -> Option<([u8; KEY_LEN], Vec<[u8; KEY_LEN]>)> {
         let identity = self.identity;
         let devices: Vec<[u8; KEY_LEN]> = self
             .entries
@@ -318,7 +323,7 @@ impl Announcement {
         if !devices.contains(from) {
             return None;
         }
-        Some(devices)
+        Some((identity, devices))
     }
 }
 
@@ -654,7 +659,7 @@ mod tests {
         let accepted = announced(&alice, &[phone, laptop])
             .accept(&phone.0)
             .expect("свой же список обязан приниматься");
-        assert_eq!(accepted, vec![phone.0, laptop.0]);
+        assert_eq!(accepted, (alice.identity_pub(), vec![phone.0, laptop.0]));
     }
 
     #[test]
@@ -678,7 +683,7 @@ mod tests {
         let accepted = announced(&alice, &[phone, laptop, intruder])
             .accept(&phone.0)
             .expect("испорченная строка не должна ронять весь список");
-        assert_eq!(accepted, vec![phone.0, laptop.0], "чужое устройство просочилось");
+        assert_eq!(accepted.1, vec![phone.0, laptop.0], "чужое устройство просочилось");
     }
 
     #[test]
@@ -709,7 +714,7 @@ mod tests {
         let accepted = announced(&alice, &[phone, (other, phone.1)])
             .accept(&phone.0)
             .expect("своё устройство на месте");
-        assert_eq!(accepted, vec![phone.0], "переставленная подпись прошла");
+        assert_eq!(accepted.1, vec![phone.0], "переставленная подпись прошла");
     }
 
     #[test]

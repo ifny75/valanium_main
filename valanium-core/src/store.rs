@@ -49,6 +49,37 @@ CREATE TABLE IF NOT EXISTS conversations (
 
 CREATE INDEX IF NOT EXISTS conversations_group ON conversations(group_id);
 
+-- Какой личности принадлежит устройство собеседника.
+--
+-- Заполняется только из объявлений, пришедших по шифрованному каналу и
+-- прошедших проверку подписи (см. access.rs). Со слов сервера сюда не
+-- попадает ничего: он вписал бы своё устройство в чужую личность, и его копия
+-- переписки выглядела бы законной.
+CREATE TABLE IF NOT EXISTS peer_devices (
+  device_pub BLOB PRIMARY KEY,
+  identity   BLOB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS peer_devices_identity ON peer_devices(identity);
+
+-- Какая нить обслуживает эту MLS-группу.
+--
+-- Группа заводится на пару устройств, а переписка идёт с человеком. У человека
+-- с телефоном и ноутбуком групп две, а нить одна — иначе в списке чатов он
+-- двоился бы, и половина переписки лежала бы в одной строке, половина в
+-- другой.
+--
+-- Значение нити — group_id первой группы с этим человеком. Так у уже
+-- накопленной истории нить совпадает с тем, под чем она лежит, и переносить
+-- ничего не нужно: строки этой таблицы для старых бесед просто отсутствуют, а
+-- отсутствие означает «нить равна самой группе».
+CREATE TABLE IF NOT EXISTS threads (
+  group_id BLOB PRIMARY KEY,
+  thread   BLOB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS threads_thread ON threads(thread);
+
 -- Группы и каналы. Состав хранит сам MLS, здесь — только название, вид и
 -- владелец, и те запечатаны: название группы говорит о человеке не меньше,
 -- чем список её участников.
@@ -534,8 +565,11 @@ impl Store {
             .optional()?)
     }
 
-    /// Все заведённые беседы. Нужен интерфейсу после перезапуска: события
-    /// `conversation_started` живут только в текущей сессии.
+    /// Все заведённые беседы: устройство собеседника и группа с ним.
+    ///
+    /// Строка на **группу**, а не на человека: этим списком пользуются
+    /// рассылки — пропуска, ключ от аватара, объявление устройств, — и им
+    /// нужен адрес каждого канала.
     pub fn list_conversations(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut statement = self
             .connection
@@ -548,6 +582,115 @@ impl Store {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Беседы так, как их видит человек: одна строка на нить.
+    ///
+    /// Отличается от [`Self::list_conversations`] тем же, чем список чатов
+    /// отличается от списка каналов: у собеседника с телефоном и ноутбуком
+    /// групп две, а строка в списке одна. Устройство в паре — то, с которого
+    /// нить началась; остальные его устройства достанутся отправке из
+    /// `peer_devices`.
+    ///
+    /// Порядок — по времени появления беседы, а не по устройству: список чатов
+    /// не должен переставляться от того, что у человека сменился ключ.
+    pub fn list_threads(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        // Ровно один min() в выборке — не украшение: при нём SQLite берёт
+        // остальные столбцы строки именно из той, где минимум и нашёлся. Без
+        // него `device_pub` был бы взят из произвольной строки группы, и
+        // собеседник в списке чатов менялся бы от запроса к запросу.
+        let mut statement = self.connection.prepare(
+            "SELECT device_pub, thread, MIN(rid)
+               FROM (SELECT c.device_pub AS device_pub,
+                            COALESCE(t.thread, c.group_id) AS thread,
+                            c.rowid AS rid
+                       FROM conversations c
+                       LEFT JOIN threads t ON t.group_id = c.group_id)
+              GROUP BY thread
+              ORDER BY MIN(rid)",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)))?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Запоминает, что устройства принадлежат одной личности.
+    ///
+    /// Вызывается только после проверки подписей: см. `Announcement::accept`.
+    pub fn remember_peer_identity(&self, identity: &[u8], devices: &[[u8; 32]]) -> Result<()> {
+        for device in devices {
+            self.connection.execute(
+                "INSERT INTO peer_devices (device_pub, identity) VALUES (?1, ?2)
+                 ON CONFLICT(device_pub) DO UPDATE SET identity = excluded.identity",
+                params![device.as_slice(), identity],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Чья это личность, если мы уже знаем.
+    pub fn identity_of_device(&self, device_pub: &[u8]) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT identity FROM peer_devices WHERE device_pub = ?1",
+                params![device_pub],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Нить, обслуживающая эту группу.
+    ///
+    /// Нет записи — нить равна самой группе. Это не заглушка на случай
+    /// пропуска, а рабочее состояние: у беседы с человеком, о чьих других
+    /// устройствах мы ещё не знаем, группа и нить действительно одно и то же.
+    pub fn thread_of(&self, group_id: &[u8]) -> Result<Vec<u8>> {
+        let found: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT thread FROM threads WHERE group_id = ?1",
+                params![group_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.unwrap_or_else(|| group_id.to_vec()))
+    }
+
+    /// Привязывает группу к нити.
+    pub fn set_thread(&self, group_id: &[u8], thread: &[u8]) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO threads (group_id, thread) VALUES (?1, ?2)
+             ON CONFLICT(group_id) DO UPDATE SET thread = excluded.thread",
+            params![group_id, thread],
+        )?;
+        Ok(())
+    }
+
+    /// Нить, уже заведённая с этой личностью, если есть.
+    ///
+    /// Ищется через устройства: беседы ключуются устройством, а личность знаем
+    /// из объявления. Берётся самая ранняя — она и есть нить остальных.
+    pub fn thread_of_identity(&self, identity: &[u8]) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT COALESCE(t.thread, c.group_id)
+                   FROM peer_devices p
+                   JOIN conversations c ON c.device_pub = p.device_pub
+                   LEFT JOIN threads t ON t.group_id = c.group_id
+                  WHERE p.identity = ?1
+                  ORDER BY c.rowid
+                  LIMIT 1",
+                params![identity],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     pub fn conversation_with(&self, device_pub: &[u8]) -> Result<Option<Vec<u8>>> {
@@ -954,5 +1097,105 @@ mod tests {
             !raw.windows(secret.len()).any(|w| w == secret),
             "исправленный текст виден в файле открытым"
         );
+    }
+
+    // --- нити переписки ---------------------------------------------------
+
+    /// Беседа с устройством. Возвращает пару (устройство, группа).
+    fn talk(store: &Store, tag: u8) -> ([u8; 32], Vec<u8>) {
+        let device = [tag; 32];
+        let group = vec![tag, tag, tag];
+        store.set_conversation(&device, &group).unwrap();
+        (device, group)
+    }
+
+    #[test]
+    fn a_lone_conversation_is_its_own_thread() {
+        // Отсутствие записи в `threads` — рабочее состояние, а не пропуск: пока
+        // о других устройствах человека мы не знаем, группа и нить — одно и то
+        // же. Ради этого история и не переносится при обновлении.
+        let db = TempDb::new("thread-lone");
+        let store = Store::open(db.path(), b"pw").unwrap();
+        let (_device, group) = talk(&store, 1);
+
+        assert_eq!(store.thread_of(&group).unwrap(), group);
+        assert_eq!(store.list_threads().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn two_devices_of_one_person_share_one_thread() {
+        /*
+          То, ради чего всё это. У человека телефон и ноутбук, групп с ним две —
+          а строка в списке чатов обязана быть одна. Иначе половина переписки
+          лежит в одной строке, половина в другой, и человек видитдва  собеседника
+          вместо одного.
+        */
+        let db = TempDb::new("thread-two");
+        let store = Store::open(db.path(), b"pw").unwrap();
+        let identity = [9u8; 32];
+        let (phone, first) = talk(&store, 1);
+        let (laptop, second) = talk(&store, 2);
+        store.remember_peer_identity(&identity, &[phone, laptop]).unwrap();
+
+        assert_eq!(store.list_threads().unwrap().len(), 2, "до связывания их двое");
+
+        store.set_thread(&second, &first).unwrap();
+
+        let threads = store.list_threads().unwrap();
+        assert_eq!(threads.len(), 1, "после связывания — один человек, одна строка");
+        assert_eq!(threads[0].1, first, "нитью остаётся первая группа");
+        assert_eq!(store.thread_of(&second).unwrap(), first);
+    }
+
+    #[test]
+    fn the_thread_of_an_identity_is_the_earliest_group() {
+        // Нитью становится самая ранняя группа именно потому, что под ней уже
+        // лежит история. Выбери мы свежую — пришлось бы переносить сообщения, а
+        // перенос на живой базе это то, что однажды не доедет.
+        let db = TempDb::new("thread-earliest");
+        let store = Store::open(db.path(), b"pw").unwrap();
+        let identity = [9u8; 32];
+        let (phone, first) = talk(&store, 1);
+        let (laptop, _second) = talk(&store, 2);
+        store.remember_peer_identity(&identity, &[phone, laptop]).unwrap();
+
+        assert_eq!(store.thread_of_identity(&identity).unwrap(), Some(first));
+    }
+
+    #[test]
+    fn a_stranger_identity_has_no_thread() {
+        let db = TempDb::new("thread-stranger");
+        let store = Store::open(db.path(), b"pw").unwrap();
+        assert_eq!(store.thread_of_identity(&[7u8; 32]).unwrap(), None);
+    }
+
+    #[test]
+    fn history_does_not_move_when_a_second_device_appears() {
+        /*
+          Проверка про обновление, а не про многоустройственность.
+
+          У человека уже есть переписка. Собеседник заводит второе устройство, и
+          беседы связываются в нить. Старые сообщения обязаны остаться на месте
+          и читаться по прежнему идентификатору — иначе обновление клиента
+          выглядит как потеря всей переписки, и это худшее, что может случиться
+          с мессенджером.
+        */
+        let db = TempDb::new("thread-history");
+        let store = Store::open(db.path(), b"pw").unwrap();
+        let identity = [9u8; 32];
+        let (phone, first) = talk(&store, 1);
+        store.insert_message(&[1u8; 16], &first, false, 1000, b"hello").unwrap();
+
+        let (laptop, second) = talk(&store, 2);
+        store.remember_peer_identity(&identity, &[phone, laptop]).unwrap();
+        store.set_thread(&second, &first).unwrap();
+
+        let rows = store.list_messages(&first, 10, None).unwrap();
+        assert_eq!(rows.len(), 1, "сообщение обязано остаться на месте");
+        assert_eq!(rows[0].body, b"hello");
+        // И новое, пришедшее со второго устройства, ложится туда же.
+        let thread = store.thread_of(&second).unwrap();
+        store.insert_message(&[2u8; 16], &thread, false, 2000, b"from the laptop").unwrap();
+        assert_eq!(store.list_messages(&first, 10, None).unwrap().len(), 2);
     }
 }
