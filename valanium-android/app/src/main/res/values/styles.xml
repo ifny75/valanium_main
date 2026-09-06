@@ -56,6 +56,19 @@
         <item name="android:textSize">14sp</item>
     </style>
 
+    <!-- Имена и длинные приватные идентификаторы в шапке диалога должны
+         читаться спокойнее фирменного заголовка и предсказуемо ужиматься. -->
+    <style name="Valanium.ConversationTitle" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/inter_medium</item>
+        <item name="android:textColor">@color/valanium_white</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:ellipsize">middle</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
     <style name="Valanium.SettingTitle" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>

@@ -88,6 +88,14 @@
     <string name="preview_in">Буду через 10 минут.</string>
     <string name="preview_out">Хорошо, жду</string>
     <string name="e2e_note">E2E · сообщения шифруются на устройстве</string>
+    <string name="verify_peer">Проверить ключ собеседника</string>
+    <string name="profile_avatar_open">Открыть аватар профиля</string>
+    <string name="avatar_tap_hint">Нажмите, чтобы открыть или выбрать фото</string>
+    <string name="settings_account_group">Аккаунт</string>
+    <string name="settings_interface_group">Интерфейс</string>
+    <string name="settings_device_group">Устройство и сеть</string>
+    <string name="connection_title">Подключение</string>
+    <string name="protection_title">Безопасность</string>
     <string name="accent_color">Акцентный цвет</string><string name="accent_color_hint">Исходящие сообщения и основные кнопки</string>
     <string name="interface_scale">Масштаб текста интерфейса</string>
     <string name="dividers">Перегородки интерфейса</string><string name="dividers_full">Чёткие</string><string name="dividers_soft">Мягкие</string><string name="dividers_none">Нет</string>

@@ -455,7 +455,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (currentPeer != null) showPeerCard(currentPeer);
         });
         findViewById(R.id.peer_avatar).setOnClickListener(v -> {
-            if (currentPeer != null) showPeerCard(currentPeer);
+            if (currentPeer != null) showPeerAvatarOrCard(currentPeer);
         });
         findViewById(R.id.reply_cancel).setOnClickListener(v -> setReply(null, null));
         wireUsername();
@@ -463,6 +463,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         wireSearch();
         wireListTabs();
         findViewById(R.id.avatar_upload).setOnClickListener(v -> chooseAvatar());
+        findViewById(R.id.profile_avatar).setOnClickListener(v -> showOwnAvatarOrChoose());
         findViewById(R.id.attach_photo).setOnClickListener(v -> choosePhoto());
         findViewById(R.id.verify_peer).setOnClickListener(v -> { if (currentPeer != null) submit(Commands.verify(currentPeer)); });
         configureRecovery();
@@ -1505,6 +1506,36 @@ public final class MainActivity extends Activity implements Events.Listener {
         startActivityForResult(intent, AVATAR_PICK_REQUEST);
     }
 
+    /** Аватар открывается как фото; пустой аватар остаётся быстрым входом в выбор. */
+    private void showOwnAvatarOrChoose() {
+        Profile own = profiles.get(myDeviceHex);
+        if (own == null || own.avatarBase64.isEmpty()) {
+            chooseAvatar();
+            return;
+        }
+        showBase64Photo(own.avatarBase64);
+    }
+
+    private void showPeerAvatarOrCard(String device) {
+        Profile profile = profiles.get(device);
+        if (profile == null || profile.avatarBase64.isEmpty()) {
+            showPeerCard(device);
+            return;
+        }
+        showBase64Photo(profile.avatarBase64);
+    }
+
+    private void showBase64Photo(String base64) {
+        try {
+            byte[] bytes = Base64.decode(base64, Base64.NO_WRAP);
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (bitmap == null) throw new IllegalArgumentException("image decode failed");
+            new PhotoViewer(this, bitmap).show();
+        } catch (RuntimeException error) {
+            toast("Не удалось открыть изображение");
+        }
+    }
+
     private void choosePhoto() {
         if (currentPeer == null) return;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -2230,6 +2261,9 @@ public final class MainActivity extends Activity implements Events.Listener {
 
             @Override
             public void afterTextChanged(android.text.Editable s) {
+                boolean hasText = s.toString().trim().length() > 0;
+                findViewById(R.id.send).setVisibility(hasText ? View.VISIBLE : View.GONE);
+                recordVoice.setVisibility(hasText ? View.GONE : View.VISIBLE);
                 if (currentPeer == null || s.length() == 0) return;
                 if (!permits("typing", currentPeer)) return;
                 long now = System.currentTimeMillis();
@@ -2238,6 +2272,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 submit(Commands.typing(currentPeer, true));
             }
         });
+        findViewById(R.id.send).setVisibility(View.GONE);
+        recordVoice.setVisibility(View.VISIBLE);
     }
 
     private static String logicalId() {
@@ -2294,7 +2330,10 @@ public final class MainActivity extends Activity implements Events.Listener {
             View child = messages.getChildAt(i);
             if (child.getTag() instanceof String && readIds.contains(child.getTag())) {
                 TextView delivery = child.findViewWithTag("delivery");
-                if (delivery != null) delivery.setText("✓✓ прочитано");
+                if (delivery != null) {
+                    delivery.setText("✓✓");
+                    delivery.setContentDescription("Прочитано");
+                }
             }
         }
     }
@@ -3263,6 +3302,14 @@ public final class MainActivity extends Activity implements Events.Listener {
                 image.setMaxWidth(maxWidth);
                 image.setMaxHeight(dp(420));
                 image.setLayoutParams(new LinearLayout.LayoutParams(Math.min(maxWidth, dp(330)), LinearLayout.LayoutParams.WRAP_CONTENT));
+                GradientDrawable imageShape = new GradientDrawable();
+                imageShape.setColor(Color.TRANSPARENT);
+                imageShape.setCornerRadius(dp(Math.max(10, bubbleRadiusDp() - 4)));
+                image.setBackground(imageShape);
+                image.setClipToOutline(true);
+                image.setContentDescription("Открыть изображение");
+                image.setFocusable(true);
+                image.setOnClickListener(v -> new PhotoViewer(this, bitmap).show());
                 bubble.addView(image);
             } catch (RuntimeException ignored) {
                 TextView failed = new TextView(this); failed.setText("Не удалось открыть фото"); failed.setTextColor(Color.GRAY); bubble.addView(failed);
@@ -3276,6 +3323,8 @@ public final class MainActivity extends Activity implements Events.Listener {
             text.setTag(R.id.base_text_size_tag, (float) messageTextSp());
             text.setTextSize(messageTextSp() * (interfaceScale.getProgress() + 85) / 100f);
             text.setMaxWidth(maxWidth);
+            text.setIncludeFontPadding(false);
+            text.setLineSpacing(0, 1.08f);
             /*
               Свои параметры обязательны, и вот почему.
 
@@ -3296,22 +3345,24 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (outgoing && !id.isEmpty()) {
             TextView delivery = new TextView(this);
             delivery.setTag("delivery");
-            delivery.setText(readIds.contains(id) ? "✓✓ прочитано" : "✓ отправлено");
+            boolean read = readIds.contains(id);
+            delivery.setText(read ? "✓✓" : "✓");
+            delivery.setContentDescription(read ? "Прочитано" : "Отправлено");
             delivery.setTextColor(outgoing && Color.luminance(accentColor()) > .55 ? Color.DKGRAY : Color.LTGRAY);
             delivery.setTextSize(9);
             delivery.setTag(R.id.base_text_size_tag, 9f);
             delivery.setGravity(Gravity.END);
             LinearLayout.LayoutParams deliveryParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            deliveryParams.gravity = Gravity.END; deliveryParams.topMargin = dp(4); delivery.setLayoutParams(deliveryParams);
+            deliveryParams.gravity = Gravity.END; deliveryParams.topMargin = dp(3); delivery.setLayoutParams(deliveryParams);
             bubble.addView(delivery);
         }
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         params.gravity = outgoing ? Gravity.END : Gravity.START;
-        params.bottomMargin = dp(8);
-        params.leftMargin = outgoing ? dp(42) : 0;
-        params.rightMargin = outgoing ? 0 : dp(42);
+        params.bottomMargin = dp(6);
+        params.leftMargin = outgoing ? dp(48) : 0;
+        params.rightMargin = outgoing ? 0 : dp(48);
         bubble.setLayoutParams(params);
 
         String logical = content.optString("id");
