@@ -5,14 +5,21 @@ plugins {
 android {
     namespace = "app.valanium"
     compileSdk = 35
+    useLibrary("android.test.runner", false)
+    useLibrary("android.test.base", false)
 
     defaultConfig {
         applicationId = "app.valanium"
         // 26 — минимум, где есть каналы уведомлений и нормальный foreground-сервис.
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.6.2"
+        versionCode = 21
+        versionName = "0.6.5"
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        // Device logout tests must never operate on the user's installed account.
+        if (providers.gradleProperty("isolatedTest").isPresent) {
+            applicationId = "app.valanium.qa"
+        }
 
         ndk {
             // Portable APK предназначен для современных физических телефонов.

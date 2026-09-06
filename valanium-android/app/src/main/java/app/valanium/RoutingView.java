@@ -36,6 +36,12 @@ public final class RoutingView extends View {
     private ValueAnimator animator;
     private float phase;
     private int selected;
+    private int accent = Color.rgb(124, 0, 255);
+
+    public void setAccentColor(int color) {
+        accent = color;
+        invalidate();
+    }
     private OnModeChangedListener listener;
 
     public RoutingView(Context context, AttributeSet attrs) {
@@ -98,11 +104,11 @@ public final class RoutingView extends View {
         boolean active = index == selected;
         card.set(dp(1), top + dp(1), getWidth() - dp(1), top + height - dp(1));
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(active ? Color.rgb(19, 19, 19) : Color.rgb(12, 12, 12));
+        paint.setColor(active ? Color.rgb(28, 17, 43) : Color.rgb(16, 14, 20));
         canvas.drawRoundRect(card, dp(16), dp(16), paint);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(active ? 1.5f : 1f));
-        paint.setColor(active ? Color.rgb(245, 245, 243) : Color.rgb(45, 45, 45));
+        paint.setColor(active ? accent : Color.rgb(55, 49, 65));
         canvas.drawRoundRect(card, dp(16), dp(16), paint);
 
         paint.setStyle(Paint.Style.FILL);
@@ -117,7 +123,7 @@ public final class RoutingView extends View {
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(1));
-        paint.setColor(active ? Color.WHITE : Color.rgb(105, 105, 105));
+        paint.setColor(active ? accent : Color.rgb(150, 145, 158));
         canvas.drawCircle(getWidth() - dp(20), top + dp(20), dp(7), paint);
         if (active) {
             paint.setStyle(Paint.Style.FILL);

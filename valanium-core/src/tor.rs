@@ -38,6 +38,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tor_rtcompat::PreferredRuntime;
 
 use crate::error::{CoreError, Result};
+#[path = "tor_path.rs"]
+mod tor_path;
+pub use tor_path::snapshot as circuit_snapshot;
 
 /// Поднимает Tor и локальный SOCKS5, возвращает его адрес.
 ///
@@ -59,8 +62,12 @@ pub fn start(data_dir: &Path) -> Result<SocketAddr> {
     .map_err(|err| CoreError::Transport(format!("настройка Tor: {err}")))?;
 
     let (client, listener) = runtime.block_on(async {
-        let client = TorClient::create_bootstrapped(config)
+        let client = tokio::time::timeout(
+            std::time::Duration::from_secs(180),
+            TorClient::create_bootstrapped(config),
+        )
             .await
+            .map_err(|_| CoreError::Transport("Tor не готов за 3 минуты; проверьте сеть и повторите".into()))?
             .map_err(|err| CoreError::Transport(format!("Tor не построил цепь: {err}")))?;
         // Порт выбирает система: 9050 занимает системный Tor, 9150 — Tor
         // Browser, и фиксированный номер означал бы либо отказ подняться, либо
@@ -161,6 +168,7 @@ async fn serve(mut socket: TcpStream, client: TorClient<PreferredRuntime>) -> Re
         }
     };
 
+    let _circuit = tor_path::observe(&tunnel, &host);
     socket
         .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .await

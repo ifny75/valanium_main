@@ -2,8 +2,8 @@
 <resources>
     <color name="valanium_black">#FF050505</color>
     <color name="valanium_white">#FFF5F5F3</color>
-    <color name="valanium_muted">#FF929292</color>
-    <color name="valanium_dim">#FF606060</color>
+    <color name="valanium_muted">#FFB4AFBE</color>
+    <color name="valanium_dim">#FF9E98AA</color>
     <color name="valanium_line">#FF292929</color>
     <color name="valanium_panel">#F20D0D0D</color>
     <color name="valanium_glass">#D9111111</color>

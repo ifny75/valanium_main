@@ -6,6 +6,7 @@
     <meta name="color-scheme" content="dark light" />
     <title>Valanium</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="registration-privacy.css" />
   </head>
   <body>
     <!--
@@ -16,7 +17,7 @@
       рамки их тоже нет.
     -->
     <div class="titlebar" data-tauri-drag-region>
-      <img class="titlebar-logo" src="assets/valanium_lock_logo.svg" alt="" data-tauri-drag-region />
+      <img class="titlebar-logo" src="assets/msg_icon.svg" alt="" data-tauri-drag-region />
       <span id="window-title" class="titlebar-title" data-tauri-drag-region>Valanium</span>
       <div class="titlebar-actions">
         <button id="window-minimize" class="window-button" type="button" aria-label="Свернуть">
@@ -32,7 +33,7 @@
     </div>
     <section id="screen-boot" class="screen centered-screen">
       <div class="boot-card">
-        <div class="large-logo"><img src="assets/valanium_lock_logo.svg" alt="" /></div>
+        <div class="large-logo"><img src="assets/msg_icon.svg" alt="" /></div>
         <h1>Valanium</h1>
         <p id="boot-status">Защищаем локальное хранилище…</p>
         <span class="loader" aria-hidden="true"></span>
@@ -41,7 +42,7 @@
 
     <section id="screen-locked" class="screen centered-screen hidden">
       <div class="entry-card">
-        <div class="large-logo"><img src="assets/valanium_lock_logo.svg" alt="" /></div>
+        <div class="large-logo"><img src="assets/msg_icon.svg" alt="" /></div>
         <p class="eyebrow">Пароль при запуске</p>
         <h1>Переписка закрыта</h1>
         <p class="lead">Ключ базы зашифрован этим паролем. Он нигде не хранится, поэтому подобрать его не у кого — и восстановить тоже: забыли пароль, останется только завести базу заново.</p>
@@ -56,7 +57,7 @@
 
     <section id="screen-migrate" class="screen centered-screen hidden">
       <div class="entry-card">
-        <div class="large-logo"><img src="assets/valanium_lock_logo.svg" alt="" /></div>
+        <div class="large-logo"><img src="assets/msg_icon.svg" alt="" /></div>
         <p class="eyebrow">Однократное обновление</p>
         <h1>Защитить существующую базу</h1>
         <p class="lead">Введите прежний пароль один раз. Windows зашифрует его через DPAPI, и следующие входы станут автоматическими.</p>
@@ -159,7 +160,7 @@
       <div id="onboarding-landing" class="landing-scroll">
         <section class="landing-hero" aria-label="Valanium public beta">
           <div class="language-brand">
-            <img src="assets/valanium_lock_logo.svg" alt="" />
+            <img src="assets/msg_icon.svg" alt="" />
             <strong>Valanium</strong>
             <span>public beta</span>
           </div>
@@ -191,13 +192,13 @@
 
     <section id="screen-route" class="screen onboarding-screen onboarding-grid hidden">
       <div class="onboarding-copy route-copy">
-        <div class="onboarding-brand"><img src="assets/valanium_lock_logo.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
+        <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
         <h1 id="route-title">Valanium server</h1>
         <p id="route-text">Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.</p>
         <div class="route-list">
-          <button class="route-option active" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
+          <button class="route-option" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
           <button class="route-option" type="button" data-transport="multihop"><img src="assets/onboarding/route-multihop.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Multihop</b><small id="route-multi-text">Дополнительный промежуточный узел</small></span><u>✓</u></button>
-          <button class="route-option" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
+          <button class="route-option active" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
         </div>
       </div>
       <div class="onboarding-art" aria-hidden="true"><canvas id="route-shader" class="onboarding-shader"></canvas><img src="assets/svg/spy.svg" alt="" /></div>
@@ -207,7 +208,7 @@
 
     <section id="screen-entry" class="screen onboarding-screen onboarding-grid hidden">
       <div class="onboarding-copy account-copy">
-        <div class="onboarding-brand"><img src="assets/valanium_lock_logo.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
+        <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
         <h1 id="entry-title">Начните с Valanium</h1>
         <p id="entry-lead">Имя увидят собеседники. Пароль нужен для запасного входа с другого устройства.</p>
         <form id="form-entry" class="onboarding-form" autocomplete="off">
@@ -215,6 +216,9 @@
           <input id="handle" type="text" placeholder="username" autocomplete="username" maxlength="20" />
           <label for="entry-password" id="entry-password-label">Пароль восстановления</label>
           <input id="entry-password" type="password" placeholder="Минимум 10 символов" autocomplete="new-password" minlength="10" />
+          <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" checked /> Только Tor — без перехода на прямое соединение</label>
+          <p class="registration-privacy-note">Tor скрывает сетевой адрес от сервера, но не гарантирует абсолютную анонимность. Не используйте знакомый юзернейм, если не хотите связывать аккаунты.</p>
+          <button class="ghost-button" type="button" id="entry-install-tor">Установить Tor (загрузка по HTTPS)</button>
           <button class="onboarding-submit" type="submit" id="entry-submit">Зарегистрироваться</button>
         </form>
         <div class="entry-actions"><button id="open-password-recover" type="button">← Вернуться ко входу</button><button id="open-recover" type="button">Восстановить по 24 словам</button></div>
@@ -227,7 +231,7 @@
 
     <section id="screen-recover" class="screen onboarding-screen onboarding-grid hidden">
       <div class="onboarding-copy recovery-copy">
-        <div class="onboarding-brand"><img src="assets/valanium_lock_logo.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
+        <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
         <h1 id="recover-title">Recovery phrase</h1>
         <p id="recover-lead">Введите 24 слова в том же порядке. За один шаг показываются восемь слов.</p>
         <div class="setting-segment recovery-segment" id="recover-segment">
@@ -256,7 +260,7 @@
         <div class="sidebar-top">
           <div class="brand-row">
             <div class="brand">
-              <div class="brand-logo"><img src="assets/valanium_lock_logo.svg" alt="" /></div>
+              <div class="brand-logo"><img src="assets/msg_icon.svg" alt="" /></div>
               <div class="brand-copy"><strong>Valanium</strong><span>public beta</span></div>
             </div>
             <div class="brand-actions">
@@ -401,16 +405,16 @@
       <div class="settings-body">
         <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">
           <div class="settings-nav-head" aria-hidden="true">
-            <span class="settings-nav-logo"><img src="assets/valanium_lock_logo.svg" alt="" /></span>
+            <span class="settings-nav-logo"><img src="assets/msg_icon.svg" alt="" /></span>
             <span><small>Valanium</small><b>Настройки</b></span>
           </div>
-          <button type="button" data-section="profile" class="active">Мой профиль</button>
-          <button type="button" data-section="privacy">Приватность</button>
-          <button type="button" data-section="transport">Подключение</button>
-          <button type="button" data-section="appearance">Внешний вид</button>
-          <button type="button" data-section="messages">Чат и сообщения</button>
-          <button type="button" data-section="server" id="nav-server" hidden>Сервер</button>
-          <button type="button" data-section="data">Данные</button>
+          <button type="button" data-section="profile" class="active"><span class="ui-icon icon-profile"></span>Мой профиль</button>
+          <button type="button" data-section="privacy"><span class="ui-icon icon-privacy"></span>Приватность</button>
+          <button type="button" data-section="transport"><span class="ui-icon icon-transport"></span>Подключение</button>
+          <button type="button" data-section="appearance"><span class="ui-icon icon-appearance"></span>Внешний вид</button>
+          <button type="button" data-section="messages"><span class="ui-icon icon-messages"></span>Чат и сообщения</button>
+          <button type="button" data-section="server" id="nav-server" hidden><span class="ui-icon icon-server"></span>Сервер</button>
+          <button type="button" data-section="data"><span class="ui-icon icon-data"></span>Данные</button>
           <p class="settings-nav-note">Медиа и безопасность — следующие этапы.</p>
         </nav>
 
@@ -421,11 +425,11 @@
 <section class="profile-settings settings-card">
           <div class="profile-settings-head">
             <button id="avatar-upload" class="profile-avatar-large" type="button" aria-label="Загрузить аватар"><span id="profile-avatar-text">ME</span></button>
-            <div><h3>Мой профиль</h3><p>Аватар лежит на сервере зашифрованным, пока правило «кто видит аватар» стоит не на «всех»: ключ уходит только контактам, серверу достаётся непрозрачный блок. Смена правила действует со следующей загрузки — выложенный раньше аватар останется у сервера в том виде, в каком уехал.</p></div>
+            <div><h3>Мой профиль</h3><p>Аватар и публичные данные профиля. Пока доступ к аватару ограничен, ключ получают только выбранные вами люди, а на сервере хранится зашифрованный блок.</p></div>
             <input id="avatar-file" type="file" accept="image/jpeg,image/png,image/webp" hidden />
           </div>
           <div class="profile-detail username-detail">
-            <span><b>Юзернейм</b><small>Позволяет находить вас без знания адреса устройства. Личность он не заменяет: ключи проверяются по-прежнему, а имя можно сменить или освободить.</small></span>
+            <span><b>Юзернейм</b><small>Помогает найти вас без адреса устройства. Он не заменяет проверку ключей; имя можно изменить или освободить.</small></span>
             <div class="username-controls">
               <div class="username-field"><i>@</i><input id="username-input" type="text" placeholder="не занят" autocomplete="off" maxlength="20" spellcheck="false" /></div>
               <div class="setting-actions">
@@ -444,18 +448,18 @@
             </div>
           </div>
           <div class="profile-detail decor-row">
-            <span><b>Значок и цвет</b><small>Видны собеседникам рядом с вашим именем. Хранятся в профиле на сервере как короткое слово из списка — не картинка и не произвольный текст.</small></span>
+            <span><b>Значок и цвет</b><small>Выберите значок и цвет, которые будут видны рядом с вашим именем.</small></span>
             <div class="decor-picker">
               <div id="profile-decor-preview" class="profile-decor-preview" aria-hidden="true"><span>ME</span><i></i></div>
               <div class="decor-controls">
-                <div><small class="decor-label">Значок</small><div id="emblem-grid" class="decor-grid"></div></div>
-                <div><small class="decor-label">Цвет</small><div id="color-grid" class="decor-grid"></div></div>
+                <label class="decor-select-field" for="profile-emblem"><span>Значок</span><select id="profile-emblem"></select></label>
+                <label class="decor-select-field" for="profile-color"><span>Цвет</span><select id="profile-color"></select></label>
               </div>
             </div>
           </div>
           <div class="profile-detail"><span>Код для начала чата</span><button id="profile-chat-code" type="button">после обновления сервера</button></div>
           <div class="profile-detail"><span>Адрес этого устройства</span><button id="profile-device" type="button">—</button></div>
-          <div class="profile-detail"><span><b>Ключ личности</b><small>Сам аккаунт, в отличие от адреса устройства и юзернейма. Им же владелец сервера включает себе панель.</small></span><button id="profile-identity" type="button">—</button></div>
+          <div class="profile-detail"><span><b>Ключ личности</b><small>Постоянный идентификатор аккаунта — в отличие от адреса устройства и юзернейма.</small></span><button id="profile-identity" type="button">—</button></div>
           <div class="profile-detail security-detail"><span><b>Криптографический отпечаток личности</b><small>Нужен для проверки, что ключ аккаунта не подменили. Сверяйте его с собеседником по другому каналу.</small></span><button id="copy-fingerprint" type="button"><code id="my-fingerprint">—</code></button></div>
         </section>
 
@@ -581,15 +585,27 @@
               </button>
             </div>
 
+            <div class="settings-card relay-locations" aria-label="Доступные узлы Valanium">
+              <div class="setting-block">
+                <b>Доступные узлы</b>
+                <small>Для Relay и Multi-hop доступны три независимых узла. В Multi-hop можно закрепить второй узел ниже.</small>
+                <div class="relay-location-list">
+                  <span><img src="assets/route-flag-se.svg" alt="Швеция" /><b>Alpha</b><small>Швеция</small></span>
+                  <span><img src="assets/route-flag-fi.svg" alt="Финляндия" /><b>Beta</b><small>Финляндия</small></span>
+                  <span><img src="assets/route-flag-de.svg" alt="Германия" /><b>Gamma</b><small>Германия</small></span>
+                </div>
+              </div>
+            </div>
+
             <div class="settings-card hop-picker" id="hop-picker">
               <div class="setting-block">
                 <b>Второй узел Multi-hop</b>
                 <small>Какой узел говорит с main. Первый выбирает Cloudflare — он ближайший, и заменить его нечем. Имена те же, что на странице состояния сети.</small>
                 <div class="setting-segment hop-segment" id="hop-segment" role="radiogroup" aria-label="Второй узел">
                   <button data-hop="auto" type="button" role="radio" aria-checked="false">Авто</button>
-                  <button data-hop="alpha" type="button" role="radio" aria-checked="false">Alpha</button>
-                  <button data-hop="beta" type="button" role="radio" aria-checked="false">Beta</button>
-                  <button data-hop="gamma" type="button" role="radio" aria-checked="false">Gamma</button>
+                  <button data-hop="alpha" type="button" role="radio" aria-checked="false">Alpha <img class="hop-flag" src="assets/route-flag-se.svg" alt="Швеция" /></button>
+                  <button data-hop="beta" type="button" role="radio" aria-checked="false">Beta <img class="hop-flag" src="assets/route-flag-fi.svg" alt="Финляндия" /></button>
+                  <button data-hop="gamma" type="button" role="radio" aria-checked="false">Gamma <img class="hop-flag" src="assets/route-flag-de.svg" alt="Германия" /></button>
                 </div>
                 <p class="hop-note">Выбранный узел постоянен, а «Авто» меняет его сам. Постоянный путь заметнее: первый узел видит, что вы всегда уходите через один и тот же второй. Это выбор в пользу предсказуемости, а не анонимности.</p>
               </div>

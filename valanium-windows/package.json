@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build --no-bundle",
-    "icon": "tauri icon ../resource/valanium_logo.svg"
+    "icon": "tauri icon ../resource/msg_app_icon.svg"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

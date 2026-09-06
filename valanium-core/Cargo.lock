@@ -5058,6 +5058,8 @@ dependencies = [
  "tokio",
  "tokio-socks",
  "tokio-tungstenite",
+ "tor-linkspec",
+ "tor-proto",
  "tor-rtcompat",
  "zeroize",
 ]

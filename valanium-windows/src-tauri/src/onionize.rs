@@ -39,6 +39,30 @@ use crate::CREATE_NO_WINDOW;
 /// Откуда разрешено скачивать. Совпадать обязано с тем, что кладёт в манифест
 /// `deploy/sign-onionize.mjs`.
 const ALLOWED_PREFIX: &str = "https://github.com/valanium-project/valanium-onionize/releases/download/";
+const MANIFEST_URL: &str = "https://valanium.com/downloads/onionize.json";
+static CIRCUIT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+fn trusted_build(payload: &str) -> Result<serde_json::Value, String> {
+    let envelope: serde_json::Value = serde_json::from_str(payload).map_err(|_| "неверный формат манифеста")?;
+    let manifest = envelope["manifest"].as_str().ok_or("нет манифеста")?;
+    let signature = envelope["signature"].as_str().ok_or("нет подписи")?;
+    if !crate::verify_release(manifest.to_owned(), signature.to_owned()) {
+        return Err("подпись манифеста не прошла проверку".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_str(manifest).map_err(|_| "неверный манифест")?;
+    if manifest["v"] != 1 || manifest["kind"] != "onionize" {
+        return Err("манифест не предназначен для Onionize".into());
+    }
+    let build = manifest["windows"].clone();
+    let url = build["url"].as_str().ok_or("нет адреса сборки")?;
+    let bytes = build["bytes"].as_u64().ok_or("нет размера сборки")?;
+    let hash = build["sha256"].as_str().ok_or("нет хеша сборки")?;
+    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("неверный хеш сборки".into());
+    }
+    accept(url, bytes)?;
+    Ok(build)
+}
 
 /// Сколько ждём строку готовности.
 ///
@@ -73,13 +97,18 @@ fn binary() -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn onionize_status() -> serde_json::Value {
     let installed = binary().map(|path| path.exists()).unwrap_or(false);
-    let running = running().lock().map(|guard| guard.is_some()).unwrap_or(false);
+    let running = running().lock().map(|mut guard| {
+        if guard.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(Some(_)))) {
+            *guard = None;
+            std::env::remove_var("VALANIUM_TOR_SOCKS");
+        }
+        guard.is_some()
+    }).unwrap_or(false);
     let port = std::env::var("VALANIUM_TOR_SOCKS").ok();
-    serde_json::json!({ "installed": installed, "running": running, "socks": port })
+    let circuit = if running { CIRCUIT.lock().ok().and_then(|v| v.clone()) } else { None };
+    serde_json::json!({ "installed": installed, "running": running, "socks": port, "circuit": circuit })
 }
 
-/// Скачивает и проверяет. Манифест и подпись проверяются до этого вызова тем же
-/// `verify_release`, что и обновления, — здесь проверяется уже сам файл.
 /// Можно ли вообще идти по этому адресу за таким объёмом.
 ///
 /// Отдельной функцией ради проверяемости: это защита, и она обязана иметь
@@ -109,11 +138,36 @@ fn verify_body(body: &[u8], sha256: &str, bytes: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// The WebView never downloads executable metadata or supplies its hash.
+/// Native verification avoids CORS and keeps the trust decision at the write boundary.
 #[tauri::command]
-pub fn onionize_install(url: String, sha256: String, bytes: u64) -> Result<(), String> {
-    accept(&url, bytes)?;
+pub async fn onionize_install() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(install_verified)
+        .await.map_err(|err| err.to_string())?
+}
 
-    let response = ureq::get(&url).call().map_err(|err| err.to_string())?;
+fn install_verified() -> Result<(), String> {
+    static INSTALL: Mutex<()> = Mutex::new(());
+    let _install = INSTALL.try_lock().map_err(|_| "установка уже выполняется")?;
+    if running().lock().map_err(|_| "состояние повреждено")?.is_some() {
+        return Err("сначала остановите Tor".into());
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(60))
+        .timeout(Duration::from_secs(180)).build();
+    let mut payload = String::new();
+    agent.get(MANIFEST_URL).set("Cache-Control", "no-cache").call()
+        .map_err(|err| format!("загрузка манифеста: {err}"))?
+        .into_reader().take(64 * 1024 + 1).read_to_string(&mut payload)
+        .map_err(|err| err.to_string())?;
+    if payload.len() > 64 * 1024 { return Err("манифест слишком большой".into()); }
+    let build = trusted_build(&payload)?;
+    let url = build["url"].as_str().ok_or("нет адреса")?;
+    let sha256 = build["sha256"].as_str().ok_or("нет хеша")?;
+    let bytes = build["bytes"].as_u64().ok_or("нет размера")?;
+
+    let response = agent.get(url).call().map_err(|err| format!("загрузка Onionize: {err}"))?;
     let mut body = Vec::with_capacity(bytes as usize);
     response
         .into_reader()
@@ -121,7 +175,7 @@ pub fn onionize_install(url: String, sha256: String, bytes: u64) -> Result<(), S
         .read_to_end(&mut body)
         .map_err(|err| err.to_string())?;
 
-    verify_body(&body, &sha256, bytes)?;
+    verify_body(&body, sha256, bytes)?;
 
     // Пишем во временный файл и переименовываем: иначе прерванная загрузка
     // оставила бы наполовину записанный исполняемый файл, который мы потом
@@ -138,7 +192,15 @@ pub fn onionize_install(url: String, sha256: String, bytes: u64) -> Result<(), S
 /// Порт выбирает сама программа (система даёт свободный) и называет его
 /// строкой READY: занятые 9050 и 9150 — обычное дело на машине с Tor Browser.
 #[tauri::command]
-pub fn onionize_start() -> Result<String, String> {
+pub async fn onionize_start() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(start_blocking)
+        .await.map_err(|err| err.to_string())?
+}
+
+fn start_blocking() -> Result<String, String> {
+    static START: Mutex<()> = Mutex::new(());
+    let _start = START.lock().map_err(|_| "состояние запуска Tor повреждено")?;
+    let _ = onionize_status();
     {
         let guard = running().lock().map_err(|_| "состояние повреждено".to_string())?;
         if guard.is_some() {
@@ -152,6 +214,7 @@ pub fn onionize_start() -> Result<String, String> {
     if !path.exists() {
         return Err("Tor не установлен".into());
     }
+    if let Ok(mut value) = CIRCUIT.lock() { *value = None; }
 
     let mut child = Command::new(&path)
         .arg("--data")
@@ -171,7 +234,12 @@ pub fn onionize_start() -> Result<String, String> {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if let Some(addr) = line.strip_prefix("READY ") {
                 let _ = sender.send(addr.trim().to_owned());
-                return;
+            } else if let Some(json) = line.strip_prefix("CIRCUIT ") {
+                if json.len() <= 16384 {
+                    if let Ok(value) = serde_json::from_str(json) {
+                        if let Ok(mut last) = CIRCUIT.lock() { *last = Some(value); }
+                    }
+                }
             }
         }
     });
@@ -202,12 +270,38 @@ pub fn onionize_stop() -> Result<(), String> {
     // Снимаем переменную, иначе ядро продолжит ходить на мёртвый порт и будет
     // сообщать «Tor недоступен» вместо того, чтобы взять обычный маршрут.
     std::env::remove_var("VALANIUM_TOR_SOCKS");
+    if let Ok(mut value) = CIRCUIT.lock() { *value = None; }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_manifest_is_verified_in_native_installer() {
+        let payload = include_str!("../../../deploy/onionize.json");
+        assert!(trusted_build(payload).is_ok());
+        let mut changed: serde_json::Value = serde_json::from_str(payload).unwrap();
+        changed["manifest"] = serde_json::Value::String(
+            changed["manifest"].as_str().unwrap().replace("6235136", "6235137"));
+        assert!(trusted_build(&changed.to_string()).is_err());
+        assert!(trusted_build(r#"{"manifest":"{}","signature":"00"}"#).is_err());
+        assert!(trusted_build("{}").is_err());
+    }
+
+    #[test]
+    #[ignore = "Downloads the signed public release and installs it in the local app directory"]
+    fn live_download_install_and_start() {
+        install_verified().expect("signed release installs");
+        assert!(binary().unwrap().exists());
+        let started = start_blocking();
+        if let Ok(ref address) = started {
+            assert!(address.parse::<std::net::SocketAddr>().unwrap().ip().is_loopback());
+            onionize_stop().expect("stop test instance");
+        }
+        started.expect("installed Tor bootstraps");
+    }
 
     #[test]
     fn only_our_release_url_is_accepted() {

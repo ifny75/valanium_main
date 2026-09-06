@@ -159,6 +159,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String myEmblem = "";
     private String myColor = "";
     private View screenAppearance;
+    private View screenConnection;
+    private View screenProtection;
+    private boolean databaseOpening;
 
     /**
      * Куда вернёт «назад».
@@ -325,6 +328,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         screenChatSettings = findViewById(R.id.screen_chat_settings);
         screenData = findViewById(R.id.screen_data);
         screenAppearance = findViewById(R.id.screen_appearance);
+        screenConnection = findViewById(R.id.screen_connection);
+        screenProtection = findViewById(R.id.screen_protection);
         privacyGroups = findViewById(R.id.privacy_groups);
         requestList = findViewById(R.id.request_list);
         migrationPassword = findViewById(R.id.migration_password);
@@ -400,6 +405,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.privacy_section_back).setOnClickListener(v -> goBack());
         findViewById(R.id.appearance_back).setOnClickListener(v -> goBack());
         findViewById(R.id.open_appearance).setOnClickListener(v -> open(screenAppearance));
+        findViewById(R.id.open_connection).setOnClickListener(v -> { open(screenConnection); renderTorCircuit(); });
+        findViewById(R.id.tor_circuit_refresh).setOnClickListener(v -> renderTorCircuit());
+        findViewById(R.id.open_protection).setOnClickListener(v -> open(screenProtection));
+        findViewById(R.id.connection_back).setOnClickListener(v -> goBack());
+        findViewById(R.id.protection_back).setOnClickListener(v -> goBack());
         findViewById(R.id.open_profile_row).setOnClickListener(v -> open(screenProfile));
         findViewById(R.id.chat_code_row).setOnClickListener(v -> copyChatCode());
         findViewById(R.id.nav_chats).setOnClickListener(v -> switchTab(screenChat));
@@ -466,14 +476,42 @@ public final class MainActivity extends Activity implements Events.Listener {
                         .show());
         configureVoice();
         configurePreferences();
+        configureAccountActions();
+        TextView compactStatus = findViewById(R.id.status_text);
+        compactStatus.setMaxWidth(dp(76));
+        compactStatus.setSingleLine(true);
+        compactStatus.setEllipsize(TextUtils.TruncateAt.END);
+        // Sharing has a labelled action in the empty state and in settings.
+        findViewById(R.id.copy_chat_code).setVisibility(View.GONE);
         configureTransport();
+        configureEntryExperience();
         wireChatSettings();
         configureInsets();
+        // Reserve the measured island height, including its margin, outside root content.
+        tabBar.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int reserve = tabBar.getHeight() + dp(22);
+            for (View page : new View[]{screenChat, screenSettings, screenProfile}) {
+                if (page instanceof ScrollView) {
+                    ScrollView scroll = (ScrollView) page;
+                    scroll.setClipToPadding(false);
+                    if (scroll.getPaddingBottom() != reserve) {
+                        scroll.setPadding(scroll.getPaddingLeft(), scroll.getPaddingTop(), scroll.getPaddingRight(), reserve);
+                    }
+                    continue;
+                }
+                android.widget.FrameLayout.LayoutParams params =
+                        (android.widget.FrameLayout.LayoutParams) page.getLayoutParams();
+                if (params.bottomMargin != reserve) {
+                    params.bottomMargin = reserve;
+                    page.setLayoutParams(params);
+                }
+            }
+        });
 
         show(screenBoot);
         requestNotificationPermission();
         try {
-            if (!ValaniumService.core().isOpen()) {
+            if (!ValaniumService.isSigningOut() && !ValaniumService.core().isOpen()) {
                 autoOpenDatabase();
             }
         } catch (Throwable error) {
@@ -486,7 +524,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     protected void onStart() {
         super.onStart();
         try {
-            if (!ValaniumService.core().isOpen()) return;
+            if (ValaniumService.isSigningOut()) return;
+            if (!ValaniumService.core().isOpen()) { autoOpenDatabase(); return; }
             LocalSecretStore secrets = new LocalSecretStore(this);
             long elapsed = backgroundedAt < 0 ? Long.MAX_VALUE
                     : Math.max(0L, SystemClock.elapsedRealtime() - backgroundedAt);
@@ -568,6 +607,79 @@ public final class MainActivity extends Activity implements Events.Listener {
         root.requestApplyInsets();
     }
 
+    /**
+     * Первый экран рассчитан на высокий дисплей Pixel: один ясный сценарий,
+     * крупная зона касания и только одно пояснение вместо трёх тяжёлых карточек.
+     * Логика регистрации не меняется — это только композиция уже существующих
+     * View, поэтому все id и обработчики остаются прежними.
+     */
+    private void configureEntryExperience() {
+        if (!(screenEntry instanceof ScrollView)) return;
+        ScrollView entry = (ScrollView) screenEntry;
+        if (entry.getChildCount() == 0 || !(entry.getChildAt(0) instanceof LinearLayout)) return;
+        LinearLayout content = (LinearLayout) entry.getChildAt(0);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        content.setPadding(0, dp(38), 0, dp(30));
+
+        if (content.getChildCount() < 7) return;
+        ImageView logo = (ImageView) content.getChildAt(0);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(96), dp(96));
+        logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+        logo.setLayoutParams(logoParams);
+        logo.setPadding(dp(16), dp(16), dp(16), dp(16));
+        logo.setBackgroundResource(R.drawable.entry_badge);
+
+        TextView wordmark = (TextView) content.getChildAt(1);
+        wordmark.setTextSize(32);
+        setTopMargin(wordmark, 16);
+
+        TextView badge = (TextView) content.getChildAt(2);
+        badge.setText(R.string.entry_eyebrow);
+        badge.setTextColor(Color.rgb(190, 158, 255));
+        badge.setTextSize(10);
+        badge.setLetterSpacing(0.12f);
+        badge.setPadding(dp(12), dp(7), dp(12), dp(7));
+        badge.setBackgroundResource(R.drawable.entry_badge);
+        setTopMargin(badge, 10);
+
+        ViewGroup form = (ViewGroup) content.getChildAt(3);
+        form.setBackgroundResource(R.drawable.entry_surface);
+        form.setPadding(dp(22), dp(24), dp(22), dp(20));
+        setTopMargin(form, 26);
+        if (form.getChildCount() >= 4) {
+            ((TextView) form.getChildAt(0)).setTextSize(25);
+            ((TextView) form.getChildAt(1)).setTextSize(15);
+        }
+        handle.setBackgroundResource(R.drawable.entry_input);
+        invite.setBackgroundResource(R.drawable.entry_input);
+        entrySubmit.setBackgroundResource(R.drawable.entry_primary);
+        entrySubmit.setTextColor(Color.WHITE);
+        entrySubmit.setTextSize(12);
+
+        // Длинное объяснение не должно отодвигать основное действие ниже сгиба.
+        content.getChildAt(4).setVisibility(View.GONE);
+        content.getChildAt(5).setVisibility(View.GONE);
+        TextView footer = (TextView) content.getChildAt(6);
+        footer.setText(R.string.entry_footer);
+        footer.setTextColor(Color.rgb(160, 151, 175));
+        footer.setTextSize(12);
+        footer.setGravity(Gravity.CENTER);
+        footer.setPadding(dp(18), dp(13), dp(18), dp(13));
+        footer.setBackgroundResource(R.drawable.entry_notice);
+        setTopMargin(footer, 16);
+
+        screenMigrate.setBackgroundResource(R.drawable.entry_surface);
+        screenMigrate.setPadding(dp(24), dp(28), dp(24), dp(24));
+    }
+
+    private void setTopMargin(View view, int margin) {
+        ViewGroup.LayoutParams raw = view.getLayoutParams();
+        if (!(raw instanceof ViewGroup.MarginLayoutParams)) return;
+        ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) raw;
+        params.topMargin = margin;
+        view.setLayoutParams(params);
+    }
+
     /*
       Снимки экрана и список недавних приложений.
 
@@ -647,13 +759,13 @@ public final class MainActivity extends Activity implements Events.Listener {
         });
         findViewById(R.id.accent_white).setOnClickListener(v -> setAccent(Color.rgb(244,244,244)));
         findViewById(R.id.accent_blue).setOnClickListener(v -> setAccent(Color.rgb(112,168,255)));
-        findViewById(R.id.accent_violet).setOnClickListener(v -> setAccent(Color.rgb(169,140,255)));
+        findViewById(R.id.accent_violet).setOnClickListener(v -> setAccent(Color.rgb(124,0,255)));
         findViewById(R.id.accent_green).setOnClickListener(v -> setAccent(Color.rgb(103,212,163)));
         findViewById(R.id.accent_coral).setOnClickListener(v -> setAccent(Color.rgb(237,134,116)));
         findViewById(R.id.dividers_full).setOnClickListener(v -> setDividers("full"));
         findViewById(R.id.dividers_soft).setOnClickListener(v -> setDividers("soft"));
         findViewById(R.id.dividers_none).setOnClickListener(v -> setDividers("none"));
-        cornerRadius.setProgress(Math.max(0, Math.min(16, preferences.getInt("corner_radius", 24) - 8)));
+        cornerRadius.setProgress(Math.max(0, Math.min(16, preferences.getInt("corner_radius", 16) - 8)));
         bubbleRadius.setProgress(Math.max(0, Math.min(22, preferences.getInt("bubble_radius", 24) - 6)));
         squareAvatars.setChecked(preferences.getBoolean("square_avatars", false));
         // Имя id не случайно отличается от ключа настройки: `screen_privacy`
@@ -680,6 +792,20 @@ public final class MainActivity extends Activity implements Events.Listener {
             @Override public void onStopTrackingTouch(SeekBar bar) { reloadHistory(); }
         });
         screenPrivacy.setOnCheckedChangeListener((button, checked) -> {
+            if (!checked && button.isPressed()) {
+                // Сначала возвращаем безопасное положение переключателя. После
+                // подтверждения setChecked(false) придёт без физического тапа
+                // и применит выбор без повторного диалога.
+                button.setChecked(true);
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.screen_privacy_disable_title)
+                        .setMessage(R.string.screen_privacy_disable_message)
+                        .setPositiveButton(R.string.screen_privacy_disable_action,
+                                (dialog, which) -> button.setChecked(false))
+                        .setNegativeButton(R.string.cancel, null)
+                        .show();
+                return;
+            }
             preferences.edit().putBoolean(SCREEN_PRIVACY_KEY, checked).apply();
             applyScreenPrivacy(checked);
         });
@@ -724,7 +850,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String serverUrl() {
         SharedPreferences preferences = appearancePreferences == null
                 ? getSharedPreferences("appearance", MODE_PRIVATE) : appearancePreferences;
-        String mode = preferences.getString(TRANSPORT_KEY, "auto");
+        String mode = preferences.getString(TRANSPORT_KEY, "onion");
         if ("multihop".equals(mode)) {
             /*
               Первый узел выбирает Cloudflare, и повлиять на это нечем: у всех
@@ -749,9 +875,9 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void configureTransport() {
         RoutingView routes = findViewById(R.id.transport_mode);
-        routes.setMode(appearancePreferences.getString(TRANSPORT_KEY, "auto"));
+        routes.setMode(appearancePreferences.getString(TRANSPORT_KEY, "onion"));
         routes.setOnModeChangedListener(mode -> {
-            if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
+            if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
             appearancePreferences.edit().putString(TRANSPORT_KEY, mode).apply();
             showHopCard();
             // Выбрали Onion — начинаем строить цепь немедленно, параллельно с
@@ -765,6 +891,33 @@ public final class MainActivity extends Activity implements Events.Listener {
         });
         configureHopPicker();
         prewarmTor();
+    }
+
+    private void renderTorCircuit() {
+        TextView view = findViewById(R.id.tor_circuit_details);
+        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) {
+            view.setText("Выбран не Onion. Цепочка Tor не используется этим маршрутом.");
+            return;
+        }
+        try {
+            String raw = Core.torCircuit();
+            if (raw == null || "null".equals(raw)) {
+                view.setText("Цепочка ещё не получена. Подключитесь через Onion и нажмите «Обновить сведения».");
+                return;
+            }
+            JSONObject circuit = new JSONObject(raw);
+            JSONArray hops = circuit.optJSONArray("hops");
+            StringBuilder text = new StringBuilder(circuit.optBoolean("active")
+                    ? "Активная цепочка\nЭто устройство" : "Последняя цепочка · соединение закрыто\nЭто устройство");
+            if (hops != null) for (int i = 0; i < Math.min(8, hops.length()); i++) {
+                text.append("\n│\n○ ").append(i == 0 ? "Входной узел" : "Узел Tor " + (i + 1));
+                JSONArray ips = hops.optJSONArray(i);
+                if (ips != null) for (int j = 0; j < ips.length(); j++) text.append("\n   ").append(ips.optString(j));
+            }
+            text.append("\n│\n○ ").append(circuit.optString("destination"));
+            text.append("\n\nТолько клиентская часть цепочки. Узлы на стороне onion-сервера скрыты. Страны не определяются; внешние GeoIP-запросы не выполняются.");
+            view.setText(text);
+        } catch (Throwable error) { view.setText("Сведения о цепочке пока недоступны."); }
     }
 
     /** Строится ли цепь прямо сейчас. Второй запуск не нужен и вреден. */
@@ -787,7 +940,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      */
     private void prewarmTor() {
         if (torWarming) return;
-        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
+        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
         torWarming = true;
         // Состояние Tor — рядом с базой, а не в общем кэше: среди него
         // guards.json, то есть список входных узлов этого человека.
@@ -805,8 +958,12 @@ public final class MainActivity extends Activity implements Events.Listener {
             }
             final boolean ready = socks != null && !socks.isEmpty();
             torWarming = false;
-            runOnUiThread(() -> setStatus(getString(
-                    ready ? R.string.tor_ready : R.string.tor_failed)));
+            runOnUiThread(() -> {
+                if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
+                if (!getString(R.string.status_online).equals(statusText)) {
+                    setStatus(getString(ready ? R.string.tor_ready : R.string.tor_failed));
+                }
+            });
         }, "valanium-tor").start();
     }
 
@@ -829,7 +986,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void showHopCard() {
         View card = findViewById(R.id.hop_card);
         if (card == null) return;
-        boolean multihop = "multihop".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"));
+        boolean multihop = "multihop".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"));
         card.setVisibility(multihop ? View.VISIBLE : View.GONE);
         if (multihop) markChosenHop();
     }
@@ -873,7 +1030,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         switch (themeName()) {
             case "black": return Color.rgb(0, 0, 0);
             case "light": return Color.rgb(242, 242, 240);
-            default: return Color.rgb(5, 5, 5);
+            default: return Color.rgb(8, 6, 12);
         }
     }
 
@@ -881,7 +1038,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         switch (themeName()) {
             case "black": return Color.rgb(7, 7, 7);
             case "light": return Color.rgb(255, 255, 255);
-            default: return Color.rgb(14, 14, 14);
+            default: return Color.rgb(19, 16, 25);
         }
     }
 
@@ -947,6 +1104,9 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (original == Color.rgb(245, 245, 243) || original == Color.WHITE) {
                 label.setTextColor(themeText());
             }
+            if (original == getColor(R.color.valanium_dim) || original == getColor(R.color.valanium_muted)) {
+                label.setTextColor("light".equals(themeName()) ? Color.rgb(91, 83, 105) : original);
+            }
         }
         if (view instanceof android.view.ViewGroup) {
             android.view.ViewGroup group = (android.view.ViewGroup) view;
@@ -955,18 +1115,21 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void resetAppearance() {
-        appearancePreferences.edit().clear().apply();
+        // Reset visual choices only; transport and security are separate settings.
+        SharedPreferences.Editor reset = appearancePreferences.edit();
+        for (String key : new String[]{"theme", "accent_color", "message_text_size", "large_text",
+                "message_width", "interface_scale", "corner_radius", "bubble_radius",
+                "compact_messages", "square_avatars", "wallpaper", "wallpaper_intensity", "dividers"}) {
+            reset.remove(key);
+        }
+        reset.apply();
         messageTextSize.setProgress(3);
         messageWidth.setProgress(14);
         interfaceScale.setProgress(15);
-        cornerRadius.setProgress(16);
+        cornerRadius.setProgress(8);
         bubbleRadius.setProgress(18);
         compactMessages.setChecked(false);
         squareAvatars.setChecked(false);
-        // Сброс возвращает и защиту экрана — к безопасному значению, а не к
-        // тому, что было выбрано до него.
-        ((Switch) findViewById(R.id.hide_from_screenshots)).setChecked(true);
-        applyScreenPrivacy(true);
         applyInterfaceScale(findViewById(R.id.app_root), 1f);
         applyTheme();
         applyAccent();
@@ -1188,18 +1351,31 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private int accentColor() {
-        return appearancePreferences == null ? Color.rgb(244,244,244)
-                : appearancePreferences.getInt("accent_color", Color.rgb(244,244,244));
+        return appearancePreferences == null ? Color.rgb(124,0,255)
+                : appearancePreferences.getInt("accent_color", Color.rgb(124,0,255));
     }
 
     private void setAccent(int color) {
         appearancePreferences.edit().putInt("accent_color", color).apply();
         applyAccent();
+        renderPeers();
         reloadHistory();
     }
 
     private void applyAccent() {
         int accent = accentColor();
+        ((RoutingView) findViewById(R.id.transport_mode)).setAccentColor(accent);
+        Switch privateRegistration = findViewById(R.id.entry_tor_only);
+        privateRegistration.setThumbTintList(new ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{accent, Color.LTGRAY}));
+        privateRegistration.setTrackTintList(new ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{(accent & 0x00ffffff) | 0x66000000, Color.DKGRAY}));
+        if (tabBar != null) tabBar.setAccent(accent);
+        if (currentScreen != null) updateTabBar(currentScreen);
+        showList(contactList.getVisibility() == View.VISIBLE ? LIST_CHATS
+                : requestList.getVisibility() == View.VISIBLE ? LIST_REQUESTS : LIST_CHANNELS);
         int text = Color.luminance(accent) > .55 ? Color.BLACK : Color.WHITE;
         for (int id : new int[]{R.id.send, R.id.migrate, R.id.entry_submit,
                 R.id.recover_submit}) {
@@ -1410,13 +1586,15 @@ public final class MainActivity extends Activity implements Events.Listener {
     // --- локальный ключ и автоматический вход ---------------------------------
 
     private void autoOpenDatabase() {
+        if (databaseOpening) return;
+        databaseOpening = true;
         new Thread(() -> {
             File db = databaseFile();
             LocalSecretStore secrets = new LocalSecretStore(this);
             try {
                 String secret = secrets.load();
                 if (secret == null && db.exists()) {
-                    runOnUiThread(() -> show(screenMigrate));
+                    runOnUiThread(() -> { databaseOpening = false; show(screenMigrate); });
                     return;
                 }
                 if (secret == null) {
@@ -1424,14 +1602,14 @@ public final class MainActivity extends Activity implements Events.Listener {
                     secrets.save(secret);
                 }
                 boolean opened = ValaniumService.core().open(db.getAbsolutePath(), secret);
-                runOnUiThread(() -> finishOpen(opened));
+                runOnUiThread(() -> { databaseOpening = false; finishOpen(opened); });
             } catch (android.security.keystore.UserNotAuthenticatedException locked) {
                 // Замок включён, и система не отдала ключ: подтверждение
                 // просрочено или его ещё не было. Это не ошибка — это ровно то,
                 // ради чего замок включали.
-                runOnUiThread(this::askForUnlock);
+                runOnUiThread(() -> { databaseOpening = false; askForUnlock(); });
             } catch (Throwable error) {
-                runOnUiThread(() -> showStartupError(error));
+                runOnUiThread(() -> { databaseOpening = false; showStartupError(error); });
             }
         }, "valanium-auto-open").start();
     }
@@ -1704,6 +1882,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      * открыто: события забирает локальный поток активности.
      */
     private void startEventDelivery() {
+        if (ValaniumService.isSigningOut()) return;
         if (!canUseForegroundService()) {
             startLocalPolling();
             return;
@@ -1718,7 +1897,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private synchronized void startLocalPolling() {
-        if (localPolling || !ValaniumService.core().isOpen()) return;
+        if (ValaniumService.isSigningOut() || localPolling || !ValaniumService.core().isOpen()) return;
         localPolling = true;
         localPoller = new Thread(() -> {
             while (localPolling) {
@@ -1746,7 +1925,54 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private File databaseFile() {
-        return new File(getFilesDir(), "valanium.db");
+        return new File(getFilesDir(), getSharedPreferences("account_session", MODE_PRIVATE)
+                .getString("database", "valanium.db"));
+    }
+
+    private void configureAccountActions() {
+        findViewById(R.id.account_share).setOnClickListener(v -> {
+            if (ownChatCode.isEmpty()) {
+                toast("Код профиля пока недоступен. Проверьте подключение.");
+                return;
+            }
+            Intent share = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "Мой код Valanium: " + ownChatCode);
+            startActivity(Intent.createChooser(share, "Поделиться профилем"));
+        });
+        findViewById(R.id.account_reconnect).setOnClickListener(v -> {
+            if (myDeviceHex.isEmpty()) return;
+            submit(Commands.disconnect());
+            ui.postDelayed(() -> submit(Commands.connect(serverUrl())), 250);
+            toast("Переподключаемся…");
+        });
+        findViewById(R.id.account_updates).setOnClickListener(v -> checkForUpdates(true));
+        findViewById(R.id.account_logout).setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Выйти из аккаунта?")
+                .setMessage("Аккаунт на сервере не удалится. Для повторного входа нужна фраза восстановления или настроенные данные входа. Прежняя зашифрованная база останется на телефоне, но история не переносится в новую сессию автоматически.")
+                .setNeutralButton("Восстановление", (dialog, which) -> open(screenSecurity))
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton("Выйти", (dialog, which) -> logoutAccount())
+                .show());
+    }
+
+    private void logoutAccount() {
+        if (ValaniumService.isSigningOut()) return;
+        foregroundAuthorized = false;
+        stopRecording(false);
+        stopVoicePlayback();
+        stopLocalPolling();
+        Events.unsubscribe(this);
+        show(screenBoot);
+        ValaniumService.stopForLogout(this, () -> {
+            boolean saved = getSharedPreferences("account_session", MODE_PRIVATE).edit()
+                    .putString("database", "session-" + java.util.UUID.randomUUID() + ".db").commit();
+            if (!saved) toast("Не удалось сохранить выход. Прежний аккаунт сохранён.");
+            android.app.NotificationManager notifications = getSystemService(android.app.NotificationManager.class);
+            if (notifications != null) notifications.cancelAll();
+            startActivity(new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            finish();
+        });
     }
 
     // --- действия --------------------------------------------------------------
@@ -1754,10 +1980,45 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void register() {
         entrySubmit.setEnabled(false);
         entrySubmit.setText(R.string.connecting);
-        submit(Commands.register(serverUrl(), handle.getText().toString().trim(), null));
+        final String name = handle.getText().toString().trim();
+        final boolean torOnly = ((Switch) findViewById(R.id.entry_tor_only)).isChecked();
+        if (!torOnly) {
+            appearancePreferences.edit().putString(TRANSPORT_KEY, "auto").apply();
+            ((RoutingView) findViewById(R.id.transport_mode)).setMode("auto");
+            submit(Commands.register(SERVER_AUTO_URL, name, null));
+            return;
+        }
+        appearancePreferences.edit().putString(TRANSPORT_KEY, "onion").apply();
+        ((RoutingView) findViewById(R.id.transport_mode)).setMode("onion");
+        new Thread(() -> {
+            String address;
+            try { address = Core.startTor(new File(getFilesDir(), "tor").getAbsolutePath()); }
+            catch (Throwable error) { address = ""; }
+            final boolean ready = address != null && !address.isEmpty();
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (ready && foregroundAuthorized) {
+                    submit(Commands.register(SERVER_ONION_URL, name, null));
+                } else {
+                    entrySubmit.setEnabled(true);
+                    entrySubmit.setText(R.string.register);
+                    toast("Tor не готов. Регистрация не отправлена; прямого подключения не было.");
+                }
+            });
+        }, "valanium-private-register").start();
     }
 
     private void checkForUpdates() {
+        checkForUpdates(false);
+    }
+
+    private void checkForUpdates(boolean manual) {
+        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))
+                || (myDeviceHex.isEmpty() && ((Switch) findViewById(R.id.entry_tor_only)).isChecked())) {
+            if (manual) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
+            return;
+        }
+        if (manual) toast("Проверяем обновления…");
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
@@ -1773,9 +2034,9 @@ public final class MainActivity extends Activity implements Events.Listener {
                     JSONObject outer = new JSONObject(bytes.toString("UTF-8"));
                     String manifestText = outer.getString("manifest");
                     String signature = outer.getString("signature");
-                    if (!ValaniumService.core().verifyRelease(manifestText, signature)) return;
+                    if (!ValaniumService.core().verifyRelease(manifestText, signature)) throw new java.io.IOException("Invalid signature");
                     JSONObject manifest = new JSONObject(manifestText);
-                    if (manifest.getInt("v") != 1) return;
+                    if (manifest.getInt("v") != 1) throw new java.io.IOException("Unknown manifest");
                     JSONObject release = manifest.getJSONObject("android");
                     String latest = release.getString("version");
                     String url = release.getString("url");
@@ -1787,7 +2048,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                             || download.getPath() == null
                             || !download.getPath().startsWith("/downloads/")
                             || !sha256.matches("^[0-9a-f]{64}$")
-                            || expectedBytes <= 0) return;
+                            || expectedBytes <= 0) throw new java.io.IOException("Invalid download");
                     if (compareVersions(latest, appVersion()) > 0) {
                         runOnUiThread(() -> new AlertDialog.Builder(this)
                                 .setTitle("Доступно обновление " + latest)
@@ -1796,10 +2057,13 @@ public final class MainActivity extends Activity implements Events.Listener {
                                         startActivity(new Intent(Intent.ACTION_VIEW, download)))
                                 .setNegativeButton("Позже", null)
                                 .show());
+                    } else if (manual) {
+                        runOnUiThread(() -> toast("Установлена актуальная версия: " + appVersion()));
                     }
                 }
             } catch (Exception ignored) {
                 // Проверка не должна мешать запуску и работе офлайн.
+                if (manual) runOnUiThread(() -> toast("Не удалось проверить обновления. Повторите позже."));
             } finally {
                 if (connection != null) connection.disconnect();
             }
@@ -2036,7 +2300,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void submit(String command) {
-        if (!foregroundAuthorized) return;
+        if (!foregroundAuthorized || ValaniumService.isSigningOut()) return;
         if (!ValaniumService.core().submit(command)) {
             toast(getString(R.string.core_busy));
         }
@@ -2061,7 +2325,9 @@ public final class MainActivity extends Activity implements Events.Listener {
             case "authenticated":
                 admin = event.optBoolean("admin");
                 findViewById(R.id.open_admin).setVisibility(admin ? View.VISIBLE : View.GONE);
-                show(screenChat);
+                if (currentScreen == screenBoot || currentScreen == screenEntry || currentScreen == screenRecover) {
+                    show(screenChat);
+                }
                 setStatus(getString(R.string.status_online));
                 submit(Commands.conversations());
                 submit(Commands.privacyGet());
@@ -2183,6 +2449,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         setMyDevice(event.optString("device"));
         myIdentityHex = event.optString("identity");
+        // Local unlock is sufficient for local UI; network authentication may take time.
+        if (currentScreen == screenBoot) show(screenChat);
         ((TextView) findViewById(R.id.my_identity)).setText(shortHex(myIdentityHex));
         submit(Commands.fingerprint(myIdentityHex));
         submit(Commands.conversations());
@@ -2192,6 +2460,11 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void onFailed(JSONObject event) {
         String code = event.optString("code");
+        // Transport failures must allow retry too, not only invalid names/invites.
+        if (screenEntry.getVisibility() == View.VISIBLE) {
+            entrySubmit.setEnabled(true);
+            entrySubmit.setText(R.string.register);
+        }
 
         // Отказы восстановления показываются на своём экране, а не тостом: там
         // человек только что нажал кнопку и ждёт ответа именно на неё.
@@ -2405,6 +2678,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         // Размывать надо именно тот экран, что под островком.
         tabBar.setSource(screen);
         int accent = accentColor();
+        if (!"light".equals(themeName()) && Color.luminance(accent) < .3) {
+            accent = Color.rgb((Color.red(accent) + 255) / 2,
+                    (Color.green(accent) + 255) / 2, (Color.blue(accent) + 255) / 2);
+        }
         for (int[] tab : new int[][]{
                 {R.id.nav_chats, R.id.nav_chats_icon, R.id.nav_chats_label},
                 {R.id.nav_settings, R.id.nav_settings_icon, R.id.nav_settings_label},
@@ -2454,7 +2731,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         for (View candidate : new View[]{screenBoot, screenMigrate, screenEntry, screenRecover,
                 screenChat, screenConversation, screenProfile, screenSettings, screenPrivacy,
-                screenPrivacySection, screenAppearance, screenUsername, screenSecurity,
+                screenPrivacySection, screenAppearance, screenConnection, screenProtection, screenUsername, screenSecurity,
                 screenAdmin, screenChatSettings, screenData, screenChannel}) {
             if (candidate == null) continue;
             if (candidate != screen) {
@@ -2606,12 +2883,35 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         if (conversations.isEmpty()) {
             TextView empty = new TextView(this);
-            empty.setText("Пока нет контактов\nДобавьте человека по короткому OBS-коду");
+            empty.setText("Начните первый разговор\nДобавьте человека по юзернейму или коду\nлибо поделитесь своим кодом");
             empty.setTextColor(getColor(R.color.valanium_muted));
             empty.setTextSize(14);
             empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(80), 0, dp(40));
+            empty.setPadding(dp(16), dp(36), dp(16), dp(20));
             contactList.addView(empty);
+            Button start = new Button(this);
+            start.setText("Начать чат");
+            start.setTextSize(15);
+            start.setAllCaps(false);
+            start.setTextColor(Color.luminance(accentColor()) > .55 ? Color.BLACK : Color.WHITE);
+            GradientDrawable primary = new GradientDrawable();
+            primary.setColor(accentColor());
+            primary.setCornerRadius(dp(16));
+            start.setBackground(primary);
+            contactList.addView(start, new LinearLayout.LayoutParams(-1, dp(52)));
+            start.setOnClickListener(v -> {
+                newPeer.requestFocus();
+                ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
+                        .showSoftInput(newPeer, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            });
+            Button share = new Button(this);
+            share.setText("Поделиться моим кодом");
+            share.setTextSize(15);
+            share.setAllCaps(false);
+            share.setTextColor(themeText());
+            share.setBackgroundColor(Color.TRANSPARENT);
+            contactList.addView(share, new LinearLayout.LayoutParams(-1, dp(52)));
+            share.setOnClickListener(v -> findViewById(R.id.account_share).performClick());
             return;
         }
         for (String peer : matchingPeers()) {
@@ -4654,8 +4954,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         // SQLite в режиме WAL держит свежие записи в отдельном файле: без него
         // «база» показывала бы четыре килобайта при полной переписке.
         long database = databaseFile().length()
-                + new File(getFilesDir(), "valanium.db-wal").length()
-                + new File(getFilesDir(), "valanium.db-shm").length();
+                + new File(databaseFile().getPath() + "-wal").length()
+                + new File(databaseFile().getPath() + "-shm").length();
         long cache = directorySize(getCacheDir());
         view.setText(getString(R.string.data_sizes, formatBytes(database), formatBytes(cache),
                 conversations.size()));

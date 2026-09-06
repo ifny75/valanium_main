@@ -315,7 +315,7 @@ const ONBOARDING_LANGUAGE = "valanium.onboarding.language";
 const ONBOARDING_COMPLETE = "valanium.onboarding.complete";
 let onboardingLanguage = localStorage.getItem(ONBOARDING_LANGUAGE)
   || (navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en");
-let chosenTransport = "auto";
+let chosenTransport = "onion";
 
 const onboardingCopy = {
   ru: {
@@ -664,7 +664,27 @@ $("form-entry").addEventListener("submit", async (event) => {
   state.registrationPending = true;
   button.disabled = true;
   button.textContent = "Подключаем…";
-  const accepted = await submit({ type: "register", url: serverUrl(), handle: handle || null, invite: null });
+  const torOnly = $("entry-tor-only").checked;
+  // Freeze the route before asynchronous bootstrap: UI changes must not downgrade this request.
+  const registrationUrl = torOnly ? "valanium://onion" : serverUrl();
+  if (torOnly) {
+    preferences.transport = "onion";
+    savePreferences();
+    try {
+      const tor = await invoke("onionize_status");
+      if (!tor?.installed) throw new Error("Сначала установите Tor кнопкой ниже. Регистрация ещё не отправлена.");
+      button.textContent = "Подготавливаем Tor…";
+      await invoke("onionize_start");
+    } catch (error) {
+      $("entry-error").textContent = `Регистрация через Tor не началась: ${error.message ?? error}`;
+      state.pendingRecoverySetup = null;
+      state.registrationPending = false;
+      button.disabled = false;
+      button.textContent = "Зарегистрироваться";
+      return;
+    }
+  }
+  const accepted = await submit({ type: "register", url: registrationUrl, handle: handle || null, invite: null });
   if (!accepted) {
     state.pendingRecoverySetup = null;
     state.registrationPending = false;
@@ -2745,7 +2765,7 @@ $("avatar-file").addEventListener("change", () => {
 
 const settingsPage = $("settings-page");
 const preferenceDefaults = {
-  transport: "auto",
+  transport: "onion",
   theme: "dark",
   accent: "#7b2cff",
   accentText: "#ffffff",
@@ -3644,7 +3664,21 @@ for (const button of document.querySelectorAll("#transport-segment [data-transpo
   Скачивание, сверка хеша и запуск живут в Rust намеренно: этот файл потом
   выполняется, и решать о его подлинности во фронтенде — не то место.
 */
-const ONIONIZE_URL = "https://valanium.com/downloads/onionize.json";
+let onionizeError = "";
+$("entry-install-tor")?.addEventListener("click", () => {
+  confirmAction("Скачать Tor?", "Установщик обратится к valanium.com и GitHub по обычному HTTPS. Они увидят сетевой адрес этого запроса. Данные регистрации не отправляются. После установки регистрация пойдёт только через Tor.", async () => {
+    const button = $("entry-install-tor");
+    button.disabled = true;
+    button.textContent = "Скачиваем и проверяем подпись…";
+    try {
+      await invoke("onionize_install");
+      button.textContent = "Tor установлен — можно регистрироваться";
+    } catch (error) {
+      $("entry-error").textContent = String(error.message ?? error);
+      button.textContent = "Повторить установку Tor (HTTPS)";
+    } finally { button.disabled = false; }
+  });
+});
 
 async function refreshOnionize() {
   const card = $("onionize-card");
@@ -3656,11 +3690,29 @@ async function refreshOnionize() {
 
   const note = $("onionize-note");
   const hint = $("onionize-hint");
+  let circuitView = $("onionize-circuit");
+  if (!circuitView) {
+    circuitView = document.createElement("pre");
+    circuitView.id = "onionize-circuit";
+    circuitView.className = "tor-circuit";
+    card.appendChild(circuitView);
+  }
+  const circuit = state.circuit;
+  if (circuit && Array.isArray(circuit.hops)) {
+    const rows = circuit.hops.slice(0, 8).map((ips, index) =>
+      `  ${index + 1}. ${index === 0 ? "Входной узел" : "Узел Tor"}: ${Array.isArray(ips) ? ips.join(", ") : "IP недоступен"}`);
+    circuitView.textContent = `${circuit.active ? "Активная цепочка" : "Последняя цепочка (соединение закрыто)"}\nЭто устройство\n${rows.join("\n")}\n  → ${String(circuit.destination ?? "")}\nСерверная часть onion-цепочки скрыта. Геолокация не запрашивается.`;
+  } else {
+    circuitView.textContent = "IP появятся после onion-соединения. Для просмотра цепочки нужен Onionize 0.1.1 или новее.";
+  }
   $("onionize-install").classList.toggle("hidden", state.installed);
   $("onionize-start").classList.toggle("hidden", !state.installed || state.running || onionizeWarming);
   $("onionize-stop").classList.toggle("hidden", !state.running);
 
-  if (onionizeWarming) {
+  if (onionizeError) {
+    note.textContent = "Не удалось подготовить Tor";
+    hint.textContent = onionizeError;
+  } else if (onionizeWarming) {
     note.textContent = "Строим цепь Tor заранее, чтобы Onion не заставлял ждать.";
     hint.textContent = "Первый раз это занимает около минуты. Приложением можно пользоваться.";
   } else if (state.running) {
@@ -3696,13 +3748,12 @@ async function prewarmOnionize() {
   if (!state.installed || state.running) return;
 
   onionizeWarming = true;
+  onionizeError = "";
   refreshOnionize();
   try {
     await invoke("onionize_start");
-  } catch {
-    // Молча. Человек не просил этого прямо сейчас, и всплывающая жалоба при
-    // запуске — худший способ сообщить о необязательной неудаче. Состояние
-    // видно в карточке, а попытка подключиться через Onion скажет прямо.
+  } catch (error) {
+    onionizeError = String(error.message ?? error);
   } finally {
     onionizeWarming = false;
     refreshOnionize();
@@ -3713,31 +3764,13 @@ $("onionize-install")?.addEventListener("click", async () => {
   const button = $("onionize-install");
   button.disabled = true;
   const previous = button.textContent;
-  button.textContent = "Скачиваем…";
+  onionizeError = "";
+  button.textContent = "Скачиваем и проверяем…";
   try {
-    const response = await fetch(ONIONIZE_URL, { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    if (typeof payload.manifest !== "string" || typeof payload.signature !== "string") {
-      throw new Error("ответ без подписи");
-    }
-    const trusted = await invoke("verify_release", {
-      manifest: payload.manifest,
-      signature: payload.signature,
-    });
-    // Без подписи не продолжаем вовсе: скачать и запустить неподписанное —
-    // это отдать машину тому, кто подменит файл.
-    if (!trusted) throw new Error("подпись не сходится");
-
-    const build = JSON.parse(payload.manifest).windows;
-    if (!build) throw new Error("в манифесте нет сборки для Windows");
-    await invoke("onionize_install", {
-      url: build.url,
-      sha256: build.sha256,
-      bytes: build.bytes,
-    });
+    await invoke("onionize_install");
     toast("Tor установлен");
   } catch (error) {
+    onionizeError = String(error.message ?? error);
     toast(`Не удалось установить Tor: ${error.message ?? error}`);
   } finally {
     button.disabled = false;
@@ -3745,7 +3778,7 @@ $("onionize-install")?.addEventListener("click", async () => {
     refreshOnionize();
     // Поставили при выбранном Onion — греем сразу, не дожидаясь, пока человек
     // упрётся в минуту ожидания.
-    prewarmOnionize();
+    if (!onionizeError) prewarmOnionize();
   }
 });
 
@@ -3755,10 +3788,12 @@ $("onionize-start")?.addEventListener("click", async () => {
   const previous = button.textContent;
   // Честный текст вместо крутилки: минута молчания читается как поломка.
   button.textContent = "Строим цепь Tor…";
+  onionizeError = "";
   try {
     const socks = await invoke("onionize_start");
     toast(`Tor готов: ${socks}`);
   } catch (error) {
+    onionizeError = String(error.message ?? error);
     toast(`Tor не запустился: ${error}`);
   } finally {
     button.disabled = false;
@@ -3774,6 +3809,10 @@ $("onionize-stop")?.addEventListener("click", async () => {
 
 refreshOnionize();
 prewarmOnionize();
+setInterval(() => {
+  const card = $("onionize-card");
+  if (card && card.getClientRects().length && !document.hidden) refreshOnionize();
+}, 3000);
 
 for (const button of document.querySelectorAll("#hop-segment [data-hop]")) {
   button.addEventListener("click", () => {
@@ -4217,42 +4256,38 @@ $("username-copy").addEventListener("click", () => {
   copyText(`@${state.username}`, "Юзернейм скопирован");
 });
 
-function renderDecor() {
-  const emblems = $("emblem-grid");
-  emblems.replaceChildren();
-  for (const [key, glyph] of EMBLEMS) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = key === "none" ? "∅" : glyph;
-    button.title = key;
-    button.classList.toggle("active", (state.emblem ?? "none") === key);
-    button.disabled = state.decorSupported === false;
-    button.addEventListener("click", () => {
-      state.emblem = key;
-      submit({ type: "profile_decor", emblem: key });
-      renderDecor();
-    });
-    emblems.appendChild(button);
-  }
+const EMBLEM_LABELS = {
+  none: "Без значка", star: "Звезда", moon: "Луна", leaf: "Лист",
+  flame: "Пламя", drop: "Капля", bolt: "Молния", heart: "Сердце",
+  anchor: "Якорь", crown: "Корона", orbit: "Орбита", shield: "Щит",
+};
 
-  const colors = $("color-grid");
-  colors.replaceChildren();
-  for (const [key, label, value] of PROFILE_COLORS) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.title = label;
-    button.classList.toggle("active", (state.color ?? "none") === key);
-    const dot = document.createElement("i");
-    dot.style.setProperty("--swatch", value);
-    button.appendChild(dot);
-    button.disabled = state.decorSupported === false;
-    button.addEventListener("click", () => {
-      state.color = key;
-      submit({ type: "profile_decor", color: key });
-      renderDecor();
-    });
-    colors.appendChild(button);
+$("profile-emblem").addEventListener("change", (event) => {
+  state.emblem = event.target.value;
+  submit({ type: "profile_decor", emblem: state.emblem });
+  renderDecor();
+});
+
+$("profile-color").addEventListener("change", (event) => {
+  state.color = event.target.value;
+  submit({ type: "profile_decor", color: state.color });
+  renderDecor();
+});
+
+function renderDecor() {
+  const emblems = $("profile-emblem");
+  const colors = $("profile-color");
+  if (!emblems.options.length) {
+    for (const [key, glyph] of EMBLEMS) {
+      emblems.add(new Option(key === "none" ? EMBLEM_LABELS[key] : `${glyph} ${EMBLEM_LABELS[key]}`, key));
+    }
+    for (const [key, label] of PROFILE_COLORS) {
+      colors.add(new Option(label, key));
+    }
   }
+  emblems.value = EMBLEMS.some(([key]) => key === state.emblem) ? state.emblem : "none";
+  colors.value = PROFILE_COLORS.some(([key]) => key === state.color) ? state.color : "none";
+  emblems.disabled = colors.disabled = state.decorSupported === false;
 
   const preview = $("profile-decor-preview");
   const previewColor = profileColor(state.color) || "var(--muted)";
@@ -4541,6 +4576,10 @@ function compareVersions(left, right) {
   замок, и всё остальное разом.
 */
 async function checkForUpdates(showFailure = false) {
+  if (preferences.transport === "onion" || (!state.device && $("entry-tor-only")?.checked)) {
+    if (showFailure) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
+    return;
+  }
   const status = $("update-status");
   const download = $("update-download");
   appVersion = await invoke("app_version").catch(() => appVersion);

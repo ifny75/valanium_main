@@ -237,6 +237,16 @@ mod tests {
 */
 #[cfg(feature = "tor-embedded")]
 #[no_mangle]
+pub extern "system" fn Java_app_valanium_core_Core_torCircuit(
+    env: JNIEnv, _class: JClass,
+) -> jstring {
+    let result = catch_unwind(AssertUnwindSafe(valanium_core::tor::circuit_snapshot))
+        .unwrap_or_else(|_| "null".into());
+    env.new_string(result).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[cfg(feature = "tor-embedded")]
+#[no_mangle]
 pub extern "system" fn Java_app_valanium_core_Core_nativeStartTor(
     mut env: JNIEnv,
     _class: JClass,
@@ -246,6 +256,10 @@ pub extern "system" fn Java_app_valanium_core_Core_nativeStartTor(
         let Ok(dir) = env.get_string(&data_dir) else { return String::new() };
         let dir: String = dir.into();
 
+        static TOR_ADDRESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+        let Ok(mut cached) = TOR_ADDRESS.lock() else { return String::new() };
+        if let Some(address) = cached.as_ref() { return address.clone(); }
+
         // Среду выполнения заводит и держит само ядро: слушатель SOCKS живёт
         // на её потоках и обязан пережить возврат отсюда.
         match valanium_core::tor::start(std::path::Path::new(&dir)) {
@@ -253,6 +267,7 @@ pub extern "system" fn Java_app_valanium_core_Core_nativeStartTor(
                 // Ядро читает переменную в момент подключения, поэтому
                 // достаточно выставить её здесь.
                 std::env::set_var("VALANIUM_TOR_SOCKS", address.to_string());
+                *cached = Some(address.to_string());
                 address.to_string()
             }
             Err(_) => String::new(),

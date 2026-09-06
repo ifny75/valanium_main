@@ -48,6 +48,12 @@ public class BlurPanel extends FrameLayout {
 
     /** Что размывать: экран под островком. */
     private View source;
+    private int accent = Color.rgb(124, 0, 255);
+
+    public void setAccent(int color) {
+        accent = color;
+        invalidate();
+    }
 
     public BlurPanel(Context context) { this(context, null); }
 
@@ -132,6 +138,9 @@ public class BlurPanel extends FrameLayout {
         canvas.save();
         canvas.clipPath(clip);
         canvas.drawBitmap(shot, source_rect, target, paint);
+        paint.setColor(Color.argb(30, Color.red(accent), Color.green(accent), Color.blue(accent)));
+        canvas.drawRect(target, paint);
+        paint.setColor(Color.WHITE);
         canvas.restore();
     }
 

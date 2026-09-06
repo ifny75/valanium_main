@@ -31,6 +31,37 @@ public final class ValaniumService extends Service {
     private static final int POLL_TIMEOUT_MS = 500;
 
     private static final Core core = new Core();
+    private static Runnable afterStop;
+    private static boolean signingOut;
+    private static boolean startRequested;
+    private static ValaniumService instance;
+
+    public static boolean isSigningOut() { return signingOut; }
+
+    /** Called on the main thread; reopen a database only after onDestroy closes the old core. */
+    public static void stopForLogout(Context context, Runnable completed) {
+        if (signingOut) return;
+        signingOut = true;
+        afterStop = completed;
+        // Android treats stopping an unpromoted FGS as a fatal startup failure.
+        // Let the pending onCreate promote it, then stop immediately.
+        if (startRequested && instance == null) return;
+        if (!context.stopService(new Intent(context, ValaniumService.class))) {
+            new Thread(() -> {
+                core.close();
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(
+                        ValaniumService::finishLogout);
+            }, "valanium-logout").start();
+        }
+    }
+
+    private static void finishLogout() {
+        Events.clearPending();
+        Runnable callback = afterStop;
+        afterStop = null;
+        signingOut = false;
+        if (callback != null) callback.run();
+    }
 
     private volatile boolean running;
     private Thread poller;
@@ -41,11 +72,18 @@ public final class ValaniumService extends Service {
     }
 
     public static void start(Context context) {
+        if (signingOut || startRequested) return;
+        startRequested = true;
         Intent intent = new Intent(context, ValaniumService.class);
+        try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent);
         } else {
             context.startService(intent);
+        }
+        } catch (RuntimeException error) {
+            startRequested = false;
+            throw error;
         }
     }
 
@@ -56,6 +94,8 @@ public final class ValaniumService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
+        startRequested = true;
         try {
             createChannel();
             startForeground(NOTIFICATION_ID, buildNotification());
@@ -67,6 +107,7 @@ public final class ValaniumService extends Service {
             return;
         }
 
+        if (signingOut) { stopSelf(); return; }
         running = true;
         poller = new Thread(this::pollLoop, "valanium-poll");
         poller.start();
@@ -85,6 +126,13 @@ public final class ValaniumService extends Service {
     }
 
     @Override
+    public void onTimeout(int startId, int fgsType) {
+        // Respect Android's dataSync budget; do not crash or silently restart around it.
+        getSharedPreferences("service_state", MODE_PRIVATE).edit().putBoolean("timed_out", true).apply();
+        stopSelf();
+    }
+
+    @Override
     public void onDestroy() {
         running = false;
         if (poller != null) {
@@ -97,7 +145,10 @@ public final class ValaniumService extends Service {
             }
         }
         core.close();
+        instance = null;
+        startRequested = false;
         super.onDestroy();
+        if (signingOut) finishLogout();
     }
 
     private void pollLoop() {

@@ -21,11 +21,11 @@
     <string name="startup_error">Не удалось запустить защищённое ядро (%1$s). Сообщите этот код разработчику.</string>
     <string name="background_limited">Фоновая работа ограничена, но приложение продолжит работать открытым</string>
 
-    <string name="registration_title">Создайте приватный аккаунт</string>
+    <string name="registration_title">Создайте личное пространство</string>
     <string name="registration_hint">Регистрация открыта для всех. После неё приложение само входит в аккаунт при каждом запуске.</string>
     <string name="handle">Имя — необязательно</string>
     <string name="invite">Инвайт-код</string>
-    <string name="register">Зарегистрироваться</string>
+    <string name="register">Создать аккаунт</string>
     <string name="connecting">Подключаем…</string>
     <string name="server_fixed_hint">Защищённый сервер настроен автоматически</string>
 
@@ -43,7 +43,7 @@
     <string name="settings_hint">Размеры интерфейса сохраняются только на этом телефоне.</string>
     <string name="settings_local">Настройки не отправляются на сервер.</string>
     <string name="transport_title">Подключение</string>
-    <string name="transport_hint">Нажмите на схему, чтобы сменить маршрут. До main ваш адрес не доходит ни одним из них: входной узел заменяет его жетоном, из которого IP не восстановить. Разница в другом — сколько узлов на пути и кто ещё видит адрес по дороге. Relay: один узел, адрес видит Cloudflare. Multi-hop: два узла, адрес знает только первый и лишь мгновение. Onion: мимо Cloudflare, адреса не знает никто, но нужен запущенный Tor или Orbot.</string>
+    <string name="transport_hint">Выберите маршрут подключения. Relay — один промежуточный узел, Multi-hop — два. Onion использует встроенный Tor; отдельный Orbot не требуется.</string>
     <string name="transport_auto_title">Auto</string>
     <string name="transport_auto_hint">Доступный маршрут автоматически</string>
     <string name="transport_basic_title">Relay</string>
@@ -183,7 +183,7 @@
     <string name="theme_light">Светлая</string>
     <string name="corner_radius">Скругление интерфейса</string>
     <string name="bubble_radius">Скругление сообщений</string>
-    <string name="app_lock">Замок приложения</string>
+    <string name="app_lock">Блокировка входа</string>
     <string name="app_lock_hint">Спрашивать отпечаток или код разблокировки, прежде чем открыть переписку. Уже открытое приложение продолжает принимать сообщения в фоне</string>
     <string name="app_lock_needs_credential">Сначала настройте блокировку экрана в системе — иначе подтверждать нечем</string>
     <string name="app_lock_failed">Не удалось включить замок</string>
@@ -194,8 +194,14 @@
     <string name="app_lock_30s">30 секунд</string>
     <string name="app_lock_1m">1 минуту</string>
     <string name="app_lock_5m">5 минут</string>
-    <string name="screen_privacy">Прятать от снимков экрана</string>
-    <string name="screen_privacy_hint">Скрывает переписку в списке недавних приложений и запрещает снимки экрана. Другие приложения на этом телефоне перестают видеть, что на экране</string>
+    <string name="screen_privacy">Скрытие экрана</string>
+    <string name="screen_privacy_hint">Запрещает скриншоты и скрывает содержимое в списке недавних. Выключите, если хотите показать или записать интерфейс: данные станут видны другим приложениям и в превью системы.</string>
+    <string name="screen_privacy_disable_title">Разрешить снимки экрана?</string>
+    <string name="screen_privacy_disable_message">Переписка и профили будут видны на скриншотах, в записи экрана и в карточке недавних приложений.</string>
+    <string name="screen_privacy_disable_action">Разрешить</string>
+    <string name="app_lock_disable_title">Выключить замок приложения?</string>
+    <string name="app_lock_disable_message">После выхода из приложения переписка будет открываться без подтверждения личности.</string>
+    <string name="app_lock_disable_action">Выключить</string>
     <string name="square_avatars">Квадратные аватары</string>
     <string name="square_avatars_hint">Форма аватаров во всём приложении</string>
     <string name="settings_reset">Сбросить оформление</string>
@@ -330,6 +336,8 @@
     <string name="admin_open_hint">Человек снова сможет входить на сервер.</string>
     <string name="tab_chats">Чаты</string>
     <string name="entry_lead">Заведите профиль — займёт минуту. Ни номера телефона, ни адресной книги не потребуется.</string>
+    <string name="entry_eyebrow">ЗАЩИЩЁННАЯ ПЕРЕПИСКА</string>
+    <string name="entry_footer">Ключи создаются и остаются на этом Pixel. Сервер не получает доступа к сообщениям.</string>
     <string name="entry_how">Как это защищено</string>
     <string name="entry_point_one">Сообщения шифруются на этом устройстве по MLS — тому же стандарту (RFC 9420), что и групповое шифрование в больших мессенджерах.</string>
     <string name="entry_point_two">Ключи не покидают телефон. Их нет ни у нас, ни у того, кто держит сервер.</string>

@@ -1,0 +1,5 @@
+.registration-privacy { display:flex; align-items:flex-start; gap:10px; font-size:14px; line-height:1.5; color:#eee9f7; }
+.registration-privacy input { flex:0 0 auto; margin-top:4px; accent-color:#9b52ff; }
+.registration-privacy-note { font:400 12px/1.5 Inter,sans-serif; color:#bbb3c6; margin:10px 0; }
+#entry-install-tor { width:100%; margin:6px 0 12px; min-height:44px; }
+.tor-circuit { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--text-secondary, #bbb3c6); font:12px/1.7 monospace; padding:16px; background:rgba(124,0,255,.06); border:1px solid rgba(160,95,255,.2); border-radius:12px; }

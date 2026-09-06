@@ -24,6 +24,14 @@ export const metadata: Metadata = {
   twitter: { card: 'summary_large_image', title: TITLE, description: DESCRIPTION, images: ['/og.png'] },
 };
 
+const NETWORK_NODES = [
+  { id: '01', name: 'Главный узел', role: 'Координация сети', flag: '/flags/germany.svg', country: 'Германия' },
+  { id: '02', name: 'VPN сервис', role: 'Защищённый выход', flag: '/flags/netherlands.svg', country: 'Нидерланды' },
+  { id: '03', name: 'Relay One', role: 'Защищённый маршрут', flag: '/flags/finland.svg', country: 'Финляндия' },
+  { id: '04', name: 'Relay Two', role: 'Защищённый маршрут', flag: '/flags/germany.svg', country: 'Германия' },
+  { id: '05', name: 'Relay Four', role: 'Защищённый маршрут', flag: '/flags/sweden.svg', country: 'Швеция' },
+] as const;
+
 /*
   Главная — витрина: заголовок, обещание, три значка.
 
@@ -45,6 +53,7 @@ export default function Home() {
       <section className="stage shell">
         <div className="glass">
           <span className="glass-glow" aria-hidden="true" />
+          <span className="stage-signal-field" aria-hidden="true"><i /><i /><i /><i /></span>
 
           <div className="glass-inner">
             <h1><span>Приватность</span> начинается здесь</h1>
@@ -69,6 +78,54 @@ export default function Home() {
               ))}
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="network-overview" id="network">
+        <div className="network-overview-inner shell">
+        <div className="network-overview-intro">
+          <span className="section-eyebrow"><i /> Инфраструктура Valanium</span>
+          <h2>Пять узлов.<br />Одна сеть.</h2>
+          <p>Показываем состояние сервисов, но не раскрываем адреса и внутреннюю топологию.</p>
+          <div className="network-metric"><strong>05</strong><span>публичных<br />узлов</span></div>
+          <a className="network-status-link" href="/status">Смотреть live-статус <span>↗</span></a>
+        </div>
+
+        <div className="network-index" aria-label="Публичные узлы сети Valanium">
+          <header><span>VALANIUM / NETWORK</span><b>Доступность · 30 дней</b></header>
+          <ol>
+            {NETWORK_NODES.map((node, nodeIndex) => (
+              <li key={node.id}>
+                <span className="network-node-id">{node.id}</span>
+                <div className="network-node-name">
+                  <span className="network-node-flag"><img src={node.flag} alt={`Флаг: ${node.country}`} /></span>
+                  <span><strong>{node.name}</strong><small>{node.country}</small></span>
+                </div>
+                <p>{node.role}</p>
+                <div className="network-signal" aria-label="Узел стабильно доступен последние 30 дней">
+                  {Array.from({ length: 18 }, (_, barIndex) => (
+                    <i
+                      key={barIndex}
+                      style={{ animationDelay: `${-(nodeIndex * 0.17 + barIndex * 0.055)}s` }}
+                    />
+                  ))}
+                </div>
+                <em>Онлайн</em>
+              </li>
+            ))}
+          </ol>
+        </div>
+        </div>
+      </section>
+
+      <section className="manifesto">
+        <div className="manifesto-inner shell">
+        <div className="manifesto-kicker"><span>01</span><p>Приватность по умолчанию</p></div>
+        <h2>Личное<br />остаётся <em>личным.</em></h2>
+        <div className="manifesto-foot">
+          <p>Содержание видите только вы и собеседник.</p>
+          <span>Valanium передаёт сообщения — и не читает их.</span>
+        </div>
         </div>
       </section>
 
@@ -102,8 +159,52 @@ export default function Home() {
           </div>
           <div className="routes-visual">
             <span>Valanium Messenger</span>
-            <img className="routes-phone" src="/media/chat-phone.png" alt="Профиль в мессенджере Valanium" />
+            <div className="routes-device">
+              <i className="routes-orbit routes-orbit-outer" aria-hidden="true" />
+              <i className="routes-orbit routes-orbit-inner" aria-hidden="true" />
+              <span className="routes-packet routes-packet-one" aria-hidden="true" />
+              <span className="routes-packet routes-packet-two" aria-hidden="true" />
+              <img className="routes-phone" src="/media/chat-phone.png" alt="Профиль в мессенджере Valanium" />
+              <small className="routes-detail routes-detail-key">Ключи на устройстве</small>
+              <small className="routes-detail routes-detail-delivery">Доставлено</small>
+            </div>
           </div>
+        </div>
+      </section>
+
+      <section className="service-rail shell" id="services">
+        <div className="service-rail-head">
+          <span className="section-eyebrow"><i /> Экосистема Valanium</span>
+          <p>Не множество разрозненных приложений. Одна спокойная среда для общения, доступа и почты.</p>
+        </div>
+        <div className="service-rail-list">
+          <a className="rail-item rail-item-ready" href="/messenger">
+            <span>01</span><img src="/logos/messenger.svg" alt="" /><div><small>УЖЕ ДОСТУПЕН</small><h2>Messenger</h2></div><p>Сквозное шифрование, сообщества и личные сообщения — без номера телефона.</p><b>Открыть <i>↗</i></b>
+          </a>
+          <a className="rail-item" href="/mail">
+            <span>02</span><img src="/logos/mail.svg" alt="" /><div><small>В РАЗРАБОТКЕ</small><h2>Mail</h2></div><p>Почта с вашим именем, в которой нет места рекламному наблюдению.</p><b>Узнать <i>↗</i></b>
+          </a>
+          <a className="rail-item" href="/vpn">
+            <span>03</span><img src="/logos/vpn.svg" alt="" /><div><small>В РАЗРАБОТКЕ</small><h2>VPN</h2></div><p>Защищённый выход в сеть через инфраструктуру, которую можно проверить.</p><b>Узнать <i>↗</i></b>
+          </a>
+        </div>
+      </section>
+
+      <section className="privacy-statement">
+        <div className="privacy-statement-inner">
+        <div className="privacy-statement-content shell">
+          <div className="privacy-statement-copy">
+            <span>02 / Минимум данных</span>
+            <h2>Меньше<br /><em>следов.</em></h2>
+            <p>Храним только то, без чего сервис не сможет работать. Не больше.</p>
+            <ul><li>Без номера телефона</li><li>Без рекламного профиля</li><li>С открытым кодом</li></ul>
+            <a href="/privacy">Политика конфиденциальности <b>↗</b></a>
+          </div>
+          <div className="privacy-statement-visual">
+            <span>Маршрут сообщения</span>
+            <img src="/media/routing.png" alt="Защищённая инфраструктура Valanium" />
+          </div>
+        </div>
         </div>
       </section>
 

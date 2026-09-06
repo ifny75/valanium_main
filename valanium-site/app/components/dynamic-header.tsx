@@ -31,7 +31,8 @@ const MESSENGER_LINKS: Link[] = [
 ];
 
 function linksFor(page: HeaderPage): Link[] {
-  return page === 'messenger' ? MESSENGER_LINKS : SERVICE_LINKS;
+  if (page === 'messenger') return MESSENGER_LINKS;
+  return SERVICE_LINKS;
 }
 
 export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
@@ -89,11 +90,11 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
               {link.label}
             </a>
           ))}
-          <a className={`nav-status-link${page === 'status' ? ' is-active' : ''}`} href="/status"><i />Статус</a>
+          <a className={`nav-status-link${page === 'status' ? ' is-active' : ''}`} href="/status">Статус</a>
         </div>
 
         <div className="nav-actions">
-          <a className="status-mobile-link" href="/status" aria-label="Статус сети"><i /></a>
+          <a className="status-mobile-link" href="/status">Статус</a>
           <SupportDialog variant="header" />
           <a className="github-link" href="https://github.com/ifny75/valanium" target="_blank" rel="noreferrer noopener">
             <GithubIcon /><b>GitHub</b>

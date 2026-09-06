@@ -34,6 +34,7 @@ public final class Core {
     private static native void nativeShutdown(long handle);
 
     private static native String nativeStartTor(String dataDir);
+    public static native String torCircuit();
 
     /**
      * Поднимает встроенный Tor и возвращает адрес его локального SOCKS5.

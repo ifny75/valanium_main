@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../src/main.js", import.meta.url), "utf8")
   .replace(/\r\n/g, "\n");
-const from = source.indexOf("const ONIONIZE_URL");
+const from = source.indexOf('let onionizeError = ""');
 const to = source.indexOf('for (const button of document.querySelectorAll("#hop-segment');
 assert.ok(from > 0 && to > from, "не нашёл блок onionize в main.js");
 const block = source.slice(from, to);
@@ -28,11 +28,18 @@ function run({ transport, installed, running }) {
     addEventListener() {},
     textContent: "",
     disabled: false,
+    // Блок периодически обновляет карточку и проверяет, видна ли она.
+    getClientRects: () => [],
   });
   const context = {
     preferences: { transport },
     $: () => element(),
     toast: () => {},
+    // Периодическое обновление смотрит на document.hidden.
+    document: { hidden: true },
+    // Установка теперь идёт через подтверждение; для решения «греть или нет»
+    // оно роли не играет, но без заглушки блок падает на ReferenceError.
+    confirmAction: () => {},
     fetch: async () => {
       throw new Error("прогрев не должен ходить в сеть");
     },
@@ -73,3 +80,7 @@ calls = await run({ transport: "onion", installed: true, running: true });
 assert.ok(!started(calls), `уже работает — второй раз не поднимаем: ${calls}`);
 
 process.stdout.write("все проверки прогрева прошли\n");
+
+// Блок заводит периодическое обновление карточки, и оно держит процесс живым.
+// Выходим явно: тест, который не завершается, в CI неотличим от зависшего.
+process.exit(0);

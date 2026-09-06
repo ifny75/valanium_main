@@ -5,7 +5,6 @@ import android.os.Looper;
 
 import org.json.JSONObject;
 
-import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -21,18 +20,22 @@ public final class Events {
         void onEvent(JSONObject event);
     }
 
-    private static final List<Listener> listeners = new CopyOnWriteArrayList<>();
+    private static final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     private static final Handler main = new Handler(Looper.getMainLooper());
 
     private Events() {
     }
 
     public static void subscribe(Listener listener) {
-        listeners.add(listener);
+        listeners.addIfAbsent(listener);
     }
 
     public static void unsubscribe(Listener listener) {
         listeners.remove(listener);
+    }
+
+    static void clearPending() {
+        main.removeCallbacksAndMessages(null);
     }
 
     /** Открыт ли сейчас интерфейс, который сам покажет входящее сообщение. */

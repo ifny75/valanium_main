@@ -6,6 +6,10 @@ const SELECTORS = [
   '.hero-copy > *', '.phone-stage', '.facts > *',
   '.server-section > h2', '.server-card', '.feature-section > h2', '.feature-card',
   '.routes-heading > *', '.route-selector', '.routes-visual',
+  '.network-overview-intro > *', '.network-index',
+  '.manifesto-kicker', '.manifesto h2', '.manifesto-foot',
+  '.service-rail-head > *', '.rail-item',
+  '.privacy-statement-copy > *', '.privacy-statement-visual',
   '.download-section > h2', '.release-card', '.closing',
   '.legal-hero > *', '.legal-content section', '.status-hero > *', '.status-summary', '.status-board-head', '.status-service',
 ].join(',');
