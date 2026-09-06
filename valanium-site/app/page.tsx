@@ -178,10 +178,6 @@ export default function Home() {
           <div className="routes-visual">
             <span>Valanium Messenger</span>
             <div className="routes-device">
-              <i className="routes-orbit routes-orbit-outer" aria-hidden="true" />
-              <i className="routes-orbit routes-orbit-inner" aria-hidden="true" />
-              <span className="routes-packet routes-packet-one" aria-hidden="true" />
-              <span className="routes-packet routes-packet-two" aria-hidden="true" />
               <img className="routes-phone" src="/media/chat-phone.png" alt="Профиль в мессенджере Valanium" />
               <small className="routes-detail routes-detail-key">Ключи на устройстве</small>
               <small className="routes-detail routes-detail-delivery">Доставлено</small>
