@@ -639,13 +639,12 @@ function onProfileGet(deps: Deps, sock: Socket, body: Uint8Array): void {
     sock.send(errorFrame("profile_not_found", "profile not found"), true);
     return;
   }
-  const devices = deps.store.listDevices(profile.identity).map((row) => row.device_pub);
   const device = deps.store.activeDevice(profile.identity);
-  if (!device || devices.length === 0) {
+  if (!device) {
     sock.send(errorFrame("profile_not_found", "profile has no active device"), true);
     return;
   }
-  sendProfile(sock, profile, device, devices);
+  sendProfile(sock, profile, device);
 }
 
 /**
@@ -750,23 +749,9 @@ function sendProfile(
     avatar: Uint8Array | null; emblem: string | null; color: string | null;
     decor: Uint8Array | null; updated_at: number },
   device: Uint8Array,
-  devices: Uint8Array[] = [device],
 ): void {
   sock.send(jsonFrame(OP.PROFILE, {
-    /*
-      Одно устройство и все устройства сразу.
-
-      `device` остаётся ради выпущенных клиентов: они читают именно его, и
-      исчезновение поля приняли бы за битый профиль. `devices` — то, что нужно
-      на самом деле: у человека может быть телефон и компьютер, и сообщение,
-      ушедшее только на самое свежее, до второго не доедет никогда.
-
-      Порядок в списке — по времени появления устройства, а не по свежести:
-      свежесть меняется от каждого подключения, и список прыгал бы при каждом
-      запросе, хотя состав тот же.
-    */
     device: toHex(device),
-    devices: devices.map((entry) => toHex(entry)),
     chatCode: profile.chat_code,
     // Всегда пусто: человекочитаемое имя сервер больше не хранит. Поле
     // осталось в кадре ради выпущенных клиентов — они его разбирают, а
@@ -916,7 +901,6 @@ function onUsernameLookup(deps: Deps, sock: Socket, conn: ConnData, body: Uint8A
 
   const identity = deps.store.findByUsername(nameHash, nameHash2);
   const device = identity ? deps.store.activeDevice(identity) : undefined;
-  const devices = identity ? deps.store.listDevices(identity).map((row) => row.device_pub) : [];
   if (!identity || !device) {
     sock.send(jsonFrame(OP.USERNAME_FOUND, { found: false }), true);
     return;
@@ -925,10 +909,7 @@ function onUsernameLookup(deps: Deps, sock: Socket, conn: ConnData, body: Uint8A
   const profile = deps.store.ensureProfile(identity, now);
   sock.send(jsonFrame(OP.USERNAME_FOUND, {
     found: true,
-    // См. пояснение в sendProfile: одно устройство — для выпущенных клиентов,
-    // список — для тех, кто умеет доставлять на все.
     device: toHex(device),
-    devices: devices.map((entry) => toHex(entry)),
     chatCode: profile.chat_code,
     avatarMime: profile.avatar_mime,
     avatarBase64: profile.avatar ? Buffer.from(profile.avatar).toString("base64") : null,
