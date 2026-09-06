@@ -230,7 +230,12 @@
     <string name="username_release">Освободить</string>
     <string name="copy">Копировать</string>
     <string name="requests_label">Запросы</string>
-    <string name="requests_none">Запросов нет</string>
+    <string name="requests_none">Новых запросов нет</string>
+    <string name="requests_none_hint">Здесь появятся люди, которые захотят начать защищённый диалог.</string>
+    <string name="chats_none_title">Начните первый разговор</string>
+    <string name="chats_none_hint">Добавьте человека по юзернейму или коду либо поделитесь своим кодом.</string>
+    <string name="channels_none_title">Каналов пока нет</string>
+    <string name="channels_none_hint">Создайте свой канал или найдите существующий по имени.</string>
     <string name="accept">Принять</string>
     <string name="decline">Отклонить</string>
     <string name="block">Заблокировать</string>

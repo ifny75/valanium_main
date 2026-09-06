@@ -2891,6 +2891,48 @@ public final class MainActivity extends Activity implements Events.Listener {
         return notice;
     }
 
+    /** Единое спокойное пустое состояние для основных списков приложения. */
+    private View emptyState(int iconRes, String titleText, String bodyText) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setPadding(dp(22), dp(28), dp(22), dp(26));
+        card.setBackgroundResource(R.drawable.panel_glass);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cardParams.topMargin = dp(12);
+        cardParams.bottomMargin = dp(10);
+        card.setLayoutParams(cardParams);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setImageTintList(ColorStateList.valueOf(accentColor()));
+        icon.setAlpha(.9f);
+        card.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(getColor(R.color.valanium_white));
+        title.setTextSize(16);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        titleParams.topMargin = dp(14);
+        card.addView(title, titleParams);
+
+        TextView body = new TextView(this);
+        body.setText(bodyText);
+        body.setTextColor(getColor(R.color.valanium_muted));
+        body.setTextSize(12);
+        body.setGravity(Gravity.CENTER);
+        body.setLineSpacing(0, 1.15f);
+        LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bodyParams.topMargin = dp(7);
+        card.addView(body, bodyParams);
+        return card;
+    }
+
     private void copyChatCode() {
         if (ownChatCode.isEmpty()) {
             toast(getString(R.string.chat_code_waiting));
@@ -2940,13 +2982,8 @@ public final class MainActivity extends Activity implements Events.Listener {
             return;
         }
         if (conversations.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("Начните первый разговор\nДобавьте человека по юзернейму или коду\nлибо поделитесь своим кодом");
-            empty.setTextColor(getColor(R.color.valanium_muted));
-            empty.setTextSize(14);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(16), dp(36), dp(16), dp(20));
-            contactList.addView(empty);
+            contactList.addView(emptyState(R.drawable.ic_chat,
+                    getString(R.string.chats_none_title), getString(R.string.chats_none_hint)));
             Button start = new Button(this);
             start.setText("Начать чат");
             start.setTextSize(15);
@@ -5512,7 +5549,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         LinearLayout host = findViewById(R.id.channel_list);
         host.removeAllViews();
         if (channels.isEmpty()) {
-            host.addView(listNotice(getString(R.string.channel_none)));
+            host.addView(emptyState(R.drawable.ic_link,
+                    getString(R.string.channels_none_title), getString(R.string.channels_none_hint)));
             return;
         }
         for (JSONObject channel : channels.values()) {
@@ -5744,13 +5782,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 pending == 0 ? getString(R.string.requests_label)
                              : getString(R.string.requests_label) + " · " + pending);
         if (pending == 0) {
-            TextView empty = new TextView(this);
-            empty.setText(R.string.requests_none);
-            empty.setTextColor(getColor(R.color.valanium_dim));
-            empty.setTextSize(11);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(18), 0, dp(18));
-            requestList.addView(empty);
+            requestList.addView(emptyState(R.drawable.ic_shield,
+                    getString(R.string.requests_none), getString(R.string.requests_none_hint)));
         }
         renderPeers();
     }
