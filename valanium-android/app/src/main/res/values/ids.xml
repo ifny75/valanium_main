@@ -5,4 +5,6 @@
     <!-- Исходный цвет надписи до перекраски под тему. -->
     <item name="base_text_color_tag" type="id" />
     <item name="voice_starter_tag" type="id" />
+    <item name="message_direction_tag" type="id" />
+    <item name="message_timestamp_tag" type="id" />
 </resources>

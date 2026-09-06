@@ -2567,7 +2567,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         updatePreview(peer, body, false, event.optLong("server_ts"), !opened);
         renderPeers();
         if (opened) {
-            addBubble(body, false);
+            addBubble(body, false, normalizeTimestamp(event.optLong("server_ts")));
             String id = content.optString("id");
             if (!id.isEmpty()) sendRead(peer, java.util.Collections.singleton(id));
         }
@@ -2616,25 +2616,44 @@ public final class MainActivity extends Activity implements Events.Listener {
         // Ядро отдаёт новейшие первыми — на экране порядок обратный.
         List<View> fresh = new ArrayList<>();
         Set<String> incoming = new HashSet<>();
+        String freshDay = null;
         for (int i = items.length() - 1; i >= 0; i--) {
             JSONObject item = items.optJSONObject(i);
             if (item == null) continue;
             JSONObject content = parseContent(item.optString("body"));
             if ("read".equals(content.optString("type"))) continue;
-            View bubble = buildBubble(item.optString("body"), item.optBoolean("outgoing"));
+            long timestamp = normalizeTimestamp(item.optLong("created_at"));
+            if (timestamp <= 0) timestamp = System.currentTimeMillis();
+            String day = dateKey(timestamp);
+            if (!day.equals(freshDay)) {
+                fresh.add(dateSeparator(timestamp));
+                freshDay = day;
+            }
+            boolean outgoing = item.optBoolean("outgoing");
+            View bubble = buildBubble(item.optString("body"), outgoing);
             if (bubble == null) continue;
+            markTimelineBubble(bubble, outgoing, timestamp);
             fresh.add(bubble);
-            if (!item.optBoolean("outgoing") && !content.optString("id").isEmpty()) {
+            if (!outgoing && !content.optString("id").isEmpty()) {
                 incoming.add(content.optString("id"));
             }
         }
         // Страница всегда старше того, что уже лежит в кэше.
+        boolean initialPage = entry.bubbles.isEmpty();
+        if (!fresh.isEmpty() && !entry.bubbles.isEmpty()
+                && freshDay != null && freshDay.equals(entry.bubbles.get(0).getTag())) {
+            View duplicate = entry.bubbles.remove(0);
+            if (duplicate.getParent() instanceof ViewGroup) {
+                ((ViewGroup) duplicate.getParent()).removeView(duplicate);
+            }
+        }
         entry.bubbles.addAll(0, fresh);
+        regroupTimeline(entry.bubbles);
 
         // Ответ мог опоздать: пока он шёл, человек успел уйти в другую беседу.
         if (!conversation.equals(conversations.get(currentPeer))) return;
 
-        if (entry.bubbles.size() == fresh.size()) {
+        if (initialPage) {
             entry.scrollY = -1;
             paintConversation(conversation);
         } else {
@@ -3223,13 +3242,25 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Собирает пузырь и кладёт его и в ленту, и в кэш открытой беседы. */
     private void addBubble(String body, boolean outgoing) {
+        addBubble(body, outgoing, System.currentTimeMillis());
+    }
+
+    private void addBubble(String body, boolean outgoing, long timestamp) {
         View bubble = buildBubble(body, outgoing);
         if (bubble == null) return;
+        long time = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        markTimelineBubble(bubble, outgoing, time);
         String conversation = conversations.get(currentPeer);
         if (conversation != null) {
             ChatPage entry = page(conversation);
+            View separator = separatorForAppend(entry.bubbles, time);
+            if (separator != null) {
+                entry.bubbles.add(separator);
+                messages.addView(separator);
+            }
             entry.bubbles.add(bubble);
             entry.loaded = true;
+            regroupTimeline(entry.bubbles);
         }
         messages.addView(bubble);
         // Сообщение приезжает с той стороны, где стоит его пузырь: своё справа,
@@ -4175,6 +4206,100 @@ public final class MainActivity extends Activity implements Events.Listener {
                 && now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR);
         return new SimpleDateFormat(today ? "HH:mm" : "dd.MM", Locale.getDefault())
                 .format(new Date(preview.timestamp));
+    }
+
+    private String dateKey(long timestamp) {
+        return "date:" + new SimpleDateFormat("yyyyMMdd", Locale.ROOT)
+                .format(new Date(timestamp));
+    }
+
+    private View dateSeparator(long timestamp) {
+        Calendar now = Calendar.getInstance();
+        Calendar then = Calendar.getInstance();
+        then.setTimeInMillis(timestamp);
+        String label;
+        if (sameDay(now, then)) {
+            label = "Сегодня";
+        } else {
+            Calendar yesterday = Calendar.getInstance();
+            yesterday.add(Calendar.DAY_OF_YEAR, -1);
+            label = sameDay(yesterday, then) ? "Вчера"
+                    : new SimpleDateFormat(now.get(Calendar.YEAR) == then.get(Calendar.YEAR)
+                            ? "d MMMM" : "d MMMM yyyy", Locale.getDefault())
+                            .format(new Date(timestamp));
+        }
+        TextView view = new TextView(this);
+        view.setText(label);
+        view.setTextColor(getColor(R.color.valanium_dim));
+        view.setTextSize(10);
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(dp(12), dp(5), dp(12), dp(5));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor("light".equals(themeName()) ? 0xDDECECE8 : 0xDD151517);
+        background.setStroke(dp(1), getColor(R.color.valanium_line));
+        background.setCornerRadius(dp(999));
+        view.setBackground(background);
+        view.setTag(dateKey(timestamp));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.CENTER_HORIZONTAL;
+        params.topMargin = dp(10);
+        params.bottomMargin = dp(12);
+        view.setLayoutParams(params);
+        return view;
+    }
+
+    private boolean sameDay(Calendar left, Calendar right) {
+        return left.get(Calendar.YEAR) == right.get(Calendar.YEAR)
+                && left.get(Calendar.DAY_OF_YEAR) == right.get(Calendar.DAY_OF_YEAR);
+    }
+
+    private void markTimelineBubble(View bubble, boolean outgoing, long timestamp) {
+        bubble.setTag(R.id.message_direction_tag, outgoing);
+        bubble.setTag(R.id.message_timestamp_tag, timestamp);
+    }
+
+    private View separatorForAppend(List<View> timeline, long timestamp) {
+        String wanted = dateKey(timestamp);
+        for (int i = timeline.size() - 1; i >= 0; i--) {
+            Object tag = timeline.get(i).getTag();
+            if (tag instanceof String && ((String) tag).startsWith("date:")) {
+                return wanted.equals(tag) ? null : dateSeparator(timestamp);
+            }
+        }
+        return dateSeparator(timestamp);
+    }
+
+    /** Последовательные сообщения одного направления читаются как одна реплика. */
+    private void regroupTimeline(List<View> timeline) {
+        View previous = null;
+        for (View current : timeline) {
+            Object direction = current.getTag(R.id.message_direction_tag);
+            if (!(direction instanceof Boolean)) {
+                if (previous != null) setBubbleBottom(previous, 8);
+                previous = null;
+                continue;
+            }
+            if (previous != null) {
+                boolean sameDirection = direction.equals(
+                        previous.getTag(R.id.message_direction_tag));
+                Object before = previous.getTag(R.id.message_timestamp_tag);
+                Object after = current.getTag(R.id.message_timestamp_tag);
+                boolean closeInTime = before instanceof Long && after instanceof Long
+                        && Math.abs((Long) after - (Long) before) <= 120_000L;
+                setBubbleBottom(previous, sameDirection && closeInTime ? 3 : 8);
+            }
+            previous = current;
+        }
+        if (previous != null) setBubbleBottom(previous, 8);
+    }
+
+    private void setBubbleBottom(View bubble, int marginDp) {
+        ViewGroup.LayoutParams raw = bubble.getLayoutParams();
+        if (!(raw instanceof LinearLayout.LayoutParams)) return;
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) raw;
+        params.bottomMargin = dp(marginDp);
+        bubble.setLayoutParams(params);
     }
 
     /** Кладёт строку в буфер обмена и подтверждает это человеку. */
