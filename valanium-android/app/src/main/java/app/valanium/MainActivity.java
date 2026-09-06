@@ -614,77 +614,12 @@ public final class MainActivity extends Activity implements Events.Listener {
         root.requestApplyInsets();
     }
 
-    /**
-     * Первый экран рассчитан на высокий дисплей Pixel: один ясный сценарий,
-     * крупная зона касания и только одно пояснение вместо трёх тяжёлых карточек.
-     * Логика регистрации не меняется — это только композиция уже существующих
-     * View, поэтому все id и обработчики остаются прежними.
-     */
+    /** Первый экран остаётся чисто клиентской композицией: логика регистрации не меняется. */
     private void configureEntryExperience() {
-        if (!(screenEntry instanceof ScrollView)) return;
-        ScrollView entry = (ScrollView) screenEntry;
-        if (entry.getChildCount() == 0 || !(entry.getChildAt(0) instanceof LinearLayout)) return;
-        LinearLayout content = (LinearLayout) entry.getChildAt(0);
-        content.setGravity(Gravity.CENTER_HORIZONTAL);
-        content.setPadding(0, dp(38), 0, dp(30));
-
-        if (content.getChildCount() < 7) return;
-        ImageView logo = (ImageView) content.getChildAt(0);
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(96), dp(96));
-        logoParams.gravity = Gravity.CENTER_HORIZONTAL;
-        logo.setLayoutParams(logoParams);
-        logo.setPadding(dp(16), dp(16), dp(16), dp(16));
-        logo.setBackgroundResource(R.drawable.entry_badge);
-
-        TextView wordmark = (TextView) content.getChildAt(1);
-        wordmark.setTextSize(32);
-        setTopMargin(wordmark, 16);
-
-        TextView badge = (TextView) content.getChildAt(2);
-        badge.setText(R.string.entry_eyebrow);
-        badge.setTextColor(Color.rgb(190, 158, 255));
-        badge.setTextSize(10);
-        badge.setLetterSpacing(0.12f);
-        badge.setPadding(dp(12), dp(7), dp(12), dp(7));
-        badge.setBackgroundResource(R.drawable.entry_badge);
-        setTopMargin(badge, 10);
-
-        ViewGroup form = (ViewGroup) content.getChildAt(3);
-        form.setBackgroundResource(R.drawable.entry_surface);
-        form.setPadding(dp(22), dp(24), dp(22), dp(20));
-        setTopMargin(form, 26);
-        if (form.getChildCount() >= 4) {
-            ((TextView) form.getChildAt(0)).setTextSize(25);
-            ((TextView) form.getChildAt(1)).setTextSize(15);
-        }
-        handle.setBackgroundResource(R.drawable.entry_input);
-        invite.setBackgroundResource(R.drawable.entry_input);
-        entrySubmit.setBackgroundResource(R.drawable.entry_primary);
-        entrySubmit.setTextColor(Color.WHITE);
-        entrySubmit.setTextSize(12);
-
-        // Длинное объяснение не должно отодвигать основное действие ниже сгиба.
-        content.getChildAt(4).setVisibility(View.GONE);
-        content.getChildAt(5).setVisibility(View.GONE);
-        TextView footer = (TextView) content.getChildAt(6);
-        footer.setText(R.string.entry_footer);
-        footer.setTextColor(Color.rgb(160, 151, 175));
-        footer.setTextSize(12);
-        footer.setGravity(Gravity.CENTER);
-        footer.setPadding(dp(18), dp(13), dp(18), dp(13));
-        footer.setBackgroundResource(R.drawable.entry_notice);
-        setTopMargin(footer, 16);
-
+        Switch torOnly = findViewById(R.id.entry_tor_only);
+        findViewById(R.id.entry_tor_row).setOnClickListener(v -> torOnly.setChecked(!torOnly.isChecked()));
         screenMigrate.setBackgroundResource(R.drawable.entry_surface);
         screenMigrate.setPadding(dp(24), dp(28), dp(24), dp(24));
-    }
-
-    private void setTopMargin(View view, int margin) {
-        ViewGroup.LayoutParams raw = view.getLayoutParams();
-        if (!(raw instanceof ViewGroup.MarginLayoutParams)) return;
-        ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) raw;
-        params.topMargin = margin;
-        view.setLayoutParams(params);
     }
 
     /*
@@ -902,30 +837,104 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void renderTorCircuit() {
-        TextView view = findViewById(R.id.tor_circuit_details);
+        TextView state = findViewById(R.id.tor_circuit_state);
+        LinearLayout host = findViewById(R.id.tor_circuit_nodes);
+        host.removeAllViews();
         if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) {
-            view.setText("Выбран не Onion. Цепочка Tor не используется этим маршрутом.");
+            state.setText(R.string.tor_circuit_unused);
+            host.addView(torCircuitNode("—", getString(R.string.transport_onion_title),
+                    getString(R.string.tor_node_waiting_detail)));
             return;
         }
         try {
             String raw = Core.torCircuit();
             if (raw == null || "null".equals(raw)) {
-                view.setText("Цепочка ещё не получена. Подключитесь через Onion и нажмите «Обновить сведения».");
+                state.setText(R.string.tor_circuit_waiting);
+                host.addView(torCircuitNode("…", getString(R.string.tor_node_device),
+                        getString(R.string.tor_node_waiting_detail)));
                 return;
             }
             JSONObject circuit = new JSONObject(raw);
             JSONArray hops = circuit.optJSONArray("hops");
-            StringBuilder text = new StringBuilder(circuit.optBoolean("active")
-                    ? "Активная цепочка\nЭто устройство" : "Последняя цепочка · соединение закрыто\nЭто устройство");
+            state.setText(circuit.optBoolean("active")
+                    ? R.string.tor_circuit_active : R.string.tor_circuit_inactive);
+            host.addView(torCircuitNode("0", getString(R.string.tor_node_device), Build.MODEL));
             if (hops != null) for (int i = 0; i < Math.min(8, hops.length()); i++) {
-                text.append("\n│\n○ ").append(i == 0 ? "Входной узел" : "Узел Tor " + (i + 1));
+                addTorConnector(host);
                 JSONArray ips = hops.optJSONArray(i);
-                if (ips != null) for (int j = 0; j < ips.length(); j++) text.append("\n   ").append(ips.optString(j));
+                StringBuilder addresses = new StringBuilder();
+                if (ips != null) for (int j = 0; j < ips.length(); j++) {
+                    if (j > 0) addresses.append("  ·  ");
+                    addresses.append(ips.optString(j));
+                }
+                host.addView(torCircuitNode(String.valueOf(i + 1),
+                        i == 0 ? getString(R.string.tor_node_guard)
+                                : getString(R.string.tor_node_relay, i + 1),
+                        addresses.length() == 0 ? "—" : addresses.toString()));
             }
-            text.append("\n│\n○ ").append(circuit.optString("destination"));
-            text.append("\n\nТолько клиентская часть цепочки. Узлы на стороне onion-сервера скрыты. Страны не определяются; внешние GeoIP-запросы не выполняются.");
-            view.setText(text);
-        } catch (Throwable error) { view.setText("Сведения о цепочке пока недоступны."); }
+            addTorConnector(host);
+            host.addView(torCircuitNode(String.valueOf((hops == null ? 0 : Math.min(8, hops.length())) + 1),
+                    getString(R.string.tor_node_destination), circuit.optString("destination", "—")));
+        } catch (Throwable error) {
+            state.setText(R.string.tor_circuit_unavailable);
+            host.addView(torCircuitNode("!", getString(R.string.tor_node_device),
+                    getString(R.string.tor_node_waiting_detail)));
+        }
+    }
+
+    private View torCircuitNode(String marker, String titleText, String detailText) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView badge = new TextView(this);
+        badge.setText(marker);
+        badge.setGravity(Gravity.CENTER);
+        badge.setTextColor(Color.WHITE);
+        badge.setTextSize(12);
+        GradientDrawable badgeBackground = new GradientDrawable();
+        badgeBackground.setShape(GradientDrawable.OVAL);
+        badgeBackground.setColor(Color.argb(44, Color.red(accentColor()),
+                Color.green(accentColor()), Color.blue(accentColor())));
+        badgeBackground.setStroke(dp(1), accentColor());
+        badge.setBackground(badgeBackground);
+        row.addView(badge, new LinearLayout.LayoutParams(dp(34), dp(34)));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.setPadding(dp(12), dp(10), dp(12), dp(10));
+        copy.setBackgroundResource(R.drawable.panel_glass);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        copyParams.leftMargin = dp(10);
+        row.addView(copy, copyParams);
+
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(getColor(R.color.valanium_white));
+        title.setTextSize(13);
+        copy.addView(title);
+        TextView detail = new TextView(this);
+        detail.setText(detailText);
+        detail.setTextColor(getColor(R.color.valanium_muted));
+        detail.setTextSize(10.5f);
+        detail.setTypeface(android.graphics.Typeface.MONOSPACE);
+        detail.setTextIsSelectable(true);
+        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        detailParams.topMargin = dp(3);
+        copy.addView(detail, detailParams);
+        row.setContentDescription(titleText + ". " + detailText);
+        return row;
+    }
+
+    private void addTorConnector(LinearLayout host) {
+        View connector = new View(this);
+        connector.setBackgroundColor(Color.argb(110, Color.red(accentColor()),
+                Color.green(accentColor()), Color.blue(accentColor())));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(2), dp(14));
+        params.leftMargin = dp(16);
+        host.addView(connector, params);
     }
 
     /** Показывает известный клиенту маршрут, не выдавая список адресов за health-check. */

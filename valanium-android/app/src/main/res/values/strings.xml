@@ -21,7 +21,7 @@
     <string name="startup_error">Не удалось запустить защищённое ядро (%1$s). Сообщите этот код разработчику.</string>
     <string name="background_limited">Фоновая работа ограничена, но приложение продолжит работать открытым</string>
 
-    <string name="registration_title">Создайте личное пространство</string>
+    <string name="registration_title">Создайте приватный профиль</string>
     <string name="registration_hint">Регистрация открыта для всех. После неё приложение само входит в аккаунт при каждом запуске.</string>
     <string name="handle">Имя — необязательно</string>
     <string name="invite">Инвайт-код</string>
@@ -109,6 +109,18 @@
     <string name="infrastructure_title">Инфраструктура маршрута</string>
     <string name="infrastructure_hint">Это настроенные адреса, а не проверка их доступности в реальном времени.</string>
     <string name="tor_circuit_title">Цепочка Tor · на этом устройстве</string>
+    <string name="tor_circuit_active">Активная цепочка · данные идут через эти узлы</string>
+    <string name="tor_circuit_inactive">Последняя построенная цепочка · соединение сейчас закрыто</string>
+    <string name="tor_circuit_waiting">Цепочка ещё не получена</string>
+    <string name="tor_circuit_unavailable">Сведения о цепочке пока недоступны</string>
+    <string name="tor_circuit_unused">Выбранный маршрут не использует Tor</string>
+    <string name="tor_node_device">Это устройство</string>
+    <string name="tor_node_guard">Входной узел</string>
+    <string name="tor_node_relay">Промежуточный узел %1$d</string>
+    <string name="tor_node_destination">Onion-вход Valanium</string>
+    <string name="tor_node_local">Локальное начало цепочки</string>
+    <string name="tor_node_waiting_detail">Подключитесь через Onion и обновите сведения</string>
+    <string name="tor_circuit_privacy_hint">Показывается только клиентская часть цепочки. Страны не определяются, внешние GeoIP-запросы не выполняются.</string>
     <string name="refresh_details">Обновить сведения</string>
     <string name="protection_title">Безопасность</string>
     <string name="close">Закрыть</string>
@@ -364,9 +376,17 @@
     <string name="admin_close_hint">Человек перестанет входить на сервер. Переписки это не касается: она у собеседников на устройствах, и прочитать её нельзя.</string>
     <string name="admin_open_hint">Человек снова сможет входить на сервер.</string>
     <string name="tab_chats">Чаты</string>
-    <string name="entry_lead">Заведите профиль — займёт минуту. Ни номера телефона, ни адресной книги не потребуется.</string>
+    <string name="entry_lead">Один юзернейм — и можно начинать защищённые диалоги.</string>
     <string name="entry_eyebrow">ЗАЩИЩЁННАЯ ПЕРЕПИСКА</string>
-    <string name="entry_footer">Ключи создаются и остаются на этом Pixel. Сервер не получает доступа к сообщениям.</string>
+    <string name="entry_footer">Ключи создаются и остаются на этом устройстве. Сервер не получает доступа к сообщениям.</string>
+    <string name="entry_benefit_phone">Без\nтелефона</string>
+    <string name="entry_benefit_keys">Ключи\nлокально</string>
+    <string name="entry_benefit_contacts">Без адресной\nкниги</string>
+    <string name="entry_username_label">Ваш псевдоним</string>
+    <string name="entry_username_hint">Не используйте знакомое имя, если не хотите связывать этот профиль с другими аккаунтами.</string>
+    <string name="entry_tor_title">Регистрация только через Tor</string>
+    <string name="entry_tor_hint">Без автоматического перехода на прямое соединение</string>
+    <string name="entry_action_hint">Создание ключей происходит только на устройстве</string>
     <string name="entry_how">Как это защищено</string>
     <string name="entry_point_one">Сообщения шифруются на этом устройстве по MLS — тому же стандарту (RFC 9420), что и групповое шифрование в больших мессенджерах.</string>
     <string name="entry_point_two">Ключи не покидают телефон. Их нет ни у нас, ни у того, кто держит сервер.</string>
