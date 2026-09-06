@@ -140,7 +140,20 @@ export function handleOpen(deps: Deps, sock: Socket, conn: ConnData): void {
       maxFrame: config.maxFrameBytes,
       /** Клиент сразу знает, какие способы входа доступны. */
       entry: { invite: !config.publicRegistration, ton: config.ton.address !== "" },
-      features: { profiles: true, recovery: true, usernames: true, passes: true, decor: true },
+      /*
+        Что сервер умеет. Спрашивают об этом заранее не из вежливости: неизвестный
+        код кадра здесь закрывает соединение (см. `default` в разборе), поэтому
+        клиент, пробующий новинку наугад, на старом сервере просто перестал бы
+        работать. Свои узлы люди обновляют когда захотят — значит старые серверы
+        есть и будут.
+
+        `devices` — выдача собственного списка устройств: он нужен клиенту, чтобы
+        разослать его собеседникам по шифрованному каналу.
+      */
+      features: {
+        profiles: true, recovery: true, usernames: true, passes: true, decor: true,
+        devices: true,
+      },
       // Входы, о которых клиент иначе не узнает. Пустой список — просто нет
       // onion-входа: старый клиент поля не заметит, новый останется на своём
       // запасном адресе.
@@ -283,6 +296,10 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
       case OP.CHANNEL_ADMIN:
         requireAuth(conn);
         onChannelAdmin(deps, sock, conn, body);
+        return;
+      case OP.DEVICE_LIST:
+        requireAuth(conn);
+        onDeviceList(deps, sock, conn);
         return;
       case OP.DEVICE_REVOKE_OTHERS:
         requireAuth(conn);
@@ -931,6 +948,30 @@ function onDeviceRevokeOthers(deps: Deps, sock: Socket, conn: ConnData, body: Ui
   const revoked = deps.store.revokeOtherDevices(conn.identity!, conn.devicePub!, deps.now());
   for (const device of revoked) deps.registry.disconnect(toHex(device));
   sock.send(jsonFrame(OP.DEVICE_OK, { revoked: revoked.length }), true);
+}
+
+/*
+  Свои собственные устройства.
+
+  Личность берётся из сессии, а не из тела запроса: спросить чужой список
+  этим кадром нельзя в принципе, называть в нём нечего. Это и есть причина,
+  по которой такой ответ безопасен, тогда как тот же список в ответе на поиск
+  — нет: там спрашивающий посторонний, здесь — сам владелец.
+
+  Сертификаты едут вместе с ключами. Свои же они и подписаны своим ключом
+  личности, так что клиент проверяет их сам и не обязан верить нам на слово —
+  а дальше пересылает проверенный список собеседникам по шифрованному каналу,
+  где сервер уже ничего не решает.
+*/
+function onDeviceList(deps: Deps, sock: Socket, conn: ConnData): void {
+  const devices = deps.store.listDevices(conn.identity!);
+  sock.send(jsonFrame(OP.DEVICE_OK, {
+    identity: toHex(conn.identity!),
+    devices: devices.map((row) => ({
+      device: toHex(row.device_pub),
+      cert: toHex(row.cert),
+    })),
+  }), true);
 }
 
 // --- каналы -------------------------------------------------------------------

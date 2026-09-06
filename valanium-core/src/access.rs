@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::crypto::random_bytes;
+use crate::keys::{device_cert_message, verify, KEY_LEN, SIG_LEN};
 
 const PASS_DOMAIN: &str = "valanium-pass-v1";
 pub const PASS_LEN: usize = 32;
@@ -166,6 +167,48 @@ pub fn profile_key_gift(key_hex: &str) -> String {
     format!("{CONTROL_PREFIX}{{\"profileKey\":\"{key_hex}\"}}")
 }
 
+/// Больше устройств у одной личности сервер и не заводит.
+///
+/// Предел нужен и здесь: объявление приходит от собеседника, а каждое
+/// устройство в нём — отдельный конверт при каждой отправке. Без предела
+/// собеседник объявляет тысячу устройств и заставляет нас шифровать тысячу
+/// копий каждого сообщения.
+pub const MAX_DEVICES: usize = 8;
+
+/// Свой список устройств — собеседнику, по уже установленному каналу.
+///
+/// # Почему не через сервер
+///
+/// Отправитель шифрует каждому устройству отдельно, поэтому список решает, кто
+/// получит копию. Спроси мы его у сервера — сервер вписал бы туда своё
+/// устройство и получал бы открытые копии переписки: сквозное шифрование
+/// формально не нарушено, просто получателей стало на одного больше, и заметить
+/// это неоткуда.
+///
+/// Здесь список приходит от самого человека, внутри его же шифрованного канала,
+/// и каждая строка несёт подпись личности под парой (личность, устройство) — ту
+/// самую, которой устройство доказывало право войти. Сервер о составе не
+/// заявляет ничего, и подделывать ему нечего.
+///
+/// Спросить список у сервера нельзя ещё и по другой причине: чтобы проверить
+/// подпись, нужен ключ личности, а он — постоянный опознаватель, переживающий и
+/// смену устройств, и смену юзернейма, и блокировку. Отдавать такое любому, кто
+/// набрал имя в поиске, нельзя.
+pub fn devices_announce(identity_pub: &[u8], devices: &[([u8; KEY_LEN], [u8; SIG_LEN])]) -> String {
+    let list: Vec<serde_json::Value> = devices
+        .iter()
+        .take(MAX_DEVICES)
+        .map(|(device, cert)| serde_json::json!({
+            "device": hex::encode(device),
+            "cert": hex::encode(cert),
+        }))
+        .collect();
+    let payload = serde_json::json!({
+        "devices": { "identity": hex::encode(identity_pub), "list": list },
+    });
+    format!("{CONTROL_PREFIX}{payload}")
+}
+
 /// «Печатает» и «перестал печатать».
 ///
 /// Едет тем же шифрованным каналом, что и сообщения: сервер видит очередной
@@ -227,6 +270,56 @@ pub enum Control {
     Typing(bool),
     Online,
     Group { title: String, kind: String, owner: String },
+    /// Список устройств собеседника — **ещё не проверенный**.
+    ///
+    /// Проверка требует знать, от какого устройства сообщение пришло, а разбор
+    /// служебных сообщений этого не знает. Поэтому разбор и доверие разведены:
+    /// здесь лежит только разобранное, а годным его делает [`Announcement::accept`].
+    Devices(Announcement),
+}
+
+/// Объявление о своих устройствах до проверки подписей.
+///
+/// Отдельный тип, а не готовый список, именно затем, чтобы непроверенное
+/// нельзя было взять по ошибке: разобранные байты сами по себе не значат
+/// ничего, пока не сойдутся подписи.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Announcement {
+    identity: [u8; KEY_LEN],
+    entries: Vec<([u8; KEY_LEN], [u8; SIG_LEN])>,
+}
+
+impl Announcement {
+    /// Проверяет объявление, пришедшее от устройства `from`.
+    ///
+    /// Возвращает список устройств, которым можно писать, или `None`, если
+    /// верить объявлению нельзя.
+    ///
+    /// Проверяется двоё.
+    ///
+    /// **Подпись каждой строки.** Без неё список — просто чужие слова: кто
+    /// угодно приписал бы к нему своё устройство и получал копии. Строки, чья
+    /// подпись не сходится, выбрасываются молча — жаловаться человеку не на
+    /// что, починить он это не может.
+    ///
+    /// **Присутствие отправителя в списке.** Иначе собеседник объявляет список,
+    /// в котором его самого нет, и переписка целиком уезжает к тому, кто в нём
+    /// перечислен. Список, не содержащий того, кто его прислал, — не «мои
+    /// устройства», а перенаправление.
+    pub fn accept(self, from: &[u8; KEY_LEN]) -> Option<Vec<[u8; KEY_LEN]>> {
+        let identity = self.identity;
+        let devices: Vec<[u8; KEY_LEN]> = self
+            .entries
+            .into_iter()
+            .filter(|(device, cert)| verify(cert, &device_cert_message(&identity, device), &identity))
+            .map(|(device, _)| device)
+            .collect();
+
+        if !devices.contains(from) {
+            return None;
+        }
+        Some(devices)
+    }
 }
 
 pub fn parse_signal(body: &str) -> Option<Control> {
@@ -274,6 +367,23 @@ pub fn parse_signal(body: &str) -> Option<Control> {
     if value.get("online").and_then(|v| v.as_bool()) == Some(true) {
         return Some(Control::Online);
     }
+    if let Some(devices) = value.get("devices") {
+        let identity = fixed::<KEY_LEN>(devices.get("identity")?.as_str()?)?;
+        let list = devices.get("list")?.as_array()?;
+        // Длиннее предела — не разбираем вовсе: объявление на тысячу устройств
+        // это не «много устройств», а попытка нагрузить нас шифрованием.
+        if list.len() > MAX_DEVICES {
+            return None;
+        }
+        let mut entries = Vec::with_capacity(list.len());
+        for item in list {
+            entries.push((
+                fixed::<KEY_LEN>(item.get("device")?.as_str()?)?,
+                fixed::<SIG_LEN>(item.get("cert")?.as_str()?)?,
+            ));
+        }
+        return Some(Control::Devices(Announcement { identity, entries }));
+    }
     if let Some(group) = value.get("group") {
         return Some(Control::Group {
             title: clean_title(group.get("title")?.as_str()?),
@@ -282,6 +392,18 @@ pub fn parse_signal(body: &str) -> Option<Control> {
         });
     }
     None
+}
+
+/// Hex ровно нужной длины — или ничего.
+///
+/// Длина проверяется до разбора: `hex::decode` принял бы и три байта, и
+/// тридцать, а ключ неверной длины дальше по коду означал бы либо панику, либо
+/// молчаливое сравнение с чем-то не тем.
+fn fixed<const N: usize>(raw: &str) -> Option<[u8; N]> {
+    if raw.len() != N * 2 {
+        return None;
+    }
+    hex::decode(raw).ok()?.try_into().ok()
 }
 
 pub fn is_control(body: &str) -> bool {
@@ -499,6 +621,146 @@ mod tests {
         ] {
             let body = format!("{CONTROL_PREFIX}{payload}");
             assert_eq!(parse_signal(&body), None, "принято: {payload}");
+        }
+    }
+
+    // --- список устройств -----------------------------------------------------
+
+    use crate::keys::Credentials;
+
+    /// Пара «устройство + подпись личности под ним», как её видит объявление.
+    fn signed(identity: &Credentials, device: &Credentials) -> ([u8; KEY_LEN], [u8; SIG_LEN]) {
+        let device_pub = device.device_pub();
+        let cert = identity
+            .identity
+            .sign(&device_cert_message(&identity.identity_pub(), &device_pub));
+        (device_pub, cert)
+    }
+
+    fn announced(identity: &Credentials, devices: &[([u8; KEY_LEN], [u8; SIG_LEN])]) -> Announcement {
+        let body = devices_announce(&identity.identity_pub(), devices);
+        match parse_signal(&body) {
+            Some(Control::Devices(announcement)) => announcement,
+            other => panic!("объявление не разобралось: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_catalogue_survives_the_round_trip() {
+        let alice = Credentials::generate();
+        let phone = signed(&alice, &alice);
+        let laptop = signed(&alice, &Credentials::generate());
+
+        let accepted = announced(&alice, &[phone, laptop])
+            .accept(&phone.0)
+            .expect("свой же список обязан приниматься");
+        assert_eq!(accepted, vec![phone.0, laptop.0]);
+    }
+
+    #[test]
+    fn a_forged_entry_is_dropped_and_the_rest_survives() {
+        /*
+          Ровно то, ради чего подписи здесь и нужны. Тот, кто пересылает
+          объявление, дописывает в него своё устройство — и начал бы получать
+          копии всей переписки. Подпись он подделать не может: приватного ключа
+          личности у него нет.
+
+          Остальные строки при этом обязаны уцелеть: иначе одна испорченная
+          строка отключала бы доставку целиком.
+        */
+        let alice = Credentials::generate();
+        let mallory = Credentials::generate();
+        let phone = signed(&alice, &alice);
+        let laptop = signed(&alice, &Credentials::generate());
+        // Подпись своя, но под чужой личностью — то есть не годится.
+        let intruder = signed(&mallory, &mallory);
+
+        let accepted = announced(&alice, &[phone, laptop, intruder])
+            .accept(&phone.0)
+            .expect("испорченная строка не должна ронять весь список");
+        assert_eq!(accepted, vec![phone.0, laptop.0], "чужое устройство просочилось");
+    }
+
+    #[test]
+    fn a_list_without_its_own_sender_is_refused() {
+        /*
+          Список, не содержащий того, кто его прислал, — это не «мои
+          устройства», а перенаправление: приняв его, мы перестали бы писать
+          самому собеседнику и слали бы всё тем, кого он перечислил.
+
+          Подписи тут не спасают: перечисленные устройства могут быть вполне
+          настоящими устройствами другого человека.
+        */
+        let alice = Credentials::generate();
+        let laptop = signed(&alice, &Credentials::generate());
+        let stranger = Credentials::generate().device_pub();
+
+        assert_eq!(announced(&alice, &[laptop]).accept(&stranger), None);
+    }
+
+    #[test]
+    fn a_cert_does_not_travel_between_devices() {
+        // Подпись считается по паре (личность, устройство). Взять настоящую
+        // подпись одного устройства и приложить её к другому не выйдет.
+        let alice = Credentials::generate();
+        let phone = signed(&alice, &alice);
+        let other = Credentials::generate().device_pub();
+
+        let accepted = announced(&alice, &[phone, (other, phone.1)])
+            .accept(&phone.0)
+            .expect("своё устройство на месте");
+        assert_eq!(accepted, vec![phone.0], "переставленная подпись прошла");
+    }
+
+    #[test]
+    fn an_oversized_list_is_not_parsed_at_all() {
+        // Каждое устройство — отдельный конверт при каждой отправке. Объявление
+        // на сотню устройств это не «много устройств», а попытка заставить нас
+        // шифровать сотню копий каждого сообщения.
+        let alice = Credentials::generate();
+        let mut devices = Vec::new();
+        for _ in 0..MAX_DEVICES + 1 {
+            devices.push(signed(&alice, &Credentials::generate()));
+        }
+        // Собираем объявление в обход `devices_announce`: он сам обрезает по
+        // пределу, а проверить надо приёмную сторону.
+        let list: Vec<serde_json::Value> = devices
+            .iter()
+            .map(|(device, cert)| serde_json::json!({
+                "device": hex::encode(device),
+                "cert": hex::encode(cert),
+            }))
+            .collect();
+        let payload = serde_json::json!({
+            "devices": { "identity": hex::encode(alice.identity_pub()), "list": list },
+        });
+        assert_eq!(parse_signal(&format!("{CONTROL_PREFIX}{payload}")), None);
+    }
+
+    #[test]
+    fn a_malformed_catalogue_is_refused() {
+        let alice = hex::encode(Credentials::generate().identity_pub());
+        let key = hex::encode([7u8; KEY_LEN]);
+        let cert = hex::encode([7u8; SIG_LEN]);
+        for payload in [
+            // Ключ не той длины: дальше по коду он означал бы сравнение не с тем.
+            format!(r#"{{"devices":{{"identity":"{alice}","list":[{{"device":"aa","cert":"{cert}"}}]}}}}"#),
+            // Подпись не той длины.
+            format!(r#"{{"devices":{{"identity":"{alice}","list":[{{"device":"{key}","cert":"bb"}}]}}}}"#),
+            // Не hex вовсе.
+            format!(r#"{{"devices":{{"identity":"{alice}","list":[{{"device":"{key}","cert":"{}"}}]}}}}"#, "z".repeat(SIG_LEN * 2)),
+            // Личность не той длины.
+            format!(r#"{{"devices":{{"identity":"ff","list":[]}}}}"#),
+            // Нет списка вовсе.
+            format!(r#"{{"devices":{{"identity":"{alice}"}}}}"#),
+            // Строка без подписи.
+            format!(r#"{{"devices":{{"identity":"{alice}","list":[{{"device":"{key}"}}]}}}}"#),
+        ] {
+            assert_eq!(
+                parse_signal(&format!("{CONTROL_PREFIX}{payload}")),
+                None,
+                "принят мусор: {payload}",
+            );
         }
     }
 }

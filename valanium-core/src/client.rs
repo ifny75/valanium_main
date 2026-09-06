@@ -878,6 +878,142 @@ async fn send_typing(
     encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
 }
 
+/// Свой проверенный список устройств: hex ключа → hex сертификата.
+const OWN_DEVICES: &str = "own_devices";
+/// Кому этот список уже разослан. Ключ — hex устройства собеседника.
+const OWN_DEVICES_TOLD: &str = "own_devices_told";
+
+/// Пришёл ответ на запрос своих устройств.
+///
+/// # Почему список всё равно проверяется
+///
+/// Он про нас самих, и спросили его мы сами — но пришёл он от сервера, а
+/// подписи под ним ставил наш собственный ключ личности. Проверить их нам
+/// ничего не стоит, а разница велика: непроверенный список мы бы разослали
+/// собеседникам, и приписанное в него чужое устройство начало бы получать
+/// копии нашей переписки. Сервер здесь — почтальон, а не свидетель.
+///
+/// Своё текущее устройство обязано найтись в ответе. Если его там нет, список
+/// не про нас, и рассылать его нельзя: собеседники перестали бы писать нам
+/// самим.
+async fn own_devices_arrived(
+    socket: &mut Socket,
+    store: &Store,
+    mls: &mut Mls,
+    sink: &EventSink,
+    live: &mut Live,
+    own: proto::OwnDevices,
+) -> Result<()> {
+    let credentials = store.load_credentials()?;
+    if own.identity != hex::encode(credentials.identity_pub()) {
+        return Ok(());
+    }
+    let identity = credentials.identity_pub();
+    let mine = hex::encode(credentials.device_pub());
+
+    let verified: std::collections::BTreeMap<String, String> = own
+        .devices
+        .into_iter()
+        .filter(|entry| {
+            let (Ok(device), Ok(cert)) = (hex::decode(&entry.device), hex::decode(&entry.cert))
+            else {
+                return false;
+            };
+            keys::verify(&cert, &keys::device_cert_message(&identity, &device), &identity)
+        })
+        .map(|entry| (entry.device, entry.cert))
+        .collect();
+
+    if !verified.contains_key(&mine) {
+        return Ok(());
+    }
+
+    let known: std::collections::BTreeMap<String, String> = store
+        .load_setting(OWN_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+
+    if known != verified {
+        // Состав изменился — прежние рассылки устарели, и рассказать надо всем
+        // заново. Иначе отозванное устройство осталось бы у собеседников
+        // навсегда, а «выйти на других устройствах» ничего бы не значило.
+        store.save_setting(OWN_DEVICES, &serde_json::to_vec(&verified)?)?;
+        store.save_setting(OWN_DEVICES_TOLD, &serde_json::to_vec::<Vec<String>>(&Vec::new())?)?;
+    }
+
+    announce_devices(socket, store, mls, sink, live).await
+}
+
+/// Рассылает свой список устройств тем, с кем беседа уже заведена.
+///
+/// Тем, с кем канала ещё нет, рассылка откладывается — ровно как с пропусками:
+/// передать список в открытую нельзя, а заводить ради него беседу незачем. Он
+/// уедет сам, как только беседа появится и сверка пройдёт в следующий раз.
+///
+/// Каждому — по разу на состав: отметка о рассказанном лежит в настройках,
+/// поэтому переподключение не превращается в рассылку.
+async fn announce_devices(
+    socket: &mut Socket,
+    store: &Store,
+    mls: &mut Mls,
+    sink: &EventSink,
+    live: &mut Live,
+) -> Result<()> {
+    let entries: std::collections::BTreeMap<String, String> = store
+        .load_setting(OWN_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut pairs: Vec<([u8; KEY_LEN], [u8; keys::SIG_LEN])> = Vec::new();
+    for (device, cert) in &entries {
+        let (Ok(device), Ok(cert)) = (hex::decode(device), hex::decode(cert)) else { continue };
+        let (Ok(device), Ok(cert)) = (device.try_into(), cert.try_into()) else { continue };
+        pairs.push((device, cert));
+    }
+
+    let identity = store.load_credentials()?.identity_pub();
+    let body = crate::access::devices_announce(&identity, &pairs);
+
+    let mut told: std::collections::BTreeSet<String> = store
+        .load_setting(OWN_DEVICES_TOLD)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+
+    let mut sent_any = false;
+    for (peer, group_id) in store.list_conversations()? {
+        let device = hex::encode(&peer);
+        if told.contains(&device) {
+            continue;
+        }
+        let Ok(key): std::result::Result<[u8; KEY_LEN], _> = peer.clone().try_into() else {
+            continue;
+        };
+        let waiting = PendingSend {
+            device: key,
+            // Служебное сообщение в переписку не кладётся.
+            body: body.clone(),
+            stored: true,
+        };
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox).await?;
+        told.insert(device);
+        sent_any = true;
+    }
+
+    if sent_any {
+        store.save_setting(OWN_DEVICES_TOLD, &serde_json::to_vec(&told)?)?;
+    }
+    Ok(())
+}
+
 /// Приводит выданные пропуска в соответствие с правилом.
 ///
 /// В обе стороны: кому полагается и не выдан — выдаём, у кого есть и больше не
@@ -1096,10 +1232,39 @@ const REKEY_AFTER_SEC: i64 = 24 * 3600;
 
 /// Свой ключ профиля: им запечатан наш аватар.
 const PROFILE_KEY: &str = "profile_key";
+/// Запоминает разошедшиеся по одному человеку устройства.
+///
+/// Список кладётся под каждое из них: с какого бы устройства собеседник ни
+/// написал, мы найдём остальные. Прежние записи для этих же устройств
+/// затираются — объявление всегда свежее того, что лежит, а устройство,
+/// пропавшее из списка, из него именно что убрали.
+fn remember_peer_devices(store: &Store, devices: &[[u8; KEY_LEN]]) {
+    let list: Vec<String> = devices.iter().map(hex::encode).collect();
+    let mut known: std::collections::BTreeMap<String, Vec<String>> = store
+        .load_setting(PEER_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    for device in &list {
+        known.insert(device.clone(), list.clone());
+    }
+    if let Ok(encoded) = serde_json::to_vec(&known) {
+        let _ = store.save_setting(PEER_DEVICES, &encoded);
+    }
+}
+
 /// Ключи профилей собеседников: device в hex → ключ в hex.
 const PEER_PROFILE_KEYS: &str = "peer_profile_keys";
 /// Кому наш ключ профиля уже отправлен.
 const PROFILE_KEY_SENT: &str = "profile_key_sent";
+/// Устройства собеседников: устройство в hex → все устройства того же человека.
+///
+/// Ключ здесь — устройство, а не личность, потому что весь остальной код ядра
+/// адресует собеседника устройством: и беседы, и справочник, и правила
+/// приватности. Личность станет ключом на следующем шаге, вместе со схемой; до
+/// тех пор список лежит рядом с каждым известным устройством того же человека.
+const PEER_DEVICES: &str = "peer_devices";
 
 /// Свой юзернейм из локальной базы.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -1738,6 +1903,8 @@ struct Greeting {
     ton_entry: bool,
     profiles: bool,
     decor: bool,
+    /// Умеет ли сервер отдавать наш собственный список устройств.
+    devices: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1777,6 +1944,7 @@ async fn connect_once(
         ton_entry: hello.entry.ton,
         profiles: hello.features.profiles,
         decor: hello.features.decor,
+        devices: hello.features.devices,
     };
 
     pump(socket, store, mls, sink, commands, greeting, handshake, live).await
@@ -1961,6 +2129,18 @@ async fn pump(
         // соединения, поэтому повторять его надо на каждом заходе.
         for (recipient, pass) in load_access(store).to_present() {
             send(&mut socket, proto::pass_present_frame(&recipient, &pass)?).await?;
+        }
+
+        // Спрашиваем свои же устройства. Ответ придёт отдельным кадром и сам
+        // разошлёт список собеседникам: до него мы не знаем, появилось ли
+        // где-то новое устройство и не отозвали ли старое.
+        //
+        // Только если сервер сказал, что умеет. Неизвестный код кадра он считает
+        // битым кадром и закрывает соединение — спросив наугад, мы отвалились бы
+        // сразу после входа на любом сервере старее этой строки. А свои узлы люди
+        // обновляют когда захотят.
+        if greeting.devices {
+            send(&mut socket, proto::device_list_frame()?).await?;
         }
 
         // Выдаём пропуска тем, кому они полагаются, но ещё не достались.
@@ -2776,10 +2956,18 @@ async fn on_frame(
             sink(Event::ChannelPost { report });
         }
         op::DEVICE_OK => {
+            // Одним кодом отвечают и на отзыв, и на запрос списка. Различаем по
+            // полю: у отзыва его нет, а придумывать второй код ради этого
+            // значило бы держать в протоколе лишнюю запись.
             let report: serde_json::Value = proto::parse_json(body)?;
-            sink(Event::DevicesRevoked {
-                count: report.get("revoked").and_then(|v| v.as_u64()).unwrap_or(0),
-            });
+            if report.get("devices").is_some() {
+                let own: proto::OwnDevices = proto::parse_json(body)?;
+                own_devices_arrived(socket, store, mls, sink, live, own).await?;
+            } else {
+                sink(Event::DevicesRevoked {
+                    count: report.get("revoked").and_then(|v| v.as_u64()).unwrap_or(0),
+                });
+            }
         }
         op::SUPPORT_OK => {
             // Как и ADMIN_OK: набор полей задаёт сервер, разбирать их здесь
@@ -2903,6 +3091,28 @@ async fn on_envelope(
                                 id,
                                 body,
                             });
+                        }
+                    }
+                    Some(Control::Devices(announcement)) => {
+                        /*
+                          Список устройств собеседника.
+
+                          `accept` берёт устройство, от которого пришло
+                          сообщение, и требует, чтобы оно нашлось в самом
+                          списке: иначе собеседник объявляет список, в котором
+                          его нет, и переписка целиком уезжает к тем, кто в нём
+                          перечислен. Строки с несошедшейся подписью `accept`
+                          выбрасывает молча.
+
+                          Пока список только запоминается. Веером по нему
+                          отправка пойдёт следующим шагом — сейчас доставка
+                          по-прежнему идёт на то устройство, с которого пришло
+                          сообщение.
+                        */
+                        if let Ok(from) = <[u8; KEY_LEN]>::try_from(sender_device.as_slice()) {
+                            if let Some(devices) = announcement.accept(&from) {
+                                remember_peer_devices(store, &devices);
+                            }
                         }
                     }
                     Some(Control::Typing(active)) => {

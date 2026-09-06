@@ -69,8 +69,27 @@ pub mod op {
     pub const CHANNEL_UPDATE: u8 = 0x3c;
     pub const CHANNEL_ADMIN: u8 = 0x3d;
     pub const DEVICE_REVOKE_OTHERS: u8 = 0x3e;
+    /// Свои собственные устройства: личность сервер берёт из сессии.
+    pub const DEVICE_LIST: u8 = 0x42;
     pub const SUPPORT_GET: u8 = 0x41;
     pub const SUPPORT_MARK: u8 = 0x43;
+}
+
+/// Свой список устройств: ответ сервера на [`op::DEVICE_LIST`].
+///
+/// Сертификаты разбираются здесь, а проверяются выше: подпись сходится только
+/// под ключом личности, а он лежит в хранилище, о котором разбор кадров не
+/// знает и знать не должен.
+#[derive(Debug, Deserialize)]
+pub struct OwnDevices {
+    pub identity: String,
+    pub devices: Vec<OwnDevice>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OwnDevice {
+    pub device: String,
+    pub cert: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +137,14 @@ pub struct Features {
     /// битом кадре. Поэтому спрашиваем заранее, а не пробуем наугад.
     #[serde(default)]
     pub decor: bool,
+    /// Выдаёт ли сервер собственный список устройств.
+    ///
+    /// Спрашиваем по той же причине, что и про `decor`, и цена ошибки тут выше:
+    /// неизвестный код кадра сервер считает битым кадром и закрывает соединение.
+    /// Клиент, спросивший список у сервера, который о нём не знает, отвалился бы
+    /// сразу после входа — то есть перестал бы работать вовсе.
+    #[serde(default)]
+    pub devices: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,6 +370,12 @@ pub fn pass_revoke_frame(pass_hash: &str) -> Result<Vec<u8>> {
 
 pub fn pass_present_frame(recipient: &str, pass: &str) -> Result<Vec<u8>> {
     json_frame(op::PASS_PRESENT, &serde_json::json!({ "recipient": recipient, "pass": pass }))
+}
+
+/// Запрос своего списка устройств. Тело пустое: спрашивать нечего — личность
+/// сервер берёт из сессии, и чужой список этим кадром не получить.
+pub fn device_list_frame() -> Result<Vec<u8>> {
+    json_frame(op::DEVICE_LIST, &serde_json::json!({}))
 }
 
 pub fn profile_get_frame(query: &str) -> Result<Vec<u8>> {
