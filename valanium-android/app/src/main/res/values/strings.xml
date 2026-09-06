@@ -166,6 +166,9 @@
     <string name="recover_hint">Вернётся личность и возможность писать прежним собеседникам. Переписка не вернётся: старые сообщения защищены так, что их не прочитает даже сервер.</string>
     <string name="recover_by_code">По коду</string>
     <string name="recover_by_password">По паролю</string>
+    <string name="recover_code_mode_hint">Введите сохранённый код восстановления. Он обрабатывается локально и не показывается серверу.</string>
+    <string name="recover_password_mode_hint">Используйте логин и пароль восстановления, которые были настроены в профиле.</string>
+    <string name="recover_local_note">Восстановится личность и список устройств. История сообщений остаётся в прежней зашифрованной базе.</string>
     <string name="recover_code_hint">Код восстановления</string>
     <string name="recover_login_hint">Логин</string>
     <string name="recover_password_hint">Пароль восстановления</string>

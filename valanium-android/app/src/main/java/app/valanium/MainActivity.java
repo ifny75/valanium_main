@@ -4020,6 +4020,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         recoverFormCode.setVisibility(byCode ? View.VISIBLE : View.GONE);
         recoverFormPassword.setVisibility(byCode ? View.GONE : View.VISIBLE);
         recoverError.setText("");
+        ((TextView) findViewById(R.id.recover_mode_hint)).setText(byCode
+                ? R.string.recover_code_mode_hint : R.string.recover_password_mode_hint);
         highlightSegment(byCode ? R.id.recover_mode_code : R.id.recover_mode_password,
                 R.id.recover_mode_code, R.id.recover_mode_password);
     }

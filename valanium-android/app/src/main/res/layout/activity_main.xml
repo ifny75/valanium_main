@@ -25,31 +25,25 @@
         </LinearLayout>
     </ScrollView>
 
-    <ScrollView android:id="@+id/screen_recover" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:scrollbars="none" android:visibility="gone">
-        <LinearLayout style="@style/Valanium.Panel" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="center" android:orientation="vertical">
-            <TextView style="@style/Valanium.Eyebrow" android:text="@string/recovery_section" />
-            <TextView style="@style/Valanium.Title" android:layout_marginTop="8dp" android:text="@string/recover_title" />
-            <TextView style="@style/Valanium.Muted" android:layout_marginTop="10dp" android:text="@string/recover_hint" />
-
-            <LinearLayout android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="20dp" android:orientation="horizontal">
-                <Button android:id="@+id/recover_mode_code" style="@style/Valanium.Button.Dark.Small" android:layout_width="0dp" android:layout_weight="1" android:text="@string/recover_by_code" />
-                <Button android:id="@+id/recover_mode_password" style="@style/Valanium.Button.Dark.Small" android:layout_width="0dp" android:layout_marginStart="6dp" android:layout_weight="1" android:text="@string/recover_by_password" />
+    <LinearLayout android:id="@+id/screen_recover" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:visibility="gone">
+        <LinearLayout style="@style/Valanium.TopBar"><Button android:id="@+id/recover_back" style="@style/Valanium.Button.IconDark" android:contentDescription="@string/recover_back" android:text="@string/back"/><TextView style="@style/Valanium.HeaderTitle" android:layout_width="0dp" android:layout_weight="1" android:text="@string/recovery_section"/><View android:layout_width="44dp" android:layout_height="44dp"/></LinearLayout>
+        <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:fillViewport="true" android:scrollbars="none">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="14dp" android:paddingBottom="28dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/entry_surface" android:orientation="vertical" android:padding="22dp">
+                    <ImageView android:layout_width="52dp" android:layout_height="52dp" android:background="@drawable/entry_badge" android:contentDescription="@null" android:padding="13dp" android:src="@drawable/ic_key" android:tint="#BE9EFF"/>
+                    <TextView style="@style/Valanium.Title" android:layout_marginTop="15dp" android:text="@string/recover_title" android:textSize="25sp" />
+                    <TextView style="@style/Valanium.Muted" android:layout_marginTop="8dp" android:text="@string/recover_hint" android:textSize="14sp" />
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="18dp" android:background="@drawable/entry_notice" android:orientation="horizontal" android:padding="3dp"><Button android:id="@+id/recover_mode_code" style="@style/Valanium.Button.Dark.Small" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="@string/recover_by_code" /><Button android:id="@+id/recover_mode_password" style="@style/Valanium.Button.Dark.Small" android:layout_width="0dp" android:layout_height="match_parent" android:layout_marginStart="4dp" android:layout_weight="1" android:text="@string/recover_by_password" /></LinearLayout>
+                    <TextView android:id="@+id/recover_mode_hint" style="@style/Valanium.Micro" android:layout_marginTop="10dp" />
+                    <LinearLayout android:id="@+id/recover_form_code" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"><EditText android:id="@+id/recover_code" style="@style/Valanium.Input" android:layout_marginTop="10dp" android:autofillHints="" android:background="@drawable/entry_input" android:hint="@string/recover_code_hint" android:inputType="textVisiblePassword|textNoSuggestions" android:maxLines="3" /></LinearLayout>
+                    <LinearLayout android:id="@+id/recover_form_password" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone"><EditText android:id="@+id/recover_login" style="@style/Valanium.Input" android:layout_marginTop="10dp" android:autofillHints="username" android:background="@drawable/entry_input" android:hint="@string/recover_login_hint" android:inputType="textNoSuggestions" /><EditText android:id="@+id/recover_password" style="@style/Valanium.Input" android:layout_marginTop="9dp" android:autofillHints="password" android:background="@drawable/entry_input" android:hint="@string/recover_password_hint" android:inputType="textPassword" /></LinearLayout>
+                    <Button android:id="@+id/recover_submit" style="@style/Valanium.Button.Primary" android:layout_marginTop="14dp" android:background="@drawable/entry_primary" android:text="@string/recover_action" android:textColor="@color/valanium_white" />
+                    <TextView android:id="@+id/recover_error" style="@style/Valanium.Micro" android:layout_marginTop="9dp" android:gravity="center" android:textColor="@color/valanium_danger" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:background="@drawable/entry_notice" android:gravity="center_vertical" android:orientation="horizontal" android:padding="14dp"><ImageView android:layout_width="25dp" android:layout_height="25dp" android:contentDescription="@null" android:src="@drawable/ic_lock" android:tint="#BE9EFF"/><TextView style="@style/Valanium.Micro" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="11dp" android:layout_weight="1" android:text="@string/recover_local_note" /></LinearLayout>
             </LinearLayout>
-
-            <LinearLayout android:id="@+id/recover_form_code" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-                <EditText android:id="@+id/recover_code" style="@style/Valanium.Input" android:layout_marginTop="14dp" android:autofillHints="" android:hint="@string/recover_code_hint" android:inputType="textVisiblePassword|textNoSuggestions" android:maxLines="3" />
-            </LinearLayout>
-
-            <LinearLayout android:id="@+id/recover_form_password" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
-                <EditText android:id="@+id/recover_login" style="@style/Valanium.Input" android:layout_marginTop="14dp" android:autofillHints="username" android:hint="@string/recover_login_hint" android:inputType="textNoSuggestions" />
-                <EditText android:id="@+id/recover_password" style="@style/Valanium.Input" android:layout_marginTop="10dp" android:autofillHints="password" android:hint="@string/recover_password_hint" android:inputType="textPassword" />
-            </LinearLayout>
-
-            <Button android:id="@+id/recover_submit" style="@style/Valanium.Button.Primary" android:layout_marginTop="14dp" android:text="@string/recover_action" />
-            <TextView android:id="@+id/recover_error" style="@style/Valanium.Micro" android:layout_marginTop="10dp" android:gravity="center" android:textColor="@color/valanium_danger" />
-            <Button android:id="@+id/recover_back" style="@style/Valanium.Button.Link" android:layout_marginTop="6dp" android:text="@string/recover_back" />
-        </LinearLayout>
-    </ScrollView>
+        </ScrollView>
+    </LinearLayout>
 
 
     <!-- Полноэкранный аналог боковой панели ПК. -->
