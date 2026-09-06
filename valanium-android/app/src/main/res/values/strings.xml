@@ -95,6 +95,21 @@
     <string name="settings_interface_group">Интерфейс</string>
     <string name="settings_device_group">Устройство и сеть</string>
     <string name="connection_title">Подключение</string>
+    <string name="connection_device_route">%1$s  →  %2$s</string>
+    <string name="connection_destination">Main · %1$s</string>
+    <string name="route_auto_summary">Доступный приватный маршрут</string>
+    <string name="route_basic_summary">Relay · один промежуточный узел</string>
+    <string name="route_multihop_auto_summary">Relay → relay · второй узел Auto</string>
+    <string name="route_multihop_node_summary">Relay → %1$s · %2$s</string>
+    <string name="route_onion_summary">Tor → Onion · без Cloudflare</string>
+    <string name="route_auto_privacy">Приложение выбирает доступный маршрут и может переключиться при сбое.</string>
+    <string name="route_basic_privacy">Relay видит сетевой адрес, но не содержимое сквозно зашифрованных сообщений.</string>
+    <string name="route_multihop_privacy">Первый узел знает сетевой адрес, второй — направление. Полной картины нет ни у одного узла.</string>
+    <string name="route_onion_privacy">Встроенный Tor скрывает сетевой адрес от инфраструктуры Valanium.</string>
+    <string name="infrastructure_title">Инфраструктура маршрута</string>
+    <string name="infrastructure_hint">Это настроенные адреса, а не проверка их доступности в реальном времени.</string>
+    <string name="tor_circuit_title">Цепочка Tor · на этом устройстве</string>
+    <string name="refresh_details">Обновить сведения</string>
     <string name="protection_title">Безопасность</string>
     <string name="close">Закрыть</string>
     <string name="accent_color">Акцентный цвет</string><string name="accent_color_hint">Исходящие сообщения и основные кнопки</string>

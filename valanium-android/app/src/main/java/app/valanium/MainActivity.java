@@ -87,6 +87,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final String HOP_KEY = "multihop_node";
     /** Имена те же, что на странице состояния сети: человек выбирает из них же. */
     private static final String[] HOP_NODES = { "alpha", "beta", "gamma" };
+    private static final String[] HOP_ADDRESSES = { "2.26.55.48", "31.76.21.148", "31.76.29.56" };
+    private static final String MAIN_ADDRESS = "2.27.205.8";
     private static final String RELEASES_URL = "https://valanium.com/v1/releases/latest";
     /** Сколько сообщений поднимать за раз. Остальное — по прокрутке вверх. */
     private static final int HISTORY_PAGE = 40;
@@ -405,7 +407,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.privacy_section_back).setOnClickListener(v -> goBack());
         findViewById(R.id.appearance_back).setOnClickListener(v -> goBack());
         findViewById(R.id.open_appearance).setOnClickListener(v -> open(screenAppearance));
-        findViewById(R.id.open_connection).setOnClickListener(v -> { open(screenConnection); renderTorCircuit(); });
+        findViewById(R.id.open_connection).setOnClickListener(v -> {
+            open(screenConnection);
+            renderConnectionOverview();
+            renderTorCircuit();
+        });
         findViewById(R.id.tor_circuit_refresh).setOnClickListener(v -> renderTorCircuit());
         findViewById(R.id.open_protection).setOnClickListener(v -> open(screenProtection));
         findViewById(R.id.connection_back).setOnClickListener(v -> goBack());
@@ -881,6 +887,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
             appearancePreferences.edit().putString(TRANSPORT_KEY, mode).apply();
             showHopCard();
+            renderConnectionOverview();
             // Выбрали Onion — начинаем строить цепь немедленно, параллельно с
             // попыткой подключиться. Иначе первая попытка упрётся в неготовый Tor.
             if ("onion".equals(mode)) prewarmTor();
@@ -919,6 +926,53 @@ public final class MainActivity extends Activity implements Events.Listener {
             text.append("\n\nТолько клиентская часть цепочки. Узлы на стороне onion-сервера скрыты. Страны не определяются; внешние GeoIP-запросы не выполняются.");
             view.setText(text);
         } catch (Throwable error) { view.setText("Сведения о цепочке пока недоступны."); }
+    }
+
+    /** Показывает известный клиенту маршрут, не выдавая список адресов за health-check. */
+    private void renderConnectionOverview() {
+        TextView state = findViewById(R.id.connection_state);
+        if (state == null || appearancePreferences == null) return;
+        String mode = appearancePreferences.getString(TRANSPORT_KEY, "onion");
+        String route;
+        String privacy;
+        if ("basic".equals(mode)) {
+            route = getString(R.string.route_basic_summary);
+            privacy = getString(R.string.route_basic_privacy);
+        } else if ("multihop".equals(mode)) {
+            String hop = appearancePreferences.getString(HOP_KEY, "");
+            int index = -1;
+            for (int i = 0; i < HOP_NODES.length; i++) if (HOP_NODES[i].equals(hop)) index = i;
+            route = index < 0 ? getString(R.string.route_multihop_auto_summary)
+                    : getString(R.string.route_multihop_node_summary,
+                            Character.toUpperCase(hop.charAt(0)) + hop.substring(1), HOP_ADDRESSES[index]);
+            privacy = getString(R.string.route_multihop_privacy);
+        } else if ("onion".equals(mode)) {
+            route = getString(R.string.route_onion_summary);
+            privacy = getString(R.string.route_onion_privacy);
+        } else {
+            route = getString(R.string.route_auto_summary);
+            privacy = getString(R.string.route_auto_privacy);
+        }
+        state.setText(statusText.isEmpty() ? getString(R.string.status_connecting) : statusText);
+        ((TextView) findViewById(R.id.connection_route_summary)).setText(
+                getString(R.string.connection_device_route, Build.MODEL, route));
+        ((TextView) findViewById(R.id.connection_route_privacy)).setText(privacy);
+        ((TextView) findViewById(R.id.connection_destination)).setText(
+                getString(R.string.connection_destination, MAIN_ADDRESS));
+        StringBuilder infrastructure = new StringBuilder();
+        for (int i = 0; i < HOP_NODES.length; i++) {
+            if (i > 0) infrastructure.append('\n');
+            String name = Character.toUpperCase(HOP_NODES[i].charAt(0)) + HOP_NODES[i].substring(1);
+            infrastructure.append(String.format(Locale.ROOT, "%-7s %s", name, HOP_ADDRESSES[i]));
+        }
+        infrastructure.append('\n').append(String.format(Locale.ROOT, "%-7s %s", "Main", MAIN_ADDRESS));
+        ((TextView) findViewById(R.id.connection_nodes)).setText(infrastructure);
+        View dot = findViewById(R.id.connection_status_dot);
+        int color = getString(R.string.status_online).equals(statusText)
+                ? getColor(R.color.valanium_green)
+                : getString(R.string.status_reconnecting).equals(statusText)
+                        ? getColor(R.color.valanium_danger) : Color.rgb(224, 178, 92);
+        dot.setBackgroundTintList(ColorStateList.valueOf(color));
     }
 
     /** Строится ли цепь прямо сейчас. Второй запуск не нужен и вреден. */
@@ -1005,6 +1059,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (node.equals(appearancePreferences.getString(HOP_KEY, ""))) return;
         appearancePreferences.edit().putString(HOP_KEY, node).apply();
         markChosenHop();
+        renderConnectionOverview();
         toast(node.isEmpty() ? getString(R.string.hop_switched_auto)
                 : getString(R.string.hop_switched, node));
         if (myDeviceHex.isEmpty()) return;
@@ -2962,6 +3017,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         dot.setBackgroundTintList(ColorStateList.valueOf(color));
         status.setContentDescription(text);
         ((TextView) findViewById(R.id.status_text)).setText(text);
+        renderConnectionOverview();
         // Смена состояния коротко подсвечивается: иначе точку легко не заметить.
         dot.animate().cancel();
         dot.setScaleX(0.6f);
