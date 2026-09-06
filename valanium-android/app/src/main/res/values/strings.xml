@@ -96,6 +96,7 @@
     <string name="settings_device_group">Устройство и сеть</string>
     <string name="connection_title">Подключение</string>
     <string name="protection_title">Безопасность</string>
+    <string name="close">Закрыть</string>
     <string name="accent_color">Акцентный цвет</string><string name="accent_color_hint">Исходящие сообщения и основные кнопки</string>
     <string name="interface_scale">Масштаб текста интерфейса</string>
     <string name="dividers">Перегородки интерфейса</string><string name="dividers_full">Чёткие</string><string name="dividers_soft">Мягкие</string><string name="dividers_none">Нет</string>

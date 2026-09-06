@@ -3340,6 +3340,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 image.setClipToOutline(true);
                 image.setContentDescription("Открыть изображение");
                 image.setFocusable(true);
+                image.setTag(R.id.message_image_tag, bitmap);
                 image.setOnClickListener(v -> new PhotoViewer(this, bitmap).show());
                 bubble.addView(image);
             } catch (RuntimeException ignored) {
@@ -3537,23 +3538,183 @@ public final class MainActivity extends Activity implements Events.Listener {
         JSONObject entry = directory.get(device);
         String standing = entry == null ? "" : entry.optString("standing");
 
-        StringBuilder body = new StringBuilder();
-        body.append(profile != null && profile.handle != null && !profile.handle.isEmpty()
-                ? "@" + profile.handle : "юзернейм не указан").append("\n\n");
-        body.append("Положение: ").append(standingLabel(standing)).append('\n');
-        if (profile != null && profile.chatCode != null) {
-            body.append("Код для чата: ").append(profile.chatCode).append('\n');
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(4), dp(8), dp(4), 0);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView avatar = new TextView(this);
+        avatar.setGravity(Gravity.CENTER);
+        avatar.setTextColor(Color.WHITE);
+        avatar.setTextSize(18);
+        avatar.setLayoutParams(new LinearLayout.LayoutParams(dp(64), dp(64)));
+        applyAvatar(avatar, profile, initials(displayName(device)));
+        if (profile != null && !profile.avatarBase64.isEmpty()) {
+            avatar.setContentDescription("Открыть аватар собеседника");
+            avatar.setOnClickListener(v -> showBase64Photo(profile.avatarBase64));
         }
-        body.append("Устройство: ").append(shortHex(device));
+        header.addView(avatar);
+
+        LinearLayout identity = new LinearLayout(this);
+        identity.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams identityParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        identityParams.leftMargin = dp(14);
+        identity.setLayoutParams(identityParams);
+        TextView name = peerCardText(displayName(device), 17, getColor(R.color.valanium_white));
+        name.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        name.setMaxLines(1);
+        name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        identity.addView(name);
+        String handle = profile != null && profile.handle != null && !profile.handle.isEmpty()
+                ? "@" + profile.handle : "Без публичного юзернейма";
+        TextView username = peerCardText(handle, 12, getColor(R.color.valanium_muted));
+        LinearLayout.LayoutParams usernameParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        usernameParams.topMargin = dp(3);
+        username.setLayoutParams(usernameParams);
+        identity.addView(username);
+        TextView relation = peerCardText(standingLabel(standing), 11,
+                "contact".equals(standing) ? getColor(R.color.valanium_green)
+                        : getColor(R.color.valanium_dim));
+        LinearLayout.LayoutParams relationParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        relationParams.topMargin = dp(4);
+        relation.setLayoutParams(relationParams);
+        identity.addView(relation);
+        header.addView(identity);
+        card.addView(header);
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setPadding(dp(14), dp(10), dp(14), dp(10));
+        details.setBackgroundResource(R.drawable.input_glass);
+        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        detailsParams.topMargin = dp(16);
+        details.setLayoutParams(detailsParams);
+        if (profile != null && profile.chatCode != null && !profile.chatCode.isEmpty()) {
+            details.addView(peerDetail("Код для чата", profile.chatCode, false));
+        }
+        details.addView(peerDetail("Устройство", shortHex(device), true));
+        card.addView(details);
+
+        List<Bitmap> media = conversationImages(device);
+        if (!media.isEmpty()) {
+            Button gallery = new Button(this, null, 0, R.style.Valanium_Button_Dark);
+            gallery.setText("Фото в диалоге · " + media.size());
+            LinearLayout.LayoutParams galleryParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
+            galleryParams.topMargin = dp(10);
+            gallery.setLayoutParams(galleryParams);
+            gallery.setOnClickListener(v -> showMediaGallery(device));
+            card.addView(gallery);
+        }
+
+        TextView privacy = peerCardText("Данные показаны только в рамках текущего сеанса",
+                10, getColor(R.color.valanium_dim));
+        privacy.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams privacyParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        privacyParams.topMargin = dp(10);
+        privacy.setLayoutParams(privacyParams);
+        card.addView(privacy);
 
         boolean isContact = "contact".equals(standing);
         new AlertDialog.Builder(this)
-                .setTitle(displayName(device))
-                .setMessage(body.toString())
+                .setView(card)
                 .setPositiveButton(isContact ? R.string.remove_contact : R.string.add_contact,
                         (dialog, which) -> submit(Commands.directorySet(device, isContact ? "approved" : "contact")))
                 .setNeutralButton(R.string.verify_keys, (dialog, which) -> submit(Commands.verify(device)))
                 .setNegativeButton("Ещё", (dialog, which) -> showPeerActions(device))
+                .show();
+    }
+
+    private TextView peerCardText(String value, int sp, int color) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(sp);
+        view.setTextColor(color);
+        return view;
+    }
+
+    private View peerDetail(String label, String value, boolean mono) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(5), 0, dp(5));
+        TextView title = peerCardText(label, 11, getColor(R.color.valanium_muted));
+        title.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(title);
+        TextView content = peerCardText(value, 11, getColor(R.color.valanium_white));
+        if (mono) content.setTypeface(android.graphics.Typeface.MONOSPACE);
+        content.setMaxLines(1);
+        content.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        row.addView(content);
+        return row;
+    }
+
+    private List<Bitmap> conversationImages(String device) {
+        List<Bitmap> images = new ArrayList<>();
+        String conversation = conversations.get(device);
+        ChatPage page = TextUtils.isEmpty(conversation) ? null : pages.get(conversation);
+        if (page == null) return images;
+        for (View item : page.bubbles) collectImages(item, images);
+        return images;
+    }
+
+    private void collectImages(View view, List<Bitmap> images) {
+        Object image = view.getTag(R.id.message_image_tag);
+        if (image instanceof Bitmap && !images.contains(image)) images.add((Bitmap) image);
+        if (!(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            collectImages(group.getChildAt(i), images);
+        }
+    }
+
+    private void showMediaGallery(String device) {
+        List<Bitmap> images = conversationImages(device);
+        if (images.isEmpty()) {
+            toast("В открытой истории пока нет фотографий");
+            return;
+        }
+        android.widget.GridLayout grid = new android.widget.GridLayout(this);
+        int columns = Math.min(3, images.size());
+        grid.setColumnCount(columns);
+        grid.setPadding(dp(6), dp(6), dp(6), dp(6));
+        int side = columns == 1 ? dp(220) : columns == 2 ? dp(150)
+                : (getResources().getDisplayMetrics().widthPixels - dp(92)) / 3;
+        for (Bitmap bitmap : images) {
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(bitmap);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setContentDescription("Открыть фотографию");
+            GradientDrawable shape = new GradientDrawable();
+            shape.setColor(Color.TRANSPARENT);
+            shape.setCornerRadius(dp(12));
+            image.setBackground(shape);
+            image.setClipToOutline(true);
+            android.widget.GridLayout.LayoutParams params =
+                    new android.widget.GridLayout.LayoutParams();
+            params.width = side;
+            params.height = side;
+            params.setMargins(dp(3), dp(3), dp(3), dp(3));
+            image.setLayoutParams(params);
+            image.setOnClickListener(v -> new PhotoViewer(this, bitmap).show());
+            grid.addView(image);
+        }
+        LinearLayout galleryRoot = new LinearLayout(this);
+        galleryRoot.setGravity(Gravity.CENTER_HORIZONTAL);
+        galleryRoot.addView(grid);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(galleryRoot, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        new AlertDialog.Builder(this)
+                .setTitle("Фото · " + images.size())
+                .setView(scroll)
+                .setNegativeButton(R.string.close, null)
                 .show();
     }
 
