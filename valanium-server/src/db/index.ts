@@ -1024,6 +1024,17 @@ export class Store {
    * занимает его до ACK либо до истечения TTL. Без потолка один аккаунт топит
    * выбранного человека: разгребать очередь тот будет дольше, чем её наливали.
    */
+  /**
+   * Сколько всего аккаунтов.
+   *
+   * Нужно самопроверке: пустая база выглядит работающей, и заметить подмену
+   * можно только по тому, что население внезапно исчезло.
+   */
+  countUsers(): number {
+    const row = this.#db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number };
+    return row.n;
+  }
+
   countQueued(recipientDevice: Bytes, now: number): number {
     const row = this.#db
       .prepare("SELECT COUNT(*) AS n FROM envelopes WHERE recipient_device = ? AND expires_at > ?")

@@ -1,0 +1,35 @@
+# /etc/systemd/system/valanium-selfcheck.service
+#
+# Проверяет то, что ломалось молча: свежесть копий, отправку их наружу и что
+# база не потеряла население. Всё это не мешает серверу работать, поэтому по
+# журналу и по «служба active» такие поломки не видны вовсе.
+#
+# Ненулевой код возврата намеренно: тогда `systemctl is-failed` отвечает
+# честно, даже если журнал никто не читает.
+
+[Unit]
+Description=Valanium self-check
+After=valanium.service
+
+[Service]
+Type=oneshot
+User=valanium
+Group=valanium
+WorkingDirectory=/opt/valanium
+ExecStart=/opt/node-24/bin/node --env-file-if-exists=.env src/tools/selfcheck.ts --json /run/valanium/guard.json
+
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=true
+# Каталог в /run заводит systemd и отдаёт его нашему пользователю: сам /run
+# принадлежит root, и служба под valanium туда ничего не запишет.
+RuntimeDirectory=valanium
+RuntimeDirectoryMode=0755
+# Иначе systemd сносит каталог при остановке службы, а oneshot останавливается
+# сразу же: отчёт исчезал вместе с ним, и Result=success ничего не значил.
+RuntimeDirectoryPreserve=yes
+
+# Читает копии, пишет отметку населения рядом с базой.
+ReadWritePaths=/opt/valanium/data
+ReadOnlyPaths=/var/backups/valanium

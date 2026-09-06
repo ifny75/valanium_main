@@ -1,0 +1,12 @@
+# Раз в час. Чаще незачем: проверяемое меняется раз в сутки, а реже значит
+# узнавать о пропаже копий почти через день после того, как они пропали.
+[Unit]
+Description=Valanium self-check hourly
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

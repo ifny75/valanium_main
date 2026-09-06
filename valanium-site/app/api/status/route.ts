@@ -30,6 +30,40 @@ const RELAYS = [
 
 type Heartbeat = { checkedAt: string; latency: number };
 
+/*
+  Отчёт самопроверки сервера.
+
+  Она смотрит на то, чего работающий сервер о себе не сообщает: свежесть копий,
+  уехали ли они наружу, не потеряла ли база население. Все четыре молчаливых
+  отказа за время работы были именно такими — служба `active`, сообщения ходят,
+  а копий нет уже двое суток.
+
+  Наружу отдаём только «в порядке или нет». Подробности — числа: сколько
+  аккаунтов, когда была копия. Публичной странице состояния знать их незачем,
+  а любопытному наблюдателю они сказали бы больше, чем следует.
+*/
+/*
+  Не в /tmp: у службы сайта PrivateTmp=yes, то есть свой собственный /tmp, и
+  файл, записанный самопроверкой, ей попросту не виден. Строка молча
+  показывала бы деградацию всегда — худший вид неверного сигнала, потому что
+  на него перестают смотреть.
+
+  /run приватизация не затрагивает, и он же чистится при перезагрузке — что
+  здесь правильно: отчёт старше перезагрузки ничего не значит.
+*/
+const GUARD_FILE = '/run/valanium/guard.json';
+
+type Guard = { ok: boolean; checkedAt: string };
+
+async function readGuard(): Promise<Guard | null> {
+  try {
+    const value = JSON.parse(await readFile(GUARD_FILE, 'utf8')) as Guard;
+    return typeof value.ok === 'boolean' && typeof value.checkedAt === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function safeTokenEqual(received: string, expected: string) {
   const left = Buffer.from(received);
   const right = Buffer.from(expected);
@@ -70,8 +104,9 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  const [core, ...beats] = await Promise.all([
+  const [core, guard, ...beats] = await Promise.all([
     checkCore(),
+    readGuard(),
     ...RELAYS.map((relay) => readHeartbeat(relay.node)),
   ]);
   const now = Date.now();
@@ -85,7 +120,20 @@ export async function GET() {
   // соседний и человек этого не замечает. Аварией это становится, когда
   // недоступно ядро либо не осталось ни одного входа.
   const liveRelays = states.filter((state) => state.online).length;
-  const operational = core.online && liveRelays === states.length;
+
+  /*
+    Сохранность данных — деградация, но не авария: переписка идёт, люди этого
+    не замечают. В том и беда, ради которой строка здесь и появилась: незаметно
+    как раз то, что обнаружится слишком поздно.
+
+    Молчание самопроверки считаем отказом наравне с её жалобой. Отсутствующий
+    отчёт означает, что и сама проверка не работает, — а это ровно тот случай,
+    который мы и пытаемся перестать пропускать.
+  */
+  const guardAge = guard ? now - Date.parse(guard.checkedAt) : Infinity;
+  const dataSafe = guard?.ok === true && guardAge < 3 * 3_600_000;
+
+  const operational = core.online && liveRelays === states.length && dataSafe;
   const outage = !core.online || liveRelays === 0;
 
   return Response.json({
@@ -94,6 +142,13 @@ export async function GET() {
     nodes: [
       { id: 'web', name: 'Public Website', role: 'Сайт и загрузки', status: 'operational', latency: 0 },
       { id: 'core', name: 'Messaging Core', role: 'Доставка сообщений', status: core.online ? 'operational' : 'outage', latency: core.latency },
+      {
+        id: 'data',
+        name: 'Data Safety',
+        role: 'Копии и сохранность базы',
+        status: dataSafe ? 'operational' : 'degraded',
+        latency: 0,
+      },
       ...RELAYS.map((entry, index) => ({
         id: entry.id,
         name: entry.name,
