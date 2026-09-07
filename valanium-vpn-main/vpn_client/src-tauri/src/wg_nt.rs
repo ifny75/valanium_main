@@ -410,6 +410,56 @@ fn physical_adapter_ip(ifindex: u32) -> Result<String, String> {
     }
 }
 
+/// The current default route's physical adapter's own name — needed to
+/// target `Disable-NetAdapterBinding`/`Enable-NetAdapterBinding`, which take
+/// an adapter name rather than an ifIndex.
+fn physical_adapter_name(ifindex: u32) -> Result<String, String> {
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("(Get-NetAdapter -InterfaceIndex {ifindex} | Select-Object -ExpandProperty Name)"),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() {
+        Err(format!("couldn't determine adapter name for ifIndex {ifindex}"))
+    } else {
+        Ok(name)
+    }
+}
+
+/// Unbinds (or rebinds) the IPv6 protocol on a named adapter. Used to stop
+/// IPv6 leaking around the tunnel: `AllowedIPs`/the split-default routes
+/// below only cover IPv4 (see wg_keys.rs), so as long as the physical
+/// adapter still has a working IPv6 stack, any site with an AAAA record
+/// gets reached over it directly — Windows' Happy Eyeballs prefers IPv6
+/// whenever it's available, which makes this leak *more* likely to trigger,
+/// not less. Unbinding the protocol (rather than e.g. blocking it at the
+/// firewall) means IPv6 name resolution simply fails closed and the browser
+/// falls back to IPv4 through the tunnel instead of hanging.
+fn set_adapter_ipv6_binding(adapter_name: &str, enabled: bool) -> Result<(), String> {
+    let verb = if enabled { "Enable-NetAdapterBinding" } else { "Disable-NetAdapterBinding" };
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("{verb} -Name '{adapter_name}' -ComponentID ms_tcpip6 -Confirm:$false"),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "{verb} on '{adapter_name}' failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 /// The tunnel adapter's own interface index — needed because plain `route
 /// add <dest> mask <mask> <local-tunnel-ip>` lets Windows *guess* the
 /// outgoing interface from the gateway address, and for a /32 point-to-point
@@ -437,6 +487,7 @@ pub struct WgConnection {
     dll: Option<WgDll>,
     excluded_server_ip: Option<String>,
     dns_leak_block_active: bool,
+    ipv6_disabled_adapter: Option<String>,
 }
 
 // The adapter handle is just an opaque driver handle — safe to move between
@@ -451,6 +502,7 @@ impl WgConnection {
             dll: None,
             excluded_server_ip: None,
             dns_leak_block_active: false,
+            ipv6_disabled_adapter: None,
         }
     }
 
@@ -650,6 +702,19 @@ impl WgConnection {
             }
         }
 
+        // Unbind IPv6 on the physical adapter — the tunnel only carries IPv4
+        // (see set_adapter_ipv6_binding's doc comment), so leaving IPv6 alive
+        // on the real NIC means every dual-stack site is reached over it
+        // directly, bypassing the tunnel entirely. Best-effort: a failure
+        // here (e.g. non-admin, or no IPv6 binding present) shouldn't block
+        // the tunnel from coming up, so it's logged rather than propagated.
+        if let Ok(physical_name) = physical_adapter_name(physical_ifindex) {
+            match set_adapter_ipv6_binding(&physical_name, false) {
+                Ok(()) => self.ipv6_disabled_adapter = Some(physical_name),
+                Err(e) => eprintln!("warning: couldn't disable IPv6 on '{physical_name}': {e}"),
+            }
+        }
+
         // Exclude the VPN server's own IP from the tunnel via the ORIGINAL
         // default gateway/interface — otherwise handshake/keepalive packets
         // to the server would try to route through the tunnel that carries
@@ -709,6 +774,9 @@ impl WgConnection {
     }
 
     pub fn disconnect(&mut self) {
+        if let Some(adapter_name) = self.ipv6_disabled_adapter.take() {
+            let _ = set_adapter_ipv6_binding(&adapter_name, true);
+        }
         if self.dns_leak_block_active {
             for proto in ["UDP", "TCP"] {
                 let _ = run(
