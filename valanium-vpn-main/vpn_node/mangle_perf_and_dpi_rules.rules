@@ -1,0 +1,34 @@
+
+# --- Throughput fix + DPI-evasion for the wg0 tunnel ---
+# Spliced into /etc/ufw/before.rules as its own *mangle table block
+# (separate from the *filter block in tor_torrent_block.rules).
+*mangle
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+
+# Clamp TCP MSS to path MTU for anything crossing wg0 in either direction.
+# Without this, a TCP handshake negotiates MSS off each endpoint's own
+# interface MTU (usually 1500), oblivious to the tunnel's real 1420 MTU in
+# between — the resulting oversized segments then depend on Path MTU
+# Discovery (ICMP "fragmentation needed") to get corrected, and that ICMP
+# is commonly filtered somewhere on the path. The result is exactly what
+# asymmetric-throughput symptoms look like: one direction's bulk-data
+# segments black-hole while small requests/acks in the other direction
+# keep working fine. --clamp-mss-to-pmtu computes the right value from each
+# outgoing interface's actual MTU rather than a hardcoded guess.
+-A FORWARD -o wg0 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+-A FORWARD -i wg0 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+# Normalize the TTL of outgoing WireGuard packets (the encrypted UDP
+# envelope itself, generated fresh by the kernel on this host — that is
+# an OUTPUT-chain packet, not a FORWARD one, since encryption/encapsulation
+# happens locally rather than merely routing an existing packet through).
+# Some ISP-level DPI fingerprints VPN traffic partly by an anomalous TTL
+# (e.g. one that betrays an extra hop of internal routing/NAT before it
+# reaches the wire) rather than by port or payload alone. Port 443 alone
+# (see WG_LISTEN_PORT in vpn_node/app/config.py) already blends in with
+# HTTPS/QUIC; a consistent, ordinary-looking TTL64 (the common Linux/Android
+# default) removes one more heuristic signal. Update --sport if
+# WG_LISTEN_PORT is changed again.
+-A OUTPUT -p udp --sport 443 -j TTL --ttl-set 64
+COMMIT

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Valanium VPN</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-map-bg"></div>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="brand-logo" aria-hidden="true"></span>
+        <span class="auth-brand-name">Valanium VPN</span>
+      </div>
+
+      <!-- Ни имени, ни почты, ни пароля: аккаунт — это код доступа.
+           Он тратится один раз, на привязку устройства; дальше клиент
+           входит подписью своего ключа (src-tauri/src/identity.rs). -->
+      <form class="auth-form" id="codeForm">
+        <h2>Вход по коду</h2>
+        <p class="auth-subtitle">Введите код доступа — двадцать знаков с вашей карточки</p>
+        <label class="auth-field">
+          <span>Код доступа</span>
+          <input
+            type="text"
+            id="accessCode"
+            class="access-code-input"
+            inputmode="latin"
+            autocomplete="off"
+            autocapitalize="characters"
+            spellcheck="false"
+            maxlength="23"
+            placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+            required
+          />
+        </label>
+        <button type="submit" class="auth-submit" id="codeSubmit">Войти</button>
+        <p class="auth-note">
+          Кода нет? Его выдаёт владелец сервиса. Ни почта, ни телефон, ни пароль
+          не нужны — и не спрашиваются.
+        </p>
+      </form>
+
+      <!-- Показывается, когда код принят, но аккаунт войти не может:
+           приостановлен, истёк срок или занят лимит устройств. -->
+
+      <div class="auth-form auth-status" id="accountStatusView" hidden>
+        <div class="auth-status-icon" id="accountStatusIcon"></div>
+        <h2 id="accountStatusTitle"></h2>
+        <p class="auth-subtitle" id="accountStatusMessage"></p>
+        <div class="auth-switch"><button type="button" class="auth-link" id="accountStatusBack">Ввести другой код</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <div class="app" id="app" hidden>
+    <section class="map-pane">
+      <div class="map-viewport" id="mapViewport">
+        <div class="map-stage">
+          <div class="map-bg" id="mapBg"></div>
+          <div class="map-relief map-relief-bloom"></div>
+          <div class="map-relief map-relief-bevel-dark"></div>
+          <div class="map-relief map-relief-bevel-light"></div>
+          <div class="map-relief"></div>
+        </div>
+        <!-- Glow + markers sit directly on .map-viewport (not the breathing
+             .map-stage) so their pixel math only has to account for the
+             camera zoom, not an extra independent inset/scale layer. -->
+        <div class="map-glow" id="mapGlow"></div>
+        <div id="markers" class="markers"></div>
+      </div>
+
+      <header class="brand">
+        <span class="brand-logo" aria-hidden="true"></span>
+        <span class="brand-name">Valanium VPN</span>
+      </header>
+
+      <button class="connect-fab" id="connectFab" data-status="disconnected">
+        <span class="dot"></span>
+        <span class="label" id="connectLabel">Подключиться</span>
+      </button>
+    </section>
+
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <input class="search" id="search" type="text" placeholder="Поиск…" />
+        <button class="icon-btn" id="settingsBtn" title="Настройки" aria-label="Настройки">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.6H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="server-list" id="serverList">
+        <!-- server cards injected by main.js -->
+      </div>
+
+      <footer class="sidebar-footer">
+        <div>Сервис valanium</div>
+        <div>Протокол: WireGuard</div>
+      </footer>
+    </aside>
+  </div>
+
+  <div class="settings-overlay" id="settingsOverlay" hidden>
+    <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settings-header">
+        <h2 id="settingsTitle">Настройки</h2>
+        <button class="icon-btn" id="settingsCloseBtn" title="Закрыть" aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 5l14 14M19 5L5 19" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab active" data-tab="general" role="tab" aria-selected="true">Общие</button>
+        <button type="button" class="settings-tab" data-tab="devices" role="tab" aria-selected="false">
+          Устройства <span class="device-count" id="deviceCount"></span>
+        </button>
+        <button type="button" class="settings-tab" data-tab="account" role="tab" aria-selected="false">Аккаунт</button>
+        <button type="button" class="settings-tab" data-tab="about" role="tab" aria-selected="false">О программе</button>
+      </div>
+
+      <div class="settings-body">
+        <section class="settings-panel-tab" data-panel="general">
+          <label class="settings-row">
+            <div>
+              <div class="settings-row-title">Запускать с Windows</div>
+              <div class="settings-row-desc">Открывать Valanium VPN при входе в систему. Пока не реализовано</div>
+            </div>
+            <input type="checkbox" class="switch" data-setting="launchAtStartup" disabled />
+          </label>
+          <label class="settings-row">
+            <div>
+              <div class="settings-row-title">Автоподключение</div>
+              <div class="settings-row-desc">Подключаться к последнему узлу при запуске. Пока не реализовано</div>
+            </div>
+            <input type="checkbox" class="switch" data-setting="autoConnect" disabled />
+          </label>
+          <label class="settings-row">
+            <div>
+              <div class="settings-row-title">Блокировка при обрыве</div>
+              <div class="settings-row-desc">Отрезать сеть, если тоннель упал. Пока не реализовано — не полагайтесь на него</div>
+            </div>
+            <input type="checkbox" class="switch" data-setting="killSwitch" disabled />
+          </label>
+          <label class="settings-row">
+            <div>
+              <div class="settings-row-title">Уведомления</div>
+              <div class="settings-row-desc">Сообщать о подключении, отключении и ошибках</div>
+            </div>
+            <input type="checkbox" class="switch" data-setting="notifications" />
+          </label>
+          <label class="settings-row">
+            <div>
+              <div class="settings-row-title">DNS-сервер</div>
+              <div class="settings-row-desc">Какой DNS использует тоннель</div>
+            </div>
+            <select class="settings-select" id="dnsModeSelect">
+              <option value="default">По умолчанию</option>
+              <option value="adblock">Блокировать рекламу и слежку (AdGuard DNS)</option>
+              <option value="custom">Свой</option>
+            </select>
+          </label>
+          <div class="settings-row settings-row-sub" id="dnsCustomRow" hidden>
+            <input type="text" class="settings-text-input" id="dnsCustomPrimary" placeholder="Основной DNS, например 9.9.9.9" />
+            <input type="text" class="settings-text-input" id="dnsCustomSecondary" placeholder="Запасной DNS (необязательно)" />
+          </div>
+          <label class="settings-row">
+            <div>
+              <div class="settings-row-title">Маскировать под HTTPS</div>
+              <div class="settings-row-desc">Прятать тоннель под обычный HTTPS. Спасает от пассивного DPI, но не от активной проверки</div>
+            </div>
+            <input type="checkbox" class="switch" id="maskHttpsToggle" />
+          </label>
+        </section>
+
+        <section class="settings-panel-tab" data-panel="devices" hidden>
+          <div class="device-list" id="deviceList">
+            <!-- device rows injected by main.js -->
+          </div>
+        </section>
+
+        <!-- Ни имени, ни почты здесь нет и быть не может: сервер их не знает.
+             Всё, что можно показать про аккаунт, — тариф, срок и расход. -->
+        <section class="settings-panel-tab" data-panel="account" hidden>
+          <div class="settings-about-row">
+            <span>Тариф</span>
+            <span id="accountPlan">—</span>
+          </div>
+          <div class="settings-about-row">
+            <span>Действует до</span>
+            <span id="accountExpires">—</span>
+          </div>
+          <div class="settings-about-row">
+            <span>Трафик</span>
+            <span id="accountTraffic">—</span>
+          </div>
+          <button type="button" class="auth-link settings-logout" id="logoutBtn">Выйти на этом устройстве</button>
+        </section>
+
+        <section class="settings-panel-tab" data-panel="about" hidden>
+          <div class="settings-about-row">
+            <span>Версия</span>
+            <span>0.1.0</span>
+          </div>
+          <div class="settings-about-row">
+            <span>Протокол</span>
+            <span>WireGuard</span>
+          </div>
+          <div class="settings-about-row">
+            <span>Сервис</span>
+            <span>valanium</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

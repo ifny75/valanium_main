@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the main window — without this file Tauri grants none, which silently broke window.__TAURI__.event.listen (the tray -> window state sync) since the event system needs core:event:default.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

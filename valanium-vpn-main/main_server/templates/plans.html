@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+
+{% block title %}Тарифы - ObsyxGen VPN{% endblock %}
+{% block title_heading %}Тарифы{% endblock %}
+
+{% block content %}
+<div class="mb-3 text-end">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPlanModal">
+        <i class="bi bi-plus-lg"></i> Добавить тариф
+    </button>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Название</th>
+                        <th>Срок (дней)</th>
+                        <th>Трафик (ГБ)</th>
+                        <th>Устройства</th>
+                        <th>Цена</th>
+                        <th>Серверы</th>
+                        <th>Статус</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for plan in plans %}
+                    <tr>
+                        <td>{{ plan.id }}</td>
+                        <td><strong>{{ plan.name }}</strong></td>
+                        <td>{{ plan.duration_days }}</td>
+                        <td>{{ plan.traffic_limit_gb if plan.traffic_limit_gb > 0 else 'Безлимит' }}</td>
+                        <td>{{ plan.max_devices }}</td>
+                        <td>{{ plan.price or '0.00' }}</td>
+                        <td>
+                            {% if plan.servers %}
+                                {% for s in plan.servers %}
+                                <span class="badge bg-light text-dark border me-1">{{ s.name }}</span>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted small">Все серверы</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if plan.is_active %}
+                            <span class="badge bg-success">Активен</span>
+                            {% else %}
+                            <span class="badge bg-secondary">В архиве</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-primary edit-plan-btn"
+                                    data-id="{{ plan.id }}"
+                                    data-name="{{ plan.name }}"
+                                    data-duration="{{ plan.duration_days }}"
+                                    data-traffic="{{ plan.traffic_limit_gb }}"
+                                    data-devices="{{ plan.max_devices }}"
+                                    data-price="{{ plan.price }}"
+                                    data-servers="{{ plan.servers|map(attribute='id')|join(',') }}"
+                                    title="Редактировать">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary toggle-plan-btn" data-id="{{ plan.id }}" title="Вкл/Выкл">
+                                <i class="bi bi-power"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-muted">Нет тарифов</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add -->
+<div class="modal fade" id="addPlanModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Новый тариф</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addPlanForm">
+                    <div class="mb-3">
+                        <label class="form-label">Название *</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Срок (дней) *</label>
+                            <input type="number" class="form-control" name="duration_days" value="30" required>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Трафик (ГБ) * (0 = Безлимит)</label>
+                            <input type="number" class="form-control" name="traffic_limit_gb" value="0" required>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Макс. устройств *</label>
+                            <input type="number" class="form-control" name="max_devices" value="1" required>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Цена</label>
+                            <input type="number" step="0.01" class="form-control" name="price" value="0.00">
+                        </div>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label">Доступные серверы (ничего не выбрано = все серверы)</label>
+                        <div class="border rounded p-2" style="max-height: 160px; overflow-y: auto;">
+                            {% for s in servers %}
+                            <div class="form-check">
+                                <input class="form-check-input add-server-check" type="checkbox" value="{{ s.id }}" id="addSrv{{ s.id }}">
+                                <label class="form-check-label" for="addSrv{{ s.id }}">
+                                    {{ s.name }} <span class="text-muted small">({{ s.location or s.host }})</span>
+                                </label>
+                            </div>
+                            {% else %}
+                            <div class="text-muted small">Нет активных серверов</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="savePlanBtn">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Edit -->
+<div class="modal fade" id="editPlanModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Редактировать тариф</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editPlanForm">
+                    <input type="hidden" name="id">
+                    <div class="mb-3">
+                        <label class="form-label">Название *</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Срок (дней) *</label>
+                            <input type="number" class="form-control" name="duration_days" required>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Трафик (ГБ) * (0 = Безлимит)</label>
+                            <input type="number" class="form-control" name="traffic_limit_gb" required>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Макс. устройств *</label>
+                            <input type="number" class="form-control" name="max_devices" required>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Цена</label>
+                            <input type="number" step="0.01" class="form-control" name="price">
+                        </div>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label">Доступные серверы (ничего не выбрано = все серверы)</label>
+                        <div class="border rounded p-2" style="max-height: 160px; overflow-y: auto;">
+                            {% for s in servers %}
+                            <div class="form-check">
+                                <input class="form-check-input edit-server-check" type="checkbox" value="{{ s.id }}" id="editSrv{{ s.id }}">
+                                <label class="form-check-label" for="editSrv{{ s.id }}">
+                                    {{ s.name }} <span class="text-muted small">({{ s.location or s.host }})</span>
+                                </label>
+                            </div>
+                            {% else %}
+                            <div class="text-muted small">Нет активных серверов</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="updatePlanBtn">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('savePlanBtn').addEventListener('click', async () => {
+        const form = document.getElementById('addPlanForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+
+        const server_ids = Array.from(document.querySelectorAll('.add-server-check:checked')).map(c => parseInt(c.value));
+
+        const data = {
+            name: form.name.value,
+            duration_days: parseInt(form.duration_days.value),
+            traffic_limit_gb: parseInt(form.traffic_limit_gb.value),
+            max_devices: parseInt(form.max_devices.value),
+            price: parseFloat(form.price.value),
+            server_ids: server_ids
+        };
+
+        try {
+            const res = await fetch('{{ url_prefix }}/api/plans', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) location.reload();
+            else alert('Ошибка сохранения');
+        } catch (e) { alert('Ошибка сети'); }
+    });
+
+    document.querySelectorAll('.toggle-plan-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            try {
+                const res = await fetch(`{{ url_prefix }}/api/plans/${id}/toggle`, { method: 'PUT' });
+                if (res.ok) location.reload();
+                else alert('Ошибка изменения статуса');
+            } catch (e) { alert('Ошибка сети'); }
+        });
+    });
+
+    const editModalEl = document.getElementById('editPlanModal');
+    const editModal = new bootstrap.Modal(editModalEl);
+
+    document.querySelectorAll('.edit-plan-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const d = e.currentTarget.dataset;
+            const form = document.getElementById('editPlanForm');
+            form.id.value = d.id;
+            form.name.value = d.name;
+            form.duration_days.value = d.duration;
+            form.traffic_limit_gb.value = d.traffic;
+            form.max_devices.value = d.devices;
+            form.price.value = d.price;
+
+            const selectedIds = d.servers ? d.servers.split(',').filter(Boolean).map(Number) : [];
+            document.querySelectorAll('.edit-server-check').forEach(c => {
+                c.checked = selectedIds.includes(parseInt(c.value));
+            });
+
+            editModal.show();
+        });
+    });
+
+    document.getElementById('updatePlanBtn').addEventListener('click', async () => {
+        const form = document.getElementById('editPlanForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+
+        const id = form.id.value;
+        const server_ids = Array.from(document.querySelectorAll('.edit-server-check:checked')).map(c => parseInt(c.value));
+
+        const data = {
+            name: form.name.value,
+            duration_days: parseInt(form.duration_days.value),
+            traffic_limit_gb: parseInt(form.traffic_limit_gb.value),
+            max_devices: parseInt(form.max_devices.value),
+            price: parseFloat(form.price.value),
+            server_ids: server_ids
+        };
+
+        try {
+            const res = await fetch(`{{ url_prefix }}/api/plans/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) location.reload();
+            else alert('Ошибка сохранения');
+        } catch (e) { alert('Ошибка сети'); }
+    });
+});
+</script>
+{% endblock %}

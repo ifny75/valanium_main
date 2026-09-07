@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд - ObsyxGen VPN{% endblock %}
+{% block title_heading %}Дашборд{% endblock %}
+
+{% block content %}
+<div class="row g-4 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card border-0 border-start border-primary border-4 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted fw-normal mb-2">Пользователи</h6>
+                        <h3 class="mb-0 fw-bold">{{ stats.total_users }}</h3>
+                    </div>
+                    <div class="text-primary" style="font-size: 2.5rem;">
+                        <i class="bi bi-people"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card border-0 border-start border-success border-4 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted fw-normal mb-2">Активные подписки</h6>
+                        <h3 class="mb-0 fw-bold">{{ stats.active_subscriptions }}</h3>
+                    </div>
+                    <div class="text-success" style="font-size: 2.5rem;">
+                        <i class="bi bi-check-circle"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card border-0 border-start border-warning border-4 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted fw-normal mb-2">Серверы</h6>
+                        <h3 class="mb-0 fw-bold">{{ stats.total_servers }}</h3>
+                    </div>
+                    <div class="text-warning" style="font-size: 2.5rem;">
+                        <i class="bi bi-hdd-network"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="card border-0 border-start border-info border-4 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted fw-normal mb-2">Трафик (ГБ)</h6>
+                        <h3 class="mb-0 fw-bold">{{ stats.total_traffic_gb }}</h3>
+                    </div>
+                    <div class="text-info" style="font-size: 2.5rem;">
+                        <i class="bi bi-download"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-12 col-lg-8">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-header bg-white fw-bold">Последние подписки</div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Пользователь</th>
+                                <th>Тариф</th>
+                                <th>Сервер</th>
+                                <th>Истекает</th>
+                                <th>Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sub in recent_subscriptions %}
+                            <tr>
+                                <td><strong>{{ sub.user.username if sub.user else '-' }}</strong></td>
+                                <td>{{ sub.plan.name if sub.plan else '-' }}</td>
+                                <td>{{ sub.server.name if sub.server else '-' }}</td>
+                                <td>{{ sub.expires_at.strftime('%Y-%m-%d %H:%M') if sub.expires_at else '-' }}</td>
+                                <td>
+                                    {% if sub.is_active %}
+                                    <span class="badge bg-success">Активна</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Неактивна</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">Нет подписок</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-4">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-header bg-white fw-bold">Статус серверов</div>
+            <div class="list-group list-group-flush">
+                {% for item in servers_status %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="fw-semibold">{{ item.server.name }}</div>
+                        <div class="text-muted small">{{ item.server.location or item.server.host }} &middot; {{ item.active_count }} подписок</div>
+                    </div>
+                    {% if item.server.is_active %}
+                    <span class="badge bg-success">Активен</span>
+                    {% else %}
+                    <span class="badge bg-danger">Неактивен</span>
+                    {% endif %}
+                </div>
+                {% else %}
+                <div class="list-group-item text-center text-muted py-4">Нет серверов</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
