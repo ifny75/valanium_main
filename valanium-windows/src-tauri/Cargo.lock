@@ -5094,7 +5094,7 @@ dependencies = [
 
 [[package]]
 name = "valanium-windows"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "hex",
  "rand_core 0.6.4",
