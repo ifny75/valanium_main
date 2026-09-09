@@ -12,11 +12,15 @@
             android:layout_height="match_parent">
 
             <ImageView
+                android:id="@+id/chat_logo"
                 android:layout_width="34dp"
                 android:layout_height="34dp"
                 android:layout_gravity="center_vertical|start"
                 android:layout_marginStart="4dp"
+                android:background="@drawable/entry_badge"
+                android:clipToOutline="true"
                 android:contentDescription="@string/app_name"
+                android:padding="6dp"
                 android:src="@drawable/valanium_logo" />
 
             <LinearLayout

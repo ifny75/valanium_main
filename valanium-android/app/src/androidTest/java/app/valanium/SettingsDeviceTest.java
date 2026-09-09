@@ -25,7 +25,7 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
                 new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         Thread.sleep(1800);
         getInstrumentation().runOnMainSync(() -> {
-            assertEquals(Color.rgb(124, 0, 255), call(activity, "accentColor", new Class<?>[]{}));
+            assertEquals(Color.rgb(151, 112, 255), call(activity, "accentColor", new Class<?>[]{}));
             call(activity, "show", new Class<?>[]{View.class}, activity.findViewById(R.id.screen_entry));
             activity.findViewById(R.id.entry_submit).setEnabled(false);
             org.json.JSONObject failure = new org.json.JSONObject();
@@ -40,6 +40,14 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
         getInstrumentation().runOnMainSync(() -> {
             View settings = activity.findViewById(R.id.screen_settings);
             View bar = activity.findViewById(R.id.tab_bar);
+            View selectedNavigation = activity.findViewById(R.id.nav_settings);
+            View selectedIcon = activity.findViewById(R.id.nav_settings_icon);
+            assertNotNull("Active navigation has a soft selection surface",
+                    selectedNavigation.getBackground());
+            assertEquals("Navigation motion settles at natural scale",
+                    1f, selectedIcon.getScaleX(), .02f);
+            assertEquals("Navigation motion settles without leaving rotation",
+                    0f, selectedIcon.getRotation(), .5f);
             assertTrue("Scroll can lift last rows above glass navigation",
                     settings.getPaddingBottom() >= bar.getHeight());
             assertTrue(((android.widget.Switch) activity.findViewById(R.id.entry_tor_only)).isChecked());
@@ -60,7 +68,7 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
             call(activity, "resetAppearance", new Class<?>[]{});
             assertFalse(context.getSharedPreferences("appearance", 0).getBoolean("screen_privacy", true));
             assertEquals("onion", context.getSharedPreferences("appearance", 0).getString("transport", ""));
-            assertEquals(Color.rgb(124, 0, 255), call(activity, "accentColor", new Class<?>[]{}));
+            assertEquals(Color.rgb(151, 112, 255), call(activity, "accentColor", new Class<?>[]{}));
             activity.finish();
         });
     }

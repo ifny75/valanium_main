@@ -13,7 +13,7 @@
             <TextView android:id="@+id/peer_name" style="@style/Valanium.ConversationTitle" />
             <TextView android:id="@+id/peer_state" style="@style/Valanium.Micro" android:layout_marginTop="2dp" android:text="@string/secure_chat" />
         </LinearLayout>
-        <Button android:id="@+id/verify_peer" style="@style/Valanium.Button.IconDark" android:contentDescription="@string/verify_peer" android:text="◎" />
+        <ImageButton android:id="@+id/verify_peer" style="@style/Valanium.Icon.Dark" android:contentDescription="@string/verify_peer" android:src="@drawable/ic_shield" android:tint="@color/valanium_icon" />
     </LinearLayout>
 
     <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">

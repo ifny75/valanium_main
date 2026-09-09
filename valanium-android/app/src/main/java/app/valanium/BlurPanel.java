@@ -48,7 +48,7 @@ public class BlurPanel extends FrameLayout {
 
     /** Что размывать: экран под островком. */
     private View source;
-    private int accent = Color.rgb(124, 0, 255);
+    private int accent = Color.rgb(151, 112, 255);
 
     public void setAccent(int color) {
         accent = color;

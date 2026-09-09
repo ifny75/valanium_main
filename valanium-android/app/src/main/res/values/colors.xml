@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="valanium_black">#FF050505</color>
-    <color name="valanium_white">#FFF5F5F3</color>
-    <color name="valanium_muted">#FFB4AFBE</color>
-    <color name="valanium_dim">#FF9E98AA</color>
-    <color name="valanium_line">#FF292929</color>
-    <color name="valanium_panel">#F20D0D0D</color>
-    <color name="valanium_glass">#D9111111</color>
-    <color name="valanium_green">#FF75E0A7</color>
-    <color name="valanium_danger">#F0736B</color>
+    <color name="valanium_black">#FF0B0810</color>
+    <color name="valanium_white">#FFF8F6FB</color>
+    <color name="valanium_muted">#FFC2BACB</color>
+    <color name="valanium_dim">#FF9C93A7</color>
+    <color name="valanium_icon">#FFC4AFFF</color>
+    <color name="valanium_line">#594F435C</color>
+    <color name="valanium_panel">#F21A1522</color>
+    <color name="valanium_glass">#E61C1725</color>
+    <color name="valanium_green">#FF7DE3B1</color>
+    <color name="valanium_danger">#FFFF7E8E</color>
 </resources>

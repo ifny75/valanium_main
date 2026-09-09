@@ -36,7 +36,7 @@ public final class RoutingView extends View {
     private ValueAnimator animator;
     private float phase;
     private int selected;
-    private int accent = Color.rgb(124, 0, 255);
+    private int accent = Color.rgb(151, 112, 255);
 
     public void setAccentColor(int color) {
         accent = color;

@@ -84,6 +84,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final String SERVER_ONION_URL = "valanium://onion";
     private static final String SERVER_AUTO_URL = "valanium://auto";
     private static final String TRANSPORT_KEY = "transport";
+    private static final int LEGACY_VIOLET = Color.rgb(124, 0, 255);
+    private static final int FRIENDLY_VIOLET = Color.rgb(151, 112, 255);
     /** Какой узел выбран вторым плечом. Пусто — выбирает сеть. */
     private static final String HOP_KEY = "multihop_node";
     /** Имена те же, что на странице состояния сети: человек выбирает из них же. */
@@ -182,6 +184,8 @@ public final class MainActivity extends Activity implements Events.Listener {
      * взгляд теряет, где он оказался.
      */
     private int navDirection = 1;
+    /** Не переигрывать motion выбранной вкладки при обычной перекраске экрана. */
+    private int activeNavigation = View.NO_ID;
 
     /** Чем сейчас отфильтрован список переписок. Пусто — показываем всё. */
     private String listFilter = "";
@@ -754,6 +758,15 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void configurePreferences() {
         SharedPreferences preferences = getSharedPreferences("appearance", MODE_PRIVATE);
         appearancePreferences = preferences;
+        if (!preferences.getBoolean("friendly_visual_v1", false)) {
+            SharedPreferences.Editor visual = preferences.edit();
+            if (!preferences.contains("accent_color")
+                    || preferences.getInt("accent_color", LEGACY_VIOLET) == LEGACY_VIOLET) {
+                visual.putInt("accent_color", FRIENDLY_VIOLET);
+            }
+            if (!preferences.contains("dividers")) visual.putString("dividers", "soft");
+            visual.putBoolean("friendly_visual_v1", true).apply();
+        }
         int savedTextSize = preferences.contains("message_text_size")
                 ? preferences.getInt("message_text_size", 15)
                 : (preferences.getBoolean("large_text", false) ? 18 : 15);
@@ -797,7 +810,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         });
         findViewById(R.id.accent_white).setOnClickListener(v -> setAccent(Color.rgb(244,244,244)));
         findViewById(R.id.accent_blue).setOnClickListener(v -> setAccent(Color.rgb(112,168,255)));
-        findViewById(R.id.accent_violet).setOnClickListener(v -> setAccent(Color.rgb(124,0,255)));
+        findViewById(R.id.accent_violet).setOnClickListener(v -> setAccent(FRIENDLY_VIOLET));
         findViewById(R.id.accent_green).setOnClickListener(v -> setAccent(Color.rgb(103,212,163)));
         findViewById(R.id.accent_coral).setOnClickListener(v -> setAccent(Color.rgb(237,134,116)));
         findViewById(R.id.dividers_full).setOnClickListener(v -> setDividers("full"));
@@ -861,8 +874,8 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         applyInterfaceScale(findViewById(R.id.app_root), (interfaceScale.getProgress() + 85) / 100f);
         applyTheme();
-        applyAccent();
         applyDividers();
+        applyAccent();
         applyPreferencePreview();
         applyWallpaper();
         installPressFeedback(findViewById(R.id.app_root));
@@ -1191,8 +1204,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     private int themeBackground() {
         switch (themeName()) {
             case "black": return Color.rgb(0, 0, 0);
-            case "light": return Color.rgb(242, 242, 240);
-            default: return Color.rgb(8, 6, 12);
+            case "light": return Color.rgb(246, 244, 248);
+            default: return Color.rgb(11, 8, 16);
         }
     }
 
@@ -1200,7 +1213,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         switch (themeName()) {
             case "black": return Color.rgb(7, 7, 7);
             case "light": return Color.rgb(255, 255, 255);
-            default: return Color.rgb(19, 16, 25);
+            default: return Color.rgb(26, 21, 34);
         }
     }
 
@@ -1208,8 +1221,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     private int themeIncomingBubble() {
         switch (themeName()) {
             case "black": return Color.rgb(16, 16, 16);
-            case "light": return Color.rgb(232, 232, 229);
-            default: return Color.rgb(22, 22, 22);
+            case "light": return Color.rgb(238, 234, 242);
+            default: return Color.rgb(31, 26, 38);
         }
     }
 
@@ -1227,7 +1240,19 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void applyTheme() {
         int background = themeBackground();
-        findViewById(R.id.app_root).setBackgroundColor(background);
+        View root = findViewById(R.id.app_root);
+        if ("black".equals(themeName())) {
+            root.setBackgroundColor(background);
+        } else {
+            GradientDrawable ambience = new GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    new int[]{
+                            blend(background, accentColor(), .94f),
+                            background,
+                            blend(background, Color.rgb(238, 134, 116), .97f),
+                    });
+            root.setBackground(ambience);
+        }
         getWindow().setStatusBarColor(background);
         getWindow().setNavigationBarColor(background);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -1513,13 +1538,16 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private int accentColor() {
-        return appearancePreferences == null ? Color.rgb(124,0,255)
-                : appearancePreferences.getInt("accent_color", Color.rgb(124,0,255));
+        return appearancePreferences == null ? FRIENDLY_VIOLET
+                : appearancePreferences.getInt("accent_color", FRIENDLY_VIOLET);
     }
 
     private void setAccent(int color) {
         appearancePreferences.edit().putInt("accent_color", color).apply();
+        applyTheme();
+        applyDividers();
         applyAccent();
+        applyPreferencePreview();
         renderPeers();
         reloadHistory();
     }
@@ -1549,7 +1577,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         ImageView add = findViewById(R.id.open_chat);
         add.setBackgroundTintList(ColorStateList.valueOf(accent));
         add.setImageTintList(ColorStateList.valueOf(text));
-        settingsPreviewOut.setBackgroundTintList(ColorStateList.valueOf(accent));
         settingsPreviewOut.setTextColor(text);
         messageTextSize.setProgressTintList(ColorStateList.valueOf(accent));
         messageWidth.setProgressTintList(ColorStateList.valueOf(accent));
@@ -1560,7 +1587,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         highlightSegment(recoverByCode ? R.id.recover_mode_code : R.id.recover_mode_password,
                 R.id.recover_mode_code, R.id.recover_mode_password);
         highlightSegment(themeButtonId(), R.id.theme_dark, R.id.theme_black, R.id.theme_light);
-        String dividers = appearancePreferences.getString("dividers", "full");
+        String dividers = appearancePreferences.getString("dividers", "soft");
         highlightSegment("soft".equals(dividers) ? R.id.dividers_soft
                         : "none".equals(dividers) ? R.id.dividers_none : R.id.dividers_full,
                 R.id.dividers_full, R.id.dividers_soft, R.id.dividers_none);
@@ -1572,9 +1599,11 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void applyDividers() {
-        String mode = appearancePreferences.getString("dividers", "full");
+        String mode = appearancePreferences.getString("dividers", "soft");
         int line = "none".equals(mode) ? Color.TRANSPARENT
-                : ("soft".equals(mode) ? Color.rgb(24,24,24) : Color.rgb(48,48,48));
+                : Color.argb("soft".equals(mode) ? 48 : 82,
+                        Color.red(accentColor()), Color.green(accentColor()),
+                        Color.blue(accentColor()));
         applyPanelStyle(findViewById(R.id.app_root), line);
     }
 
@@ -1586,12 +1615,21 @@ public final class MainActivity extends Activity implements Events.Listener {
         // гребёнку: каждая строка получала рамку со скруглением и превращалась
         // в отдельную карточку, а отклик на нажатие пропадал.
         if (view instanceof LinearLayout && view.getBackground() instanceof GradientDrawable
-                && view.getParent() != messagesList && view.getId() != R.id.recording_bar) {
+                && view.getParent() != messagesList && view.getId() != R.id.recording_bar
+                && view.getId() != R.id.nav_chats && view.getId() != R.id.nav_settings
+                && view.getId() != R.id.nav_profile) {
             GradientDrawable panel = new GradientDrawable();
-            panel.setColor(themePanel());
+            int base = themePanel();
+            if ("black".equals(themeName())) {
+                panel.setColor(base);
+            } else {
+                panel.setOrientation(GradientDrawable.Orientation.TL_BR);
+                panel.setColors(new int[]{blend(base, accentColor(), .93f), base});
+            }
             panel.setCornerRadius(view.getId() == R.id.composer_row ? dp(999) : dp(cornerRadiusDp()));
             panel.setStroke(dp(1), line);
             view.setBackground(panel);
+            if (view.getId() != R.id.composer_row) view.setElevation(dp(1));
         }
         if (view instanceof android.view.ViewGroup) {
             android.view.ViewGroup group = (android.view.ViewGroup) view;
@@ -1634,13 +1672,24 @@ public final class MainActivity extends Activity implements Events.Listener {
     /** Общая форма пузыря: одна на переписку и на превью в настройках. */
     private GradientDrawable bubbleBackground(boolean outgoing) {
         GradientDrawable background = new GradientDrawable();
-        background.setColor(outgoing ? accentColor() : themeIncomingBubble());
+        if (outgoing) {
+            int accent = accentColor();
+            background.setOrientation(GradientDrawable.Orientation.TL_BR);
+            background.setColors(new int[]{
+                    blend(accent, Color.WHITE, .86f),
+                    blend(accent, themePanel(), .84f),
+            });
+        } else {
+            background.setColor(themeIncomingBubble());
+        }
         background.setCornerRadius(dp(bubbleRadiusDp()));
         if (!outgoing) {
             String dividers = appearancePreferences == null
-                    ? "full" : appearancePreferences.getString("dividers", "full");
+                    ? "soft" : appearancePreferences.getString("dividers", "soft");
             background.setStroke(dp(1), "none".equals(dividers) ? Color.TRANSPARENT
-                    : "light".equals(themeName()) ? Color.rgb(219, 219, 214) : Color.rgb(45, 45, 45));
+                    : Color.argb("soft".equals(dividers) ? 38 : 68,
+                            Color.red(accentColor()), Color.green(accentColor()),
+                            Color.blue(accentColor())));
         }
         return background;
     }
@@ -2958,8 +3007,8 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** ListView переиспользует оболочку строки, сложный пузырь создаётся только для видимой области. */
     private View messageRow(TimelineItem item, View recycled) {
-        FrameLayout row = recycled instanceof FrameLayout
-                ? (FrameLayout) recycled : new FrameLayout(this);
+        boolean created = !(recycled instanceof FrameLayout);
+        FrameLayout row = created ? new FrameLayout(this) : (FrameLayout) recycled;
         row.removeAllViews();
         row.setPadding(0, 0, 0, dp(item.bottomMarginDp));
         View bubble = buildBubble(item.body, item.outgoing, currentPeer);
@@ -2970,6 +3019,12 @@ public final class MainActivity extends Activity implements Events.Listener {
         params.rightMargin = item.outgoing ? 0 : dp(48);
         bubble.setLayoutParams(params);
         row.addView(bubble);
+        if (created && motionEnabled()) {
+            row.setAlpha(0f);
+            row.setTranslationY(dp(8));
+            row.post(() -> row.animate().alpha(1f).translationY(0f).setDuration(230)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start());
+        }
         return row;
     }
 
@@ -2994,10 +3049,12 @@ public final class MainActivity extends Activity implements Events.Listener {
     private View conversationRow(String peer, View recycled) {
         LinearLayout row;
         ChatRowHolder holder;
+        boolean created = false;
         if (recycled instanceof LinearLayout && recycled.getTag() instanceof ChatRowHolder) {
             row = (LinearLayout) recycled;
             holder = (ChatRowHolder) recycled.getTag();
         } else {
+            created = true;
             row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -3076,6 +3133,13 @@ public final class MainActivity extends Activity implements Events.Listener {
             holder.badge.setVisibility(View.GONE);
         }
         row.setOnClickListener(v -> selectPeer(peer));
+        installPressFeedback(row);
+        if (created && motionEnabled()) {
+            row.setAlpha(0f);
+            row.setTranslationY(dp(10));
+            row.post(() -> row.animate().alpha(1f).translationY(0f).setDuration(260)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start());
+        }
         return row;
     }
 
@@ -3116,19 +3180,46 @@ public final class MainActivity extends Activity implements Events.Listener {
             accent = Color.rgb((Color.red(accent) + 255) / 2,
                     (Color.green(accent) + 255) / 2, (Color.blue(accent) + 255) / 2);
         }
+        int selectedNavigation = screen == screenChat ? R.id.nav_chats
+                : screen == screenSettings ? R.id.nav_settings : R.id.nav_profile;
+        boolean selectionChanged = selectedNavigation != activeNavigation;
         for (int[] tab : new int[][]{
                 {R.id.nav_chats, R.id.nav_chats_icon, R.id.nav_chats_label},
                 {R.id.nav_settings, R.id.nav_settings_icon, R.id.nav_settings_label},
                 {R.id.nav_profile, R.id.nav_profile_icon, R.id.nav_profile_label},
         }) {
-            boolean active = (tab[0] == R.id.nav_chats && screen == screenChat)
-                    || (tab[0] == R.id.nav_settings && screen == screenSettings)
-                    || (tab[0] == R.id.nav_profile && screen == screenProfile);
-            ((ImageView) findViewById(tab[1])).setImageTintList(
+            boolean active = tab[0] == selectedNavigation;
+            View item = findViewById(tab[0]);
+            item.setBackground(active ? selectionBackground() : null);
+            ImageView icon = findViewById(tab[1]);
+            icon.setImageTintList(
                     ColorStateList.valueOf(active ? accent : getColor(R.color.valanium_muted)));
             ((TextView) findViewById(tab[2])).setTextColor(
                     active ? accent : getColor(R.color.valanium_muted));
+            if (active && selectionChanged) animateNavigationIcon(icon, tab[0]);
         }
+        activeNavigation = selectedNavigation;
+    }
+
+    /** Короткий живой жест выбранной иконки — без бесконечных декоративных циклов. */
+    private void animateNavigationIcon(ImageView icon, int navigation) {
+        icon.animate().cancel();
+        icon.setAlpha(1f);
+        icon.setScaleX(1f);
+        icon.setScaleY(1f);
+        icon.setTranslationY(0f);
+        icon.setRotation(0f);
+        if (!motionEnabled()) return;
+        icon.setAlpha(.62f);
+        icon.setScaleX(.72f);
+        icon.setScaleY(.72f);
+        icon.setTranslationY(dp(5));
+        icon.setRotation(navigation == R.id.nav_settings ? -32f
+                : navigation == R.id.nav_chats ? -10f : 8f);
+        icon.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f).rotation(0f)
+                .setDuration(360)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(1.8f))
+                .start();
     }
 
     /** Уходит вглубь, запоминая, откуда пришли. */
@@ -3176,18 +3267,43 @@ public final class MainActivity extends Activity implements Events.Listener {
             boolean alreadyShown = candidate.getVisibility() == View.VISIBLE;
             candidate.setVisibility(View.VISIBLE);
             if (alreadyShown) continue;
+            if (!motionEnabled()) {
+                candidate.setAlpha(1f);
+                candidate.setTranslationX(0f);
+                candidate.setTranslationY(0f);
+                continue;
+            }
+            animateScreenSignature(screen);
             // Начинаем не с нуля: уходящий экран прячется сразу, и при полной
             // прозрачности входящего между ними мелькает пустота.
             candidate.setAlpha(0.35f);
-            candidate.setTranslationY(0f);
-            candidate.setTranslationX(enter * dp(22));
+            candidate.setTranslationY(dp(6));
+            candidate.setTranslationX(enter * dp(18));
             candidate.animate()
                     .alpha(1f)
                     .translationX(0f)
-                    .setDuration(220)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f))
+                    .translationY(0f)
+                    .setDuration(260)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.8f))
                     .start();
         }
+    }
+
+    /** Один мягкий акцент на входе: бренд или аватар, а не весь экран сразу. */
+    private void animateScreenSignature(View screen) {
+        View signature = screen == screenChat ? findViewById(R.id.chat_logo)
+                : screen == screenProfile ? profileAvatar
+                : screen == screenEntry ? findViewById(R.id.entry_logo) : null;
+        if (signature == null) return;
+        signature.animate().cancel();
+        signature.setAlpha(.55f);
+        signature.setScaleX(.78f);
+        signature.setScaleY(.78f);
+        signature.setRotation(-7f);
+        signature.animate().alpha(1f).scaleX(1f).scaleY(1f).rotation(0f)
+                .setDuration(420)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(1.3f))
+                .start();
     }
 
     /**
@@ -3200,14 +3316,22 @@ public final class MainActivity extends Activity implements Events.Listener {
      * applyAccent).
      */
     private void installPressFeedback(View view) {
-        if (view instanceof Button || view instanceof android.widget.ImageButton) {
+        boolean textInput = view instanceof EditText || view instanceof Switch
+                || view instanceof SeekBar;
+        if (!textInput && (view instanceof Button || view instanceof android.widget.ImageButton
+                || view.isClickable())) {
             view.setOnTouchListener((target, event) -> {
+                if (!motionEnabled()) return false;
                 int action = event.getActionMasked();
                 if (action == android.view.MotionEvent.ACTION_DOWN) {
-                    target.animate().scaleX(.96f).scaleY(.96f).setDuration(90).start();
+                    target.animate().scaleX(.975f).scaleY(.975f).alpha(.86f)
+                            .setDuration(80).start();
                 } else if (action == android.view.MotionEvent.ACTION_UP
                         || action == android.view.MotionEvent.ACTION_CANCEL) {
-                    target.animate().scaleX(1f).scaleY(1f).setDuration(130).start();
+                    target.animate().scaleX(1f).scaleY(1f).alpha(1f)
+                            .setDuration(150)
+                            .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f))
+                            .start();
                 }
                 return false; // клик обрабатывает обычный OnClickListener
             });
@@ -3216,6 +3340,11 @@ public final class MainActivity extends Activity implements Events.Listener {
             android.view.ViewGroup group = (android.view.ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) installPressFeedback(group.getChildAt(i));
         }
+    }
+
+    private boolean motionEnabled() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                || android.animation.ValueAnimator.areAnimatorsEnabled();
     }
 
     private void showFatal(String message) {
@@ -3306,6 +3435,19 @@ public final class MainActivity extends Activity implements Events.Listener {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         bodyParams.topMargin = dp(7);
         card.addView(body, bodyParams);
+        if (motionEnabled()) {
+            card.setAlpha(0f);
+            card.setTranslationY(dp(12));
+            icon.setScaleX(.7f);
+            icon.setScaleY(.7f);
+            icon.setRotation(-8f);
+            card.post(() -> {
+                card.animate().alpha(1f).translationY(0f).setDuration(280).start();
+                icon.animate().scaleX(1f).scaleY(1f).rotation(0f).setDuration(360)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.6f))
+                        .start();
+            });
+        }
         return card;
     }
 
@@ -4314,11 +4456,9 @@ public final class MainActivity extends Activity implements Events.Listener {
         for (int id : group) {
             Button button = findViewById(id);
             boolean on = id == active;
-            button.setBackgroundTintList(ColorStateList.valueOf(
-                    on ? accentColor() : Color.argb(255, 26, 26, 26)));
-            button.setTextColor(on
-                    ? (Color.luminance(accentColor()) > .55 ? Color.BLACK : Color.WHITE)
-                    : getColor(R.color.valanium_muted));
+            button.setBackgroundTintList(null);
+            button.setBackground(on ? selectionBackground() : quietControlBackground());
+            button.setTextColor(on ? accentForLabel() : getColor(R.color.valanium_muted));
         }
     }
 
@@ -5016,7 +5156,8 @@ public final class MainActivity extends Activity implements Events.Listener {
      * а невыбранное вовсе без фона: рамка одна, у дорожки.
      */
     private void markActive(Button button, boolean active, int activeBackground, int idleBackground) {
-        button.setBackgroundResource(active ? activeBackground : idleBackground);
+        button.setBackgroundTintList(null);
+        button.setBackground(active ? selectionBackground() : quietControlBackground());
         if (active) {
             // Короткий подъём отмечает выбор. Дольше — и переключение начинает
             // ощущаться медленным.
@@ -5026,13 +5167,35 @@ public final class MainActivity extends Activity implements Events.Listener {
             button.animate().scaleX(1f).scaleY(1f).setDuration(160)
                     .setInterpolator(new android.view.animation.OvershootInterpolator(1.6f))
                     .start();
-            int accent = accentColor();
-            button.setBackgroundTintList(ColorStateList.valueOf(accent));
-            button.setTextColor(Color.luminance(accent) > .55 ? Color.BLACK : Color.WHITE);
+            button.setTextColor(accentForLabel());
         } else {
-            button.setBackgroundTintList(null);
             button.setTextColor(getColor(R.color.valanium_muted));
         }
+    }
+
+    private GradientDrawable selectionBackground() {
+        int accent = accentColor();
+        GradientDrawable selected = new GradientDrawable();
+        selected.setColor(Color.argb("light".equals(themeName()) ? 34 : 48,
+                Color.red(accent), Color.green(accent), Color.blue(accent)));
+        selected.setStroke(dp(1), Color.argb(105,
+                Color.red(accent), Color.green(accent), Color.blue(accent)));
+        selected.setCornerRadius(dp(99));
+        return selected;
+    }
+
+    private GradientDrawable quietControlBackground() {
+        GradientDrawable idle = new GradientDrawable();
+        idle.setColor(Color.argb("light".equals(themeName()) ? 16 : 38,
+                Color.red(themePanel()), Color.green(themePanel()), Color.blue(themePanel())));
+        idle.setCornerRadius(dp(99));
+        return idle;
+    }
+
+    private int accentForLabel() {
+        int accent = accentColor();
+        return !"light".equals(themeName()) && Color.luminance(accent) < .42
+                ? blend(accent, Color.WHITE, .72f) : accent;
     }
 
     /** Иконки разделов приватности — по порядку заголовков в {@link #PRIVACY_SPEC}. */
