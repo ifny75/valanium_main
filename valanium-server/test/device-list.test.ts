@@ -24,6 +24,7 @@ import { SupportStore } from "../src/support/store.ts";
 import { NonceStore } from "../src/auth/nonce.ts";
 import { Registry, type Socket } from "../src/ws/registry.ts";
 import { RateLimiter } from "../src/util/ratelimit.ts";
+import { TicketKey, TicketStore } from "../src/auth/tickets.ts";
 import { ConnectionCounter } from "../src/util/connections.ts";
 import {
   authMessage,
@@ -79,6 +80,8 @@ function makeDeps(store: Store): Deps {
     sendLimiter: new RateLimiter(1000, 60_000),
     postLimiter: new RateLimiter(1000, 60_000),
     claimLimiter: new RateLimiter(1000, 3600_000),
+    ticketLimiter: new RateLimiter(1000, 60_000),
+    tickets: new TicketStore(TicketKey.load(":memory:"), 300),
     connections: new ConnectionCounter(),
     now: () => Date.now(),
   };

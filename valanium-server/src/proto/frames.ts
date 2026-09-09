@@ -1,4 +1,5 @@
 import { BadInput, concat, readU32BE, slice, toHex, writeU64BE } from "../util/bytes.ts";
+import { TICKET_LEN } from "../auth/tickets.ts";
 
 /**
  * Wire-протокол из ARCHITECTURE.md §7.
@@ -36,6 +37,8 @@ export const OP = {
   DEVICE_OK: 0x3f,
   /** Ответ панели поддержки: список переписок либо одна переписка. */
   SUPPORT_OK: 0x40,
+  /** Ответ на TICKET_REQUEST: пачка подписанных билетов. */
+  TICKET_GRANT: 0x46,
   // клиент → сервер
   AUTH: 0x02,
   PAY_REQUEST: 0x05,
@@ -85,6 +88,13 @@ export const OP = {
   /** Панель поддержки. Только для владельца: см. requireAdmin. */
   SUPPORT_GET: 0x41,
   SUPPORT_MARK: 0x43,
+  /** Sealed sender (ARCHITECTURE.md §7a): пачка анонимных билетов на отправку. */
+  TICKET_REQUEST: 0x45,
+  /**
+   * Отправка билетом вместо подписи сессии — единственный кадр `SEND`,
+   * принимаемый без `AUTH`: личность тут и не нужна, её заменяет билет.
+   */
+  SEND_ANON: 0x47,
 } as const;
 
 export const ID_LEN = 16;
@@ -135,6 +145,41 @@ export function parseSend(body: Uint8Array): SendFrame {
     ttlSec,
     ciphertext: slice(body, headerLen, body.byteLength),
   };
+}
+
+export interface SendAnonFrame {
+  clientRef: Uint8Array;
+  ticket: Uint8Array;
+  recipientDevice: Uint8Array;
+  ttlSec: number;
+  ciphertext: Uint8Array;
+}
+
+/** `[16B clientRef][88B ticket][32B recipientDevicePub][4B ttlSec][ciphertext]` */
+export function parseSendAnon(body: Uint8Array): SendAnonFrame {
+  const headerLen = ID_LEN + TICKET_LEN + KEY_LEN + 4;
+  if (body.byteLength <= headerLen) throw new BadInput("send_anon: truncated");
+  const ttlSec = readU32BE(body, ID_LEN + TICKET_LEN + KEY_LEN);
+  if (ttlSec === 0) throw new BadInput("send_anon: zero ttl");
+  return {
+    clientRef: slice(body, 0, ID_LEN),
+    ticket: slice(body, ID_LEN, ID_LEN + TICKET_LEN),
+    recipientDevice: slice(body, ID_LEN + TICKET_LEN, ID_LEN + TICKET_LEN + KEY_LEN),
+    ttlSec,
+    ciphertext: slice(body, headerLen, body.byteLength),
+  };
+}
+
+/** `[1B count]` — сколько билетов хочет клиент. Потолок проверяет вызывающий. */
+export function parseTicketRequest(body: Uint8Array): number {
+  if (body.byteLength !== 1) throw new BadInput("ticket_request: bad length");
+  return body[0]!;
+}
+
+/** `[1B count][ticket]...` */
+export function ticketGrantFrame(tickets: Uint8Array[]): Uint8Array {
+  if (tickets.length > 255) throw new Error("ticketGrantFrame: batch too large for a u8 count");
+  return frame(OP.TICKET_GRANT, concat(new Uint8Array([tickets.length]), ...tickets));
 }
 
 /**

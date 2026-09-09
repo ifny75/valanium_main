@@ -157,6 +157,20 @@ export const config = {
    */
   maxSendPerMinute: num("VALANIUM_MAX_SEND_PER_MIN", 120),
   /**
+   * Sealed sender: анонимные разовые билеты на доставку (ARCHITECTURE.md §7a).
+   *
+   * Бюджет считается при выпуске, по личности, — сама отправка по билету
+   * анонимна и посчитать её иначе как раз незачем. Шесть пачек по двадцать в
+   * минуту — те же 120 сообщений в минуту, что и у обычного `SEND`: билет не
+   * должен быть ни щедрее, ни скупее.
+   */
+  maxTicketsPerRequest: num("VALANIUM_MAX_TICKETS_PER_REQUEST", 20),
+  maxTicketRequestsPerMinute: num("VALANIUM_MAX_TICKET_REQUESTS_PER_MIN", 6),
+  /** Короткий срок жизни — билет не должен пережить связку с моментом выпуска. */
+  ticketTtlSec: num("VALANIUM_TICKET_TTL_SEC", 300),
+  /** Потолок карты потраченных билетов, как maxOutstandingNonces у challenge. */
+  maxOutstandingTickets: num("VALANIUM_MAX_OUTSTANDING_TICKETS", 50_000),
+  /**
    * Потолок очереди на устройство. Считается по получателю, а не по
    * отправителю: иначе десять аккаунтов сложатся и обойдут ограничение,
    * которое как раз получателя и защищает.

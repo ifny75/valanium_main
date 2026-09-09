@@ -9,6 +9,8 @@ use crate::error::{CoreError, Result};
 
 pub const ID_LEN: usize = 16;
 pub const KEY_LEN: usize = 32;
+/// `[16B nonce][8B expiry][64B sig]` — sealed-sender билет, opaque для клиента.
+pub const TICKET_LEN: usize = 16 + 8 + 64;
 
 pub mod op {
     // сервер → клиент
@@ -34,6 +36,8 @@ pub mod op {
     pub const CHANNEL_POST: u8 = 0x33;
     pub const DEVICE_OK: u8 = 0x3f;
     pub const SUPPORT_OK: u8 = 0x40;
+    /// Sealed sender: ответ на TICKET_REQUEST — пачка подписанных билетов.
+    pub const TICKET_GRANT: u8 = 0x46;
     // клиент → сервер
     pub const AUTH: u8 = 0x02;
     pub const PAY_REQUEST: u8 = 0x05;
@@ -75,6 +79,11 @@ pub mod op {
     pub const DEVICE_REVOKE: u8 = 0x44;
     pub const SUPPORT_GET: u8 = 0x41;
     pub const SUPPORT_MARK: u8 = 0x43;
+    /// Sealed sender: попросить пачку анонимных билетов на отправку.
+    pub const TICKET_REQUEST: u8 = 0x45;
+    /// Отправка билетом вместо подписи сессии — единственный кадр SEND,
+    /// который сервер принимает без AUTH.
+    pub const SEND_ANON: u8 = 0x47;
 }
 
 /// Свой список устройств: ответ сервера на [`op::DEVICE_LIST`].
@@ -151,6 +160,14 @@ pub struct Features {
     /// сразу после входа — то есть перестал бы работать вовсе.
     #[serde(default)]
     pub devices: bool,
+    /// Билеты на анонимную отправку: TICKET_REQUEST/SEND_ANON.
+    ///
+    /// Спрашивать заранее нужно по той же причине, что и про `devices`:
+    /// неизвестный опкод для сервера — это битый кадр, а он закрывает
+    /// соединение. Отправка старым способом (обычный SEND) продолжает
+    /// работать на любом сервере вне зависимости от этого флага.
+    #[serde(default, rename = "sealedSender")]
+    pub sealed_sender: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -470,6 +487,53 @@ pub fn ack_frame(envelope_id: &[u8; ID_LEN]) -> Vec<u8> {
     frame(op::ACK, envelope_id)
 }
 
+/// `[1B count]` — просьба выдать пачку sealed-sender билетов.
+pub fn ticket_request_frame(count: u8) -> Vec<u8> {
+    frame(op::TICKET_REQUEST, &[count])
+}
+
+/// `[16B clientRef][TICKET_LEN билет][32B recipientDevicePub][4B ttlSec][ciphertext]`
+///
+/// Тот же макет, что у `send_frame`, но вместо личности соединения — билет:
+/// сервер принимает этот кадр и без AUTH (proto.rs зеркалит frames.ts, где
+/// это явно оговорено). Кто отправит его — решает вызывающий: чтобы билет
+/// действительно не связался с личностью, это обязано быть отдельное,
+/// свежее соединение, а не то, что уже прошло AUTH этой же личностью.
+pub fn send_anon_frame(
+    client_ref: &[u8; ID_LEN],
+    ticket: &[u8; TICKET_LEN],
+    recipient_device: &[u8; KEY_LEN],
+    ttl_sec: u32,
+    ciphertext: &[u8],
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(ID_LEN + TICKET_LEN + KEY_LEN + 4 + ciphertext.len());
+    body.extend_from_slice(client_ref);
+    body.extend_from_slice(ticket);
+    body.extend_from_slice(recipient_device);
+    body.extend_from_slice(&ttl_sec.to_be_bytes());
+    body.extend_from_slice(ciphertext);
+    frame(op::SEND_ANON, &body)
+}
+
+/// `[1B count][ticket]...` — билеты непрозрачны для клиента, он их просто хранит.
+pub fn parse_ticket_grant(body: &[u8]) -> Result<Vec<[u8; TICKET_LEN]>> {
+    if body.is_empty() {
+        return Err(CoreError::BadFrame);
+    }
+    let count = body[0] as usize;
+    if body.len() != 1 + count * TICKET_LEN {
+        return Err(CoreError::BadFrame);
+    }
+    let mut tickets = Vec::with_capacity(count);
+    for i in 0..count {
+        let start = 1 + i * TICKET_LEN;
+        let mut ticket = [0u8; TICKET_LEN];
+        ticket.copy_from_slice(&body[start..start + TICKET_LEN]);
+        tickets.push(ticket);
+    }
+    Ok(tickets)
+}
+
 /// `[[4B len][bytes]]...` — пачка MLS KeyPackages одним кадром.
 pub fn keypkg_publish_frame(packages: &[Vec<u8>]) -> Vec<u8> {
     let mut body = Vec::new();
@@ -645,6 +709,71 @@ mod tests {
         let mut bad_flag = vec![0u8; ID_LEN];
         bad_flag.push(9);
         assert!(parse_keypkg(&bad_flag).is_err());
+    }
+
+    #[test]
+    fn ticket_request_frame_layout_matches_spec() {
+        let frame = ticket_request_frame(7);
+        assert_eq!(frame, [op::TICKET_REQUEST, 7]);
+    }
+
+    #[test]
+    fn send_anon_frame_layout_matches_spec() {
+        let ticket = [9u8; TICKET_LEN];
+        let frame = send_anon_frame(&[1u8; ID_LEN], &ticket, &[2u8; KEY_LEN], 3600, b"cipher");
+        assert_eq!(frame[0], op::SEND_ANON);
+        let mut off = 1;
+        assert_eq!(&frame[off..off + ID_LEN], &[1u8; ID_LEN]);
+        off += ID_LEN;
+        assert_eq!(&frame[off..off + TICKET_LEN], &ticket);
+        off += TICKET_LEN;
+        assert_eq!(&frame[off..off + KEY_LEN], &[2u8; KEY_LEN]);
+        off += KEY_LEN;
+        assert_eq!(&frame[off..off + 4], &[0, 0, 0x0e, 0x10]);
+        off += 4;
+        assert_eq!(&frame[off..], b"cipher");
+    }
+
+    #[test]
+    fn ticket_grant_round_trips_a_batch() {
+        let mut body = vec![2u8];
+        let t1 = [1u8; TICKET_LEN];
+        let t2 = [2u8; TICKET_LEN];
+        body.extend_from_slice(&t1);
+        body.extend_from_slice(&t2);
+        let tickets = parse_ticket_grant(&body).unwrap();
+        assert_eq!(tickets, vec![t1, t2]);
+    }
+
+    #[test]
+    fn ticket_grant_empty_batch_is_valid() {
+        // count=0 — сервер выдал пустую пачку (например, бюджет исчерпан
+        // ровно на границе), это не ошибка формата.
+        assert_eq!(parse_ticket_grant(&[0]).unwrap(), Vec::<[u8; TICKET_LEN]>::new());
+    }
+
+    #[test]
+    fn ticket_grant_rejects_length_mismatch_and_empty_body() {
+        assert!(parse_ticket_grant(&[]).is_err());
+        // count говорит "1 билет", но тело короче TICKET_LEN.
+        assert!(parse_ticket_grant(&[1, 0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn hello_parses_sealed_sender_feature_flag() {
+        let hello: Hello = parse_json(
+            br#"{"v":1,"nonce":"aa","serverTime":0,"heartbeatSec":30,"maxFrame":1048576,
+                 "features":{"sealedSender":true}}"#,
+        )
+        .unwrap();
+        assert!(hello.features.sealed_sender);
+
+        // Старый сервер поля не пришлёт вовсе — тогда false, а не отказ разбора.
+        let old: Hello = parse_json(
+            br#"{"v":1,"nonce":"aa","serverTime":0,"heartbeatSec":30,"maxFrame":1048576}"#,
+        )
+        .unwrap();
+        assert!(!old.features.sealed_sender);
     }
 
     #[test]

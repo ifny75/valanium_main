@@ -9,6 +9,7 @@ import { authMessage, deviceCertMessage, revokeDeviceMessage,
 import type { RateLimiter } from "../util/ratelimit.ts";
 import { decodeBase32, verify as verifyTotp } from "../auth/totp.ts";
 import type { ConnectionCounter } from "../util/connections.ts";
+import type { TicketStore } from "../auth/tickets.ts";
 import { BadInput, ascii, concat, constantTimeEqual, fromHex, random, toHex } from "../util/bytes.ts";
 import {
   CLOSE,
@@ -27,7 +28,10 @@ import {
   parseKeyPackageClaim,
   parseKeyPackages,
   parseSend,
+  parseSendAnon,
+  parseTicketRequest,
   sendOkFrame,
+  ticketGrantFrame,
 } from "../proto/frames.ts";
 import type { Registry } from "./registry.ts";
 import type { Socket } from "./registry.ts";
@@ -53,6 +57,9 @@ export interface Deps {
   postLimiter: RateLimiter;
   /** Выдача чужих KeyPackages: считается и по берущему, и по тому, у кого берут. */
   claimLimiter: RateLimiter;
+  /** Выпуск sealed-sender билетов: тоже по личности — сама отправка уже нет. */
+  ticketLimiter: RateLimiter;
+  tickets: TicketStore;
   connections: ConnectionCounter;
   now: () => number;
 }
@@ -154,6 +161,13 @@ export function handleOpen(deps: Deps, sock: Socket, conn: ConnData): void {
       features: {
         profiles: true, recovery: true, usernames: true, passes: true, decor: true,
         devices: true,
+        /**
+         * Билеты на анонимную отправку (`TICKET_REQUEST`/`SEND_ANON`). Спрашивать
+         * заранее нужно по той же причине, что и для остальных полей `features`:
+         * `SEND_ANON` на сервере, который о нём не знает, — это неизвестный
+         * опкод, а он закрывает соединение.
+         */
+        sealedSender: true,
       },
       // Входы, о которых клиент иначе не узнает. Пустой список — просто нет
       // onion-входа: старый клиент поля не заметит, новый останется на своём
@@ -335,6 +349,17 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
         // подписаться нечем. Взамен — жёсткий ограничитель частоты и
         // доказательство знания пароля.
         onRecoveryGet(deps, sock, conn, body);
+        return;
+      case OP.TICKET_REQUEST:
+        requireAuth(conn);
+        onTicketRequest(deps, sock, conn, body);
+        return;
+      case OP.SEND_ANON:
+        // Второй кадр без requireAuth, и намеренно: личность тут заменяет
+        // билет, а не сессия. Соединение, посылающее его, никогда не
+        // проходит AUTH — свяжутся ли когда-нибудь эти два факта, зависит
+        // только от того, открыл ли клиент для этого отдельное соединение.
+        onSendAnon(deps, sock, body);
         return;
       default:
         sock.end(CLOSE.PROTOCOL, "unknown opcode");
@@ -1809,13 +1834,107 @@ function onSend(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): voi
     return;
   }
 
-  const ttlSec = Math.min(parsed.ttlSec, config.envelopeTtlSec);
-  // Копия обязательна: parsed.* — это view в буфер uWS.
-  const payload = parsed.ciphertext.slice();
-  const envelopeId = deps.store.enqueue(parsed.recipientDevice, payload, now, now + ttlSec * 1000);
+  enqueueAndRespond(
+    deps, sock, parsed.recipientDevice, recipient.identity,
+    parsed.clientRef, parsed.ttlSec, parsed.ciphertext, now,
+  );
+}
 
-  sock.send(sendOkFrame(parsed.clientRef, envelopeId), true);
-  deps.registry.deliver(toHex(parsed.recipientDevice), envelopeFrame(envelopeId, now, payload));
+/**
+ * Sealed sender: то же самое, что `SEND`, но соединение никогда не проходило
+ * `AUTH` — вместо подписи сессии предъявлен билет (`tickets.ts`). Личности
+ * здесь взять неоткуда, и это не упущение, а вся суть механизма.
+ */
+function onSendAnon(deps: Deps, sock: Socket, body: Uint8Array): void {
+  const now = deps.now();
+  const parsed = parseSendAnon(body);
+
+  // Причины отказа сознательно неразличимы снаружи: подделывающему билет
+  // не за чем знать, чего именно он не угадал.
+  if (!deps.tickets.redeem(parsed.ticket, now)) {
+    sock.send(errorFrame("bad_ticket", "ticket invalid, expired, or already used"), true);
+    return;
+  }
+
+  const recipient = deps.store.getDevice(parsed.recipientDevice);
+  if (!recipient) {
+    sock.send(errorFrame("unknown_recipient", "no such device"), true);
+    return;
+  }
+
+  /*
+    Пропуска этому соединению предъявить нечем: `admitted` живёт только на
+    аутентифицированном сокете, а это — по определению не такой. Получателю
+    с политикой «только по пропускам» билет ничем не поможет: отправитель
+    падает назад на обычный SEND, где пропуск уже предъявлен. Это не потеря
+    сквозного шифрования — просто конкретно эта отправка себя не прячет.
+  */
+  if (deps.store.dmPolicy(recipient.identity) === "passes") {
+    sock.send(
+      errorFrame("dm_not_allowed", "recipient requires a pass; retry over an authenticated connection"),
+      true,
+    );
+    return;
+  }
+
+  enqueueAndRespond(
+    deps, sock, parsed.recipientDevice, recipient.identity,
+    parsed.clientRef, parsed.ttlSec, parsed.ciphertext, now,
+  );
+}
+
+/** Общий хвост SEND и SEND_ANON: очередь получателя не отличает, как назвался отправитель. */
+function enqueueAndRespond(
+  deps: Deps,
+  sock: Socket,
+  recipientDevice: Uint8Array,
+  recipientIdentity: Uint8Array,
+  clientRef: Uint8Array,
+  ttlSecRequested: number,
+  ciphertext: Uint8Array,
+  now: number,
+): void {
+  // Потолок очереди получателя. Ведро отправителя его не заменяет: десять
+  // аккаунтов в пределах своих вёдер сложатся и всё равно зальют одного
+  // человека, а разгребать очередь ему.
+  if (deps.store.countQueued(recipientDevice, now) >= config.maxQueuedPerDevice) {
+    sock.send(errorFrame("recipient_queue_full", "recipient has too much undelivered mail"), true);
+    return;
+  }
+  const payloadBytes = ciphertext.byteLength;
+  if (deps.store.queuedBytes(recipientDevice, now) + payloadBytes
+      > config.maxQueuedBytesPerDevice
+      || deps.store.queuedBytesForIdentity(recipientIdentity, now) + payloadBytes
+      > config.maxQueuedBytesPerIdentity) {
+    sock.send(errorFrame("recipient_queue_full", "recipient storage quota reached"), true);
+    return;
+  }
+
+  const ttlSec = Math.min(ttlSecRequested, config.envelopeTtlSec);
+  // Копия обязательна: ciphertext — это view в буфер uWS.
+  const payload = ciphertext.slice();
+  const envelopeId = deps.store.enqueue(recipientDevice, payload, now, now + ttlSec * 1000);
+
+  sock.send(sendOkFrame(clientRef, envelopeId), true);
+  deps.registry.deliver(toHex(recipientDevice), envelopeFrame(envelopeId, now, payload));
+}
+
+/**
+ * Пачка билетов. Бюджет считается здесь, по личности — единственное место,
+ * где sealed sender вообще завязан на то, кто её попросил.
+ */
+function onTicketRequest(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): void {
+  const now = deps.now();
+  const count = parseTicketRequest(body);
+  if (count === 0 || count > config.maxTicketsPerRequest) {
+    throw new BadInput("ticket_request: bad count");
+  }
+  const factor = conn.onion ? config.onionLimitFactor : 1;
+  if (!deps.ticketLimiter.allow(toHex(conn.identity!), now, factor)) {
+    sock.send(errorFrame("ticket_rate_limited", "slow down"), true);
+    return;
+  }
+  sock.send(ticketGrantFrame(deps.tickets.issue(count, now)), true);
 }
 
 function onAck(deps: Deps, conn: ConnData, body: Uint8Array): void {

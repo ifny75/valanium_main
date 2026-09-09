@@ -56,6 +56,11 @@ export function writeU64BE(value: bigint): Uint8Array {
   return out;
 }
 
+export function readU64BE(b: Uint8Array, offset: number): bigint {
+  if (offset + 8 > b.byteLength) throw new BadInput("truncated u64");
+  return new DataView(b.buffer, b.byteOffset + offset, 8).getBigUint64(0, false);
+}
+
 /**
  * Проверка длины ДО обращения по смещению (ARCHITECTURE.md §13.4).
  * Возвращает view без копирования — вызывающий обязан скопировать, если
