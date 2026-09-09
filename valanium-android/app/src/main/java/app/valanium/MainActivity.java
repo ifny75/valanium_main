@@ -88,8 +88,6 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final String HOP_KEY = "multihop_node";
     /** Имена те же, что на странице состояния сети: человек выбирает из них же. */
     private static final String[] HOP_NODES = { "alpha", "beta", "gamma" };
-    private static final String[] HOP_ADDRESSES = { "2.26.55.48", "31.76.21.148", "31.76.29.56" };
-    private static final String MAIN_ADDRESS = "2.27.205.8";
     private static final String RELEASES_URL = "https://valanium.com/v1/releases/latest";
     /** Сколько сообщений поднимать за раз. Остальное — по прокрутке вверх. */
     private static final int HISTORY_PAGE = 40;
@@ -965,20 +963,15 @@ public final class MainActivity extends Activity implements Events.Listener {
             host.addView(torCircuitNode("0", getString(R.string.tor_node_device), Build.MODEL));
             if (hops != null) for (int i = 0; i < Math.min(8, hops.length()); i++) {
                 addTorConnector(host);
-                JSONArray ips = hops.optJSONArray(i);
-                StringBuilder addresses = new StringBuilder();
-                if (ips != null) for (int j = 0; j < ips.length(); j++) {
-                    if (j > 0) addresses.append("  ·  ");
-                    addresses.append(ips.optString(j));
-                }
                 host.addView(torCircuitNode(String.valueOf(i + 1),
                         i == 0 ? getString(R.string.tor_node_guard)
                                 : getString(R.string.tor_node_relay, i + 1),
-                        addresses.length() == 0 ? "—" : addresses.toString()));
+                        getString(R.string.node_address_hidden)));
             }
             addTorConnector(host);
             host.addView(torCircuitNode(String.valueOf((hops == null ? 0 : Math.min(8, hops.length())) + 1),
-                    getString(R.string.tor_node_destination), circuit.optString("destination", "—")));
+                    getString(R.string.tor_node_destination),
+                    getString(R.string.node_address_hidden)));
         } catch (Throwable error) {
             state.setText(R.string.tor_circuit_unavailable);
             host.addView(torCircuitNode("!", getString(R.string.tor_node_device),
@@ -1041,7 +1034,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         host.addView(connector, params);
     }
 
-    /** Показывает известный клиенту маршрут, не выдавая список адресов за health-check. */
+    /** Показывает роли маршрута, не раскрывая публично адреса инфраструктуры. */
     private void renderConnectionOverview() {
         TextView state = findViewById(R.id.connection_state);
         if (state == null || appearancePreferences == null) return;
@@ -1057,7 +1050,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             for (int i = 0; i < HOP_NODES.length; i++) if (HOP_NODES[i].equals(hop)) index = i;
             route = index < 0 ? getString(R.string.route_multihop_auto_summary)
                     : getString(R.string.route_multihop_node_summary,
-                            Character.toUpperCase(hop.charAt(0)) + hop.substring(1), HOP_ADDRESSES[index]);
+                            Character.toUpperCase(hop.charAt(0)) + hop.substring(1));
             privacy = getString(R.string.route_multihop_privacy);
         } else if ("onion".equals(mode)) {
             route = getString(R.string.route_onion_summary);
@@ -1071,14 +1064,14 @@ public final class MainActivity extends Activity implements Events.Listener {
                 getString(R.string.connection_device_route, Build.MODEL, route));
         ((TextView) findViewById(R.id.connection_route_privacy)).setText(privacy);
         ((TextView) findViewById(R.id.connection_destination)).setText(
-                getString(R.string.connection_destination, MAIN_ADDRESS));
+                R.string.connection_addresses_hidden);
         StringBuilder infrastructure = new StringBuilder();
         for (int i = 0; i < HOP_NODES.length; i++) {
             if (i > 0) infrastructure.append('\n');
             String name = Character.toUpperCase(HOP_NODES[i].charAt(0)) + HOP_NODES[i].substring(1);
-            infrastructure.append(String.format(Locale.ROOT, "%-7s %s", name, HOP_ADDRESSES[i]));
+            infrastructure.append(getString(R.string.infrastructure_relay, name));
         }
-        infrastructure.append('\n').append(String.format(Locale.ROOT, "%-7s %s", "Main", MAIN_ADDRESS));
+        infrastructure.append('\n').append(getString(R.string.infrastructure_main));
         ((TextView) findViewById(R.id.connection_nodes)).setText(infrastructure);
         View dot = findViewById(R.id.connection_status_dot);
         int color = getString(R.string.status_online).equals(statusText)
