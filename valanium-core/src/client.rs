@@ -79,6 +79,16 @@ async fn open_socket(url: &str) -> Result<Socket> {
 /// сервер вдруг не назвал период — берём безопасное значение сами.
 const FALLBACK_HEARTBEAT_SEC: u64 = 30;
 const MAX_BACKOFF_SEC: u64 = 60;
+/// Билетов на руках меньше — просим ещё, не дожидаясь, пока кончатся совсем:
+/// доставка не должна упираться в пустой запас посреди набора сообщения.
+const TICKET_LOW_WATERMARK: usize = 3;
+/// Столько просим за раз. Сервер по умолчанию отдаёт до двадцати — берём с
+/// запасом, но не всю пачку: несколько отправок между запросами это переживут.
+const TICKET_BATCH_SIZE: u8 = 10;
+/// Сколько ждать анонимную отправку целиком — открытие соединения (иногда
+/// через Tor), HELLO, ответ. Дольше — не тише, а просто медленнее: сообщение
+/// уйдёт обычным путём, как только это станет ясно.
+const ANON_SEND_TIMEOUT: Duration = Duration::from_secs(25);
 /// Внутренний адрес, который UI передаёт для автоматического выбора пути.
 /// Он никогда не попадает в DNS или URL-парсер: `session` разворачивает его в
 /// реальные маршруты перед каждой попыткой соединения.
@@ -275,6 +285,43 @@ struct Live {
     /// сообщение могло опередить приглашение и на следующем подключении
     /// разберётся. Второй означает, что оно не разберётся уже никогда.
     failed: std::collections::HashSet<[u8; ID_LEN]>,
+    /// Sealed sender (ARCHITECTURE.md §7a): непотраченные билеты. Живут в
+    /// `Live`, а не в `pump`, по той же причине, что и `outbox`, — переживают
+    /// переподключение. Свой короткий срок годности билеты и так несут сами;
+    /// протухший просто не пройдёт на сервере, и это не отличить от того,
+    /// что сообщение отправилось обычным путём.
+    tickets: VecDeque<[u8; proto::TICKET_LEN]>,
+}
+
+/// Анонимная отправка не удалась (билетов не было / Tor недоступен / сервер
+/// отказал / соединение оборвалось) — сообщить об этом некому, кроме `pump`:
+/// только он держит основной, уже аутентифицированный сокет, через который
+/// можно попробовать снова.
+///
+/// Канал, а не прямой вызов: отправка идёт своим, отдельным соединением и
+/// своей задачей — она не может занимать `&mut Socket`/`&mut Mls` основного
+/// соединения, они уже заняты циклом `pump`. Канал создаётся в `session()` и
+/// переживает переподключение, поэтому исход, пришедший уже после разрыва
+/// связи, не потеряется — дождётся следующего захода `pump`.
+struct AnonFallback {
+    device: [u8; KEY_LEN],
+    body: String,
+}
+
+/// Что нужно `encrypt_and_send`, чтобы попробовать отправить письмо в обход
+/// уже открытого, аутентифицированного соединения.
+///
+/// Отдельная структура, а не россыпь параметров, ровно потому, что параметр
+/// этот — не про одно сообщение, а про всю сессию: пул билетов и канал исхода
+/// общие на всю связь и передаются по цепочке `on_send → deliver_to_person →
+/// deliver → encrypt_and_send` реborrow'ом, без клонирования состояния.
+struct SealedSenderCtx<'a> {
+    tickets: &'a mut VecDeque<[u8; proto::TICKET_LEN]>,
+    /// Сказал ли сервер в HELLO, что умеет TICKET_REQUEST/SEND_ANON. Кадр,
+    /// которого сервер не знает, — это для него битый кадр и разрыв связи, а
+    /// не отказ, поэтому спрашивать наугад нельзя (см. `Greeting`).
+    available: bool,
+    outcomes: mpsc::UnboundedSender<AnonFallback>,
 }
 
 /// Обрыв связи, а не отказ сервера. Такую ошибку лечит переподключение, и
@@ -875,7 +922,7 @@ async fn announce_presence(
             body: crate::access::presence_signal(),
             stored: true,
         };
-        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await?;
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, None).await?;
     }
     Ok(())
 }
@@ -907,7 +954,7 @@ async fn send_typing(
         body: crate::access::typing_signal(active),
         stored: true,
     };
-    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
+    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, None).await
 }
 
 /// Нить для только что заведённой беседы.
@@ -1085,7 +1132,7 @@ async fn announce_devices(
             body: body.clone(),
             stored: true,
         };
-        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox).await?;
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox, None).await?;
         told.insert(device);
         sent_any = true;
     }
@@ -1148,7 +1195,7 @@ async fn grant_missing(
             // Служебное сообщение в переписку не кладётся.
             stored: true,
         };
-        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox).await?;
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox, None).await?;
 
         access.remember_grant(&device, &hash);
         changed = true;
@@ -1182,7 +1229,7 @@ async fn grant_missing(
                 body: crate::access::profile_key_gift(&hex::encode(key)),
                 stored: true,
             };
-            encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox)
+            encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox, None)
                 .await?;
             sent.insert(device.clone());
             shared = true;
@@ -1819,6 +1866,11 @@ async fn session(
     let mut entry = entry;
     let mut backoff = 1u64;
     let mut live = Live::default();
+    // Один канал на всю сессию, а не на каждое соединение: исход анонимной
+    // отправки может прийти уже после того, как основное соединение оборвалось
+    // и pump() успел вернуться. Канал переживает это молча — следующий заход
+    // pump() получит тот же приёмник и разберёт то, что накопилось.
+    let (anon_tx, mut anon_rx) = mpsc::unbounded_channel::<AnonFallback>();
     // Список маршрутов считается один раз на сессию: он меняется только вместе
     // с настройкой, а её смена и так пересоздаёт соединение.
     let routes = routes_for(url, store);
@@ -1835,7 +1887,7 @@ async fn session(
         let attempt_url = routes.get(route).map(String::as_str).unwrap_or(url);
         match connect_once(
             attempt_url, &credentials, &entry, store, &mut mls, sink, commands, &mut live,
-            &mut established,
+            &mut established, anon_tx.clone(), &mut anon_rx,
         )
         .await
         {
@@ -1987,6 +2039,8 @@ struct Greeting {
     decor: bool,
     /// Умеет ли сервер отдавать наш собственный список устройств.
     devices: bool,
+    /// Умеет ли сервер TICKET_REQUEST/SEND_ANON (ARCHITECTURE.md §7a).
+    sealed_sender: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2000,6 +2054,8 @@ async fn connect_once(
     commands: &mut mpsc::UnboundedReceiver<Command>,
     live: &mut Live,
     established: &mut bool,
+    anon_tx: mpsc::UnboundedSender<AnonFallback>,
+    anon_rx: &mut mpsc::UnboundedReceiver<AnonFallback>,
 ) -> Result<Outcome> {
     // Заголовки Cloudflare Access, если сборка их знает: без них закрытый
     // периметр пришлось бы держать выключенным (§10.1).
@@ -2027,9 +2083,10 @@ async fn connect_once(
         profiles: hello.features.profiles,
         decor: hello.features.decor,
         devices: hello.features.devices,
+        sealed_sender: hello.features.sealed_sender,
     };
 
-    pump(socket, store, mls, sink, commands, greeting, handshake, live).await
+    pump(socket, store, mls, sink, commands, greeting, handshake, live, anon_tx, anon_rx).await
 }
 
 async fn expect_hello(socket: &mut Socket, sink: &EventSink) -> Result<Hello> {
@@ -2154,6 +2211,7 @@ async fn handshake(
 }
 
 /// Рабочий цикл соединения: входящие кадры, команды UI и heartbeat.
+#[allow(clippy::too_many_arguments)]
 async fn pump(
     mut socket: Socket,
     store: &Store,
@@ -2163,6 +2221,8 @@ async fn pump(
     greeting: Greeting,
     handshake: Handshake,
     live: &mut Live,
+    anon_tx: mpsc::UnboundedSender<AnonFallback>,
+    anon_rx: &mut mpsc::UnboundedReceiver<AnonFallback>,
 ) -> Result<Outcome> {
     let authenticated = matches!(handshake, Handshake::Authenticated { .. });
     let device_id = match &handshake {
@@ -2225,6 +2285,13 @@ async fn pump(
             send(&mut socket, proto::device_list_frame()?).await?;
         }
 
+        // Sealed sender: прогреваем пул заранее, а не в момент первой отправки —
+        // иначе первое сообщение после каждого подключения гарантированно
+        // уходило бы обычным путём, дожидаясь пачки.
+        if greeting.sealed_sender {
+            send(&mut socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
+        }
+
         // Выдаём пропуска тем, кому они полагаются, но ещё не достались.
         // Сверка идёт при каждом подключении, поэтому включение политики никого
         // не отрезает: знакомые получают пропуска тем же заходом. Это же чинит
@@ -2269,8 +2336,16 @@ async fn pump(
         // То, что не ушло из-за обрыва. Досылаем до всего остального: порядок
         // сообщений для человека важнее, чем свежесть.
         for waiting in std::mem::take(&mut live.outbox) {
-            if let Err(err) =
-                deliver(&mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox).await
+            let mut sealed = Some(SealedSenderCtx {
+                tickets: &mut live.tickets,
+                available: greeting.sealed_sender,
+                outcomes: anon_tx.clone(),
+            });
+            if let Err(err) = deliver(
+                &mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox,
+                sealed.as_mut(),
+            )
+            .await
             {
                 if is_transport(&err) {
                     return Ok(Outcome::Retry);
@@ -2425,7 +2500,11 @@ async fn pump(
                         continue;
                     }
                     if let Err(err) =
-                        on_frame(&mut socket, &data, store, mls, sink, &mut pending, live).await
+                        on_frame(
+                            &mut socket, &data, store, mls, sink, &mut pending, live,
+                            greeting.sealed_sender, &anon_tx,
+                        )
+                        .await
                     {
                         // Битый кадр — рвём соединение, а не гадаем.
                         sink(Event::Disconnected { reason: err.to_string() });
@@ -2467,7 +2546,7 @@ async fn pump(
                                         let body = crate::access::delete_request(&[id.clone()]);
                                         if let Err(err) = deliver_to_person(
                                             &mut socket, store, mls, sink, &mut pending,
-                                            device, body, true, &mut live.outbox,
+                                            device, body, true, &mut live.outbox, None,
                                         ).await {
                                             if is_transport(&err) {
                                                 return Ok(Outcome::Retry);
@@ -2492,7 +2571,7 @@ async fn pump(
                                         let request = crate::access::edit_request(&id, &body);
                                         if let Err(err) = deliver_to_person(
                                             &mut socket, store, mls, sink, &mut pending,
-                                            device, request, true, &mut live.outbox,
+                                            device, request, true, &mut live.outbox, None,
                                         ).await {
                                             if is_transport(&err) {
                                                 return Ok(Outcome::Retry);
@@ -2934,6 +3013,11 @@ async fn pump(
                         } else if let Err(err) = on_send(
                             &mut socket, store, mls, sink, &mut pending, &recipient_device, body,
                             &mut live.outbox,
+                            Some(SealedSenderCtx {
+                                tickets: &mut live.tickets,
+                                available: greeting.sealed_sender,
+                                outcomes: anon_tx.clone(),
+                            }),
                         )
                         .await
                         {
@@ -2983,6 +3067,26 @@ async fn pump(
             _ = ticker.tick() => {
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
             }
+            // Анонимная отправка не удалась (см. spawn_anon_send) — единственный
+            // способ попробовать снова живёт здесь: только у pump есть открытый,
+            // аутентифицированный сокет. Своей копии в базе уже ничего не грозит,
+            // поэтому `deliver` заходит с `stored: true`.
+            Some(AnonFallback { device, body }) = anon_rx.recv() => {
+                let waiting = PendingSend { device, body, stored: true };
+                // `None`, а не новая попытка sealed sender: иначе застрявший Tor
+                // гонял бы одно и то же письмо между анонимной отправкой и этим
+                // же обработчиком бесконечно. Здесь письмо обязано уйти.
+                if let Err(err) = deliver(
+                    &mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox, None,
+                )
+                .await
+                {
+                    if is_transport(&err) {
+                        return Ok(Outcome::Retry);
+                    }
+                    fail(sink, "send", &err.to_string());
+                }
+            }
         }
     }
 }
@@ -2996,6 +3100,8 @@ async fn on_frame(
     sink: &EventSink,
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     live: &mut Live,
+    sealed_sender_available: bool,
+    anon_tx: &mpsc::UnboundedSender<AnonFallback>,
 ) -> Result<()> {
     let (opcode, body) = proto::split(data)?;
     match opcode {
@@ -3003,7 +3109,18 @@ async fn on_frame(
         op::QUEUE_DONE => sink(Event::QueueDone),
         op::ENVELOPE => on_envelope(socket, body, store, mls, sink, live).await?,
         op::KEYPKG => {
-            on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox).await?
+            let sealed = Some(SealedSenderCtx {
+                tickets: &mut live.tickets,
+                available: sealed_sender_available,
+                outcomes: anon_tx.clone(),
+            });
+            on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox, sealed).await?
+        }
+        // Sealed sender: пачка билетов, заказанная encrypt_and_send. Спрятать
+        // их негде, кроме как здесь — TICKET_REQUEST не привязан к конкретной
+        // отправке, и ответ может прийти в любой момент между ними.
+        op::TICKET_GRANT => {
+            live.tickets.extend(proto::parse_ticket_grant(body)?);
         }
         op::PROFILE => {
             let profile: proto::ProfilePayload = proto::parse_json(body)?;
@@ -3473,6 +3590,7 @@ async fn request_invite(
 }
 
 /// Приехал KeyPackage собеседника — заводим группу и досылаем отложенное.
+#[allow(clippy::too_many_arguments)]
 async fn on_key_package(
     socket: &mut Socket,
     body: &[u8],
@@ -3481,6 +3599,7 @@ async fn on_key_package(
     sink: &EventSink,
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     outbox: &mut Outbox,
+    mut sealed: Option<SealedSenderCtx<'_>>,
 ) -> Result<()> {
     let (client_ref, package) = proto::parse_keypkg(body)?;
     let Some(claim) = pending.remove(&client_ref) else {
@@ -3530,7 +3649,7 @@ async fn on_key_package(
         outbox.push(waiting);
         return Err(err);
     }
-    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
+    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed.as_mut()).await
 }
 
 /// Все устройства человека, которому адресовано сообщение.
@@ -3600,12 +3719,15 @@ async fn deliver_to_person(
     body: String,
     stored: bool,
     outbox: &mut Outbox,
+    mut sealed: Option<SealedSenderCtx<'_>>,
 ) -> Result<()> {
     let devices = recipients(store, &device);
     let mut saved = stored;
     for target in devices {
         let waiting = PendingSend { device: target, body: body.clone(), stored: saved };
-        deliver(socket, store, mls, sink, pending, waiting, outbox).await?;
+        // Реborrow на каждый круг: у человека может быть несколько устройств,
+        // и пул билетов/канал исхода у них общий на всё сообщение целиком.
+        deliver(socket, store, mls, sink, pending, waiting, outbox, sealed.as_mut()).await?;
         saved = true;
     }
     Ok(())
@@ -3621,11 +3743,12 @@ async fn on_send(
     recipient_device: &str,
     body: String,
     outbox: &mut Outbox,
+    sealed: Option<SealedSenderCtx<'_>>,
 ) -> Result<()> {
     let device = hex::decode(recipient_device).map_err(|_| CoreError::BadFrame)?;
     let device: [u8; KEY_LEN] = device.try_into().map_err(|_| CoreError::BadKeyLength)?;
 
-    deliver_to_person(socket, store, mls, sink, pending, device, body, false, outbox).await
+    deliver_to_person(socket, store, mls, sink, pending, device, body, false, outbox, sealed).await
 }
 
 /// Общий путь для новой отправки и для досылки из ящика.
@@ -3633,6 +3756,7 @@ async fn on_send(
 /// При обрыве сообщение возвращается в ящик, а не теряется: до этой правки
 /// неудачная отправка оставляла человеку одну строку в журнале ошибок и
 /// собственную копию в базе, которой собеседник никогда не увидит.
+#[allow(clippy::too_many_arguments)]
 async fn deliver(
     socket: &mut Socket,
     store: &Store,
@@ -3641,14 +3765,19 @@ async fn deliver(
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     waiting: PendingSend,
     outbox: &mut Outbox,
+    sealed: Option<&mut SealedSenderCtx<'_>>,
 ) -> Result<()> {
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
     }
     match store.conversation_with(&waiting.device)? {
-        Some(group_id) => encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await,
+        Some(group_id) => {
+            encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed).await
+        }
         None => {
             // Беседы ещё нет: просим KeyPackage и досылаем сообщение по ответу.
+            // Билет здесь никак не поможет — сообщение уйдёт уже потом, из
+            // on_key_package, своим отдельным заходом за sealed sender.
             let mut client_ref = [0u8; ID_LEN];
             client_ref.copy_from_slice(&random_bytes(ID_LEN));
             let device = waiting.device;
@@ -3664,6 +3793,7 @@ async fn deliver(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn encrypt_and_send(
     socket: &mut Socket,
     store: &Store,
@@ -3672,6 +3802,7 @@ async fn encrypt_and_send(
     group_id: &[u8],
     waiting: PendingSend,
     outbox: &mut Outbox,
+    sealed: Option<&mut SealedSenderCtx<'_>>,
 ) -> Result<()> {
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
@@ -3700,6 +3831,27 @@ async fn encrypt_and_send(
         store.insert_message(&client_ref, &thread, true, now_millis(), body.as_bytes())?;
     }
 
+    // Sealed sender: билет и Tor-вход есть — пробуем анонимно, отдельным
+    // соединением, которое к этой сессии не привязать. Не удастся — узнаем
+    // об этом каналом исхода, а не отсюда: пока пишем этот кадр, ответа с
+    // другого соединения ещё нет и быть не может.
+    if let Some(ctx) = sealed {
+        if ctx.available {
+            if ctx.tickets.len() < TICKET_LOW_WATERMARK {
+                // Не ждём ответа — пачка доедет по этому же соединению позже,
+                // а сообщение не должно стоять из-за пополнения запаса.
+                let _ = send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await;
+            }
+            if let (Some(route), Some(ticket)) = (pick_onion_route(store), ctx.tickets.pop_front()) {
+                spawn_anon_send(
+                    route, client_ref, ticket, *device, ciphertext, waiting.body,
+                    sink.clone(), ctx.outcomes.clone(),
+                );
+                return Ok(());
+            }
+        }
+    }
+
     if let Err(err) =
         send(socket, proto::send_frame(&client_ref, device, DEFAULT_TTL_SEC, &ciphertext)).await
     {
@@ -3709,6 +3861,131 @@ async fn encrypt_and_send(
         return Err(err);
     }
     Ok(())
+}
+
+/// Один из известных onion-входов — специально для sealed sender.
+///
+/// Обычное соединение выбирает путь один раз на сессию и держится его, пока
+/// он открывается (см. `routes_for`/`session`); анонимной отправке это не
+/// подходит: если она год за годом ходит тем же путём, что и основное
+/// соединение, наблюдатель сети свяжет их по одному этому факту, даже не
+/// заглядывая внутрь протокола. Поэтому вход выбирается заново на каждую
+/// попытку и намеренно не через `session`-маршрутизацию.
+///
+/// Только Tor: спрятать отправителя от сервера, но не от сети, — не та защита,
+/// которую sealed sender обещает (ARCHITECTURE.md §7a). Список онион-входов
+/// почти никогда не пуст — три запасных зашиты в сборку, — но défensive-`None`
+/// оставлен на случай, если это когда-нибудь перестанет быть так.
+fn pick_onion_route(store: &Store) -> Option<String> {
+    let hosts = load_onion_hosts(store);
+    if hosts.is_empty() {
+        return None;
+    }
+    let index = (random_bytes(1)[0] as usize) % hosts.len();
+    hosts.into_iter().nth(index)
+}
+
+/// Один анонимный SEND: своё, отдельное соединение, которое никогда не
+/// проходит AUTH — открывает его, ждёт HELLO, тратит билет и закрывается.
+///
+/// Не различает исход отказа: просроченный билет, неверная подпись, отказ
+/// сервера, оборвавшийся Tor-circuit — для вызывающего все они означают одно
+/// и то же, «анонимно не вышло», и ведут к одному и тому же лечению — письмо
+/// уходит обычным путём через уже открытую, аутентифицированную сессию. Разбор
+/// причины не добавляет здесь ничего: подделывающему билет не должно быть
+/// виднее, что именно он не угадал (это же верно и на сервере, см.
+/// `valanium-server/src/auth/tickets.ts`), а настоящему отказу — что билет,
+/// что обрыв связи — одинаково нужно просто попробовать иначе.
+async fn send_anon_once(
+    route: String,
+    client_ref: [u8; ID_LEN],
+    ticket: [u8; proto::TICKET_LEN],
+    device: [u8; KEY_LEN],
+    ciphertext: Vec<u8>,
+) -> Result<[u8; ID_LEN]> {
+    let mut socket = open_socket(&route).await?;
+
+    loop {
+        let message = socket
+            .next()
+            .await
+            .ok_or_else(|| CoreError::Transport("closed before hello".into()))?
+            .map_err(|err| CoreError::Transport(err.to_string()))?;
+        if let Message::Binary(data) = message {
+            let (opcode, _) = proto::split(&data)?;
+            if opcode == op::HELLO {
+                break;
+            }
+        }
+    }
+
+    send(
+        &mut socket,
+        proto::send_anon_frame(&client_ref, &ticket, &device, DEFAULT_TTL_SEC, &ciphertext),
+    )
+    .await?;
+
+    let envelope_id = loop {
+        let message = socket
+            .next()
+            .await
+            .ok_or_else(|| CoreError::Transport("closed before response".into()))?
+            .map_err(|err| CoreError::Transport(err.to_string()))?;
+        let Message::Binary(data) = message else { continue };
+        let (opcode, body) = proto::split(&data)?;
+        match opcode {
+            op::SEND_OK => {
+                let (_, envelope_id) = proto::parse_send_ok(body)?;
+                break envelope_id;
+            }
+            op::ERROR => {
+                let err: ServerError = proto::parse_json(body)?;
+                return Err(CoreError::Rejected(err.code));
+            }
+            // Постороннее (например, чужой PONG) — соединение только на это и
+            // заведено, но неизвестный кадр рвать его не должен.
+            _ => continue,
+        }
+    };
+    let _ = socket.close(None).await;
+    Ok(envelope_id)
+}
+
+/// Заводит `send_anon_once` отдельной задачей и не ждёт её здесь: `pump` не
+/// должен стоять всё это время, особенно если путь идёт через Tor.
+///
+/// Успех сообщает о себе сам — `sink` можно звать из любой задачи. Неудача
+/// возвращается каналом: только у `pump` есть открытый, аутентифицированный
+/// сокет, через который есть чем попробовать снова.
+#[allow(clippy::too_many_arguments)]
+fn spawn_anon_send(
+    route: String,
+    client_ref: [u8; ID_LEN],
+    ticket: [u8; proto::TICKET_LEN],
+    device: [u8; KEY_LEN],
+    ciphertext: Vec<u8>,
+    body: String,
+    sink: EventSink,
+    fallback: mpsc::UnboundedSender<AnonFallback>,
+) {
+    tokio::spawn(async move {
+        let attempt = tokio::time::timeout(
+            ANON_SEND_TIMEOUT,
+            send_anon_once(route, client_ref, ticket, device, ciphertext),
+        )
+        .await;
+        match attempt {
+            Ok(Ok(envelope_id)) => sink(Event::Accepted {
+                client_ref: hex::encode(client_ref),
+                envelope_id: hex::encode(envelope_id),
+            }),
+            // Таймаут и ошибка отправки лечатся одинаково: сообщить pump,
+            // что нужен обычный путь.
+            _ => {
+                let _ = fallback.send(AnonFallback { device, body });
+            }
+        }
+    });
 }
 
 /// Служебный кадр MLS (Welcome, коммит) едет тем же конвертом, что и сообщения.
