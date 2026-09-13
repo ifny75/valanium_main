@@ -151,6 +151,8 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Нижний островок: три корневых экрана и размытая подложка. */
     private BlurPanel tabBar;
+    /** Продолжение верхней панели под прозрачной системной строкой Android 15. */
+    private View statusBarPanel;
 
     /** Признаёт ли сервер это устройство владельцем. Решает сервер, не мы. */
     private boolean admin;
@@ -699,19 +701,118 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void configureInsets() {
-        if (Build.VERSION.SDK_INT < 30) return;
         View root = findViewById(R.id.app_root);
+        if (root instanceof ViewGroup) ((ViewGroup) root).setClipChildren(false);
+        FrameLayout windowContent = findViewById(android.R.id.content);
+        if (windowContent != null) {
+            statusBarPanel = new View(this);
+            windowContent.addView(statusBarPanel,
+                    new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        }
+        root.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> layoutTopBars());
+        if (Build.VERSION.SDK_INT < 30) {
+            root.post(this::layoutTopBars);
+            return;
+        }
         root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
             Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
             Insets ime = windowInsets.getInsets(WindowInsets.Type.ime());
-            view.setPadding(dp(16), bars.top + dp(8), dp(16),
+            view.setPadding(dp(16), bars.top, dp(16),
                     Math.max(bars.bottom, ime.bottom) + dp(8));
+            layoutStatusBarPanel(view, bars.top);
+            view.post(this::layoutTopBars);
             if (ime.bottom > 0 && screenConversation.getVisibility() == View.VISIBLE) {
                 ui.post(() -> scrollToLatest(false));
             }
             return windowInsets;
         });
         root.requestApplyInsets();
+    }
+
+    private void layoutStatusBarPanel(View root, int statusBarHeight) {
+        if (statusBarPanel == null) return;
+        ViewGroup.LayoutParams params = statusBarPanel.getLayoutParams();
+        // Панель добавлена прямо в android.R.id.content, вне внутренних полей
+        // app_root, поэтому MATCH_PARENT действительно равен ширине дисплея.
+        params.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        params.height = statusBarHeight;
+        statusBarPanel.setLayoutParams(params);
+        statusBarPanel.setBackgroundColor(systemTopColor());
+    }
+
+    /**
+     * Верхняя панель принадлежит окну, а не карточке экрана: растягиваем её
+     * поверх общих полей контента и разрешаем родителям рисовать за границами.
+     * Так все разделы остаются выровнены по 16 dp, но шапка касается обоих
+     * краёв и визуально продолжается системной строкой состояния.
+     */
+    private void layoutTopBars() {
+        View root = findViewById(R.id.app_root);
+        if (root == null || root.getWidth() == 0) return;
+        layoutTopBars(root, root, root.getWidth());
+    }
+
+    private void layoutTopBars(View view, View root, int windowWidth) {
+        if ("valanium_top_bar".equals(view.getTag())) {
+            ViewGroup.LayoutParams params = view.getLayoutParams();
+            if (params.width != windowWidth) {
+                params.width = windowWidth;
+                view.setLayoutParams(params);
+            }
+            view.setTranslationX(-root.getPaddingLeft());
+            for (android.view.ViewParent parent = view.getParent(); parent instanceof ViewGroup;
+                    parent = parent.getParent()) {
+                ViewGroup group = (ViewGroup) parent;
+                group.setClipChildren(false);
+                group.setClipToPadding(false);
+                if (group == root) break;
+            }
+            applyTopBarBackground(view);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                layoutTopBars(group.getChildAt(i), root, windowWidth);
+            }
+        }
+    }
+
+    /** Скругление только снизу: сверху панель составляет одно целое со status bar. */
+    private void applyTopBarBackground(View view) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(topBarColor());
+        float radius = dp(22);
+        background.setCornerRadii(new float[]{0, 0, 0, 0, radius, radius, radius, radius});
+        view.setBackground(background);
+        view.setElevation(0f);
+    }
+
+    /** Один оттенок у системной области и самой панели — без горизонтального шва. */
+    private int topBarColor() {
+        int panel = themePanel();
+        return "black".equals(themeName()) ? panel : blend(panel, accentColor(), .94f);
+    }
+
+    private int systemTopColor() {
+        return containsTopBar(currentScreen) ? topBarColor() : themeBackground();
+    }
+
+    private boolean containsTopBar(View view) {
+        if (view == null) return false;
+        if ("valanium_top_bar".equals(view.getTag())) return true;
+        if (!(view instanceof ViewGroup)) return false;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            if (containsTopBar(group.getChildAt(i))) return true;
+        }
+        return false;
+    }
+
+    private void updateSystemTopSurface() {
+        int color = systemTopColor();
+        getWindow().setStatusBarColor(color);
+        if (statusBarPanel != null) statusBarPanel.setBackgroundColor(color);
     }
 
     /** Первый экран остаётся чисто клиентской композицией: логика регистрации не меняется. */
@@ -1253,7 +1354,9 @@ public final class MainActivity extends Activity implements Events.Listener {
                     });
             root.setBackground(ambience);
         }
-        getWindow().setStatusBarColor(background);
+        // Верхняя панель начинается сразу под системными значками; одинаковый
+        // цвет убирает видимый шов и превращает их в одну полноширинную шапку.
+        updateSystemTopSurface();
         getWindow().setNavigationBarColor(background);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             android.view.WindowInsetsController controller =
@@ -1267,6 +1370,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             }
         }
         applyThemeText(findViewById(R.id.app_root));
+        layoutTopBars();
     }
 
     /**
@@ -1615,6 +1719,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         // гребёнку: каждая строка получала рамку со скруглением и превращалась
         // в отдельную карточку, а отклик на нажатие пропадал.
         if (view instanceof LinearLayout && view.getBackground() instanceof GradientDrawable
+                && !"valanium_top_bar".equals(view.getTag())
                 && view.getParent() != messagesList && view.getId() != R.id.recording_bar
                 && view.getId() != R.id.nav_chats && view.getId() != R.id.nav_settings
                 && view.getId() != R.id.nav_profile) {
@@ -3244,6 +3349,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void show(View screen) {
         currentScreen = screen;
+        updateSystemTopSurface();
         if (tabBar != null) updateTabBar(screen);
         // Следующий переход снова считается движением вглубь, пока не сказано
         // иначе: «назад» выставляет знак сам.
@@ -3254,6 +3360,13 @@ public final class MainActivity extends Activity implements Events.Listener {
                 || screen == screenMigrate) {
             history.clear();
         }
+        // На корневых вкладках стрелка не ведёт никуда и только утяжеляет шапку.
+        // В профиле, открытом из настроек, она снова появляется.
+        View settingsBack = findViewById(R.id.settings_back);
+        if (settingsBack != null) settingsBack.setVisibility(View.INVISIBLE);
+        View profileBack = findViewById(R.id.profile_back);
+        if (profileBack != null) profileBack.setVisibility(
+                screen == screenProfile && !history.isEmpty() ? View.VISIBLE : View.INVISIBLE);
         for (View candidate : new View[]{screenBoot, screenMigrate, screenEntry, screenRecover,
                 screenChat, screenConversation, screenProfile, screenSettings, screenPrivacy,
                 screenPrivacySection, screenAppearance, screenConnection, screenProtection, screenUsername, screenSecurity,

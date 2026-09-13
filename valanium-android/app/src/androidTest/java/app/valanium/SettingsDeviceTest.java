@@ -6,9 +6,38 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.test.InstrumentationTestCase;
 import android.view.View;
+import android.view.ViewGroup;
 import java.lang.reflect.Method;
 
 public final class SettingsDeviceTest extends InstrumentationTestCase {
+    private View topBar(View view) {
+        if ("valanium_top_bar".equals(view.getTag())) return view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = topBar(group.getChildAt(i));
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private void assertFullWidthTopBar(Activity activity, View screen) {
+        View root = activity.findViewById(R.id.app_root);
+        View header = topBar(screen);
+        assertNotNull("Screen has a top bar", header);
+        int[] rootLocation = new int[2];
+        int[] headerLocation = new int[2];
+        root.getLocationOnScreen(rootLocation);
+        header.getLocationOnScreen(headerLocation);
+        int tolerance = Math.max(2, Math.round(activity.getResources()
+                .getDisplayMetrics().density * 2));
+        assertTrue("Top bar reaches the left display edge after transition",
+                Math.abs(rootLocation[0] - headerLocation[0]) <= tolerance);
+        assertEquals("Top bar is laid out for the full display width", root.getWidth(),
+                header.getLayoutParams().width);
+    }
+
     private Object call(Activity activity, String name, Class<?>[] types, Object... args) {
         try {
             Method method = MainActivity.class.getDeclaredMethod(name, types);
@@ -42,6 +71,9 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
             View bar = activity.findViewById(R.id.tab_bar);
             View selectedNavigation = activity.findViewById(R.id.nav_settings);
             View selectedIcon = activity.findViewById(R.id.nav_settings_icon);
+            assertFullWidthTopBar(activity, settings);
+            assertEquals("Root settings do not show a dead back action", View.INVISIBLE,
+                    activity.findViewById(R.id.settings_back).getVisibility());
             assertNotNull("Active navigation has a soft selection surface",
                     selectedNavigation.getBackground());
             assertEquals("Navigation motion settles at natural scale",
@@ -53,6 +85,7 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
             assertTrue(((android.widget.Switch) activity.findViewById(R.id.entry_tor_only)).isChecked());
             activity.findViewById(R.id.open_connection).performClick();
             assertEquals(View.VISIBLE, activity.findViewById(R.id.screen_connection).getVisibility());
+            assertFullWidthTopBar(activity, activity.findViewById(R.id.screen_connection));
             assertEquals(View.GONE, bar.getVisibility());
             activity.findViewById(R.id.connection_back).performClick();
             assertEquals(View.VISIBLE, settings.getVisibility());
