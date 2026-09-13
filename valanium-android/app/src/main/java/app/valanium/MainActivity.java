@@ -3267,9 +3267,37 @@ public final class MainActivity extends Activity implements Events.Listener {
      * «назад» с любой вкладки закрывает приложение, а не гоняет по кругу.
      */
     private void switchTab(View screen) {
+        getWindow().getDecorView().performHapticFeedback(
+                android.view.HapticFeedbackConstants.CLOCK_TICK);
+        if (screen == currentScreen) {
+            scrollScreenToTop(screen);
+            return;
+        }
         history.clear();
         navDirection = screen == screenChat ? -1 : 1;
         show(screen);
+    }
+
+    /** Повторное нажатие активной вкладки возвращает её к началу. */
+    private boolean scrollScreenToTop(View view) {
+        if (view == null || view.getVisibility() != View.VISIBLE) return false;
+        if (view instanceof ScrollView) {
+            ScrollView scroll = (ScrollView) view;
+            if (motionEnabled()) scroll.smoothScrollTo(0, 0); else scroll.scrollTo(0, 0);
+            return true;
+        }
+        if (view instanceof android.widget.AbsListView) {
+            android.widget.AbsListView list = (android.widget.AbsListView) view;
+            if (motionEnabled()) list.smoothScrollToPosition(0); else list.setSelection(0);
+            return true;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (scrollScreenToTop(group.getChildAt(i))) return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -3519,10 +3547,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void copyDevice() {
         if (myDeviceHex.isEmpty()) return;
-        android.content.ClipboardManager clipboard =
-                (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Valanium device", myDeviceHex));
-        toast(getString(R.string.device_copied));
+        copyToClipboard(myDeviceHex, getString(R.string.device_copied));
     }
 
     /** Переписки, подходящие под строку поиска. */
@@ -3608,13 +3633,10 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void copyChatCode() {
         if (ownChatCode.isEmpty()) {
-            toast(getString(R.string.chat_code_waiting));
+            toast(getString(R.string.chat_code_unavailable));
             return;
         }
-        android.content.ClipboardManager clipboard =
-                (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Valanium chat code", ownChatCode));
-        toast("Код для чата скопирован");
+        copyToClipboard(ownChatCode, getString(R.string.chat_code_copied));
     }
 
     /**
@@ -3634,7 +3656,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                         : Color.rgb(224, 178, 92);
         dot.setBackgroundTintList(ColorStateList.valueOf(color));
         status.setContentDescription(text);
-        ((TextView) findViewById(R.id.status_text)).setText(text);
+        ((TextView) findViewById(R.id.status_text)).setText(compactStatus(text));
         renderConnectionOverview();
         // Смена состояния коротко подсвечивается: иначе точку легко не заметить.
         dot.animate().cancel();
@@ -3643,6 +3665,21 @@ public final class MainActivity extends Activity implements Events.Listener {
         dot.animate().scaleX(1f).scaleY(1f).setDuration(220)
                 .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
                 .start();
+    }
+
+    /** Полная причина остаётся по нажатию и для TalkBack, в шапке — короткое состояние. */
+    private String compactStatus(String text) {
+        if (getString(R.string.status_online).equals(text)) return text;
+        if (getString(R.string.status_reconnecting).equals(text)) {
+            return getString(R.string.status_short_reconnecting);
+        }
+        if (getString(R.string.transport_switching).equals(text)) {
+            return getString(R.string.status_short_route);
+        }
+        if (text != null && text.toLowerCase(Locale.ROOT).contains("tor")) {
+            return getString(R.string.status_short_tor);
+        }
+        return getString(R.string.status_short_connecting);
     }
 
     private void renderPeers() {
@@ -5202,6 +5239,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         android.content.ClipboardManager clipboard =
                 (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Valanium", value));
+        getWindow().getDecorView().performHapticFeedback(
+                android.view.HapticFeedbackConstants.KEYBOARD_TAP);
         toast(confirmation);
     }
 

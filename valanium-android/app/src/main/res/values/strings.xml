@@ -32,12 +32,14 @@
     <string name="peer_device">Адрес устройства собеседника</string>
     <string name="peer_code">Код OBS-… или адрес устройства</string>
     <string name="chats">Контакты</string>
-    <string name="chat_code_waiting">код чата появится после входа</string>
+    <string name="chat_code_waiting">после входа</string>
+    <string name="chat_code_unavailable">Код для чата появится после входа</string>
+    <string name="chat_code_copied">Код для чата скопирован</string>
     <string name="chat_code_label">Код для начала чата</string>
     <string name="chat_code_hint">Передайте этот короткий код человеку, который хочет добавить вас.</string>
     <string name="fingerprint_label">Отпечаток личности</string>
     <string name="fingerprint_hint">Это криптографическая проверка ключа аккаунта, а не код для добавления. Сверяйте его по другому каналу.</string>
-    <string name="device_address_label">Технический адрес устройства</string>
+    <string name="device_address_label">Это устройство</string>
     <string name="profile">Профиль</string>
     <string name="settings">Настройки</string>
     <string name="settings_hint">Размеры интерфейса сохраняются только на этом телефоне.</string>
@@ -90,7 +92,7 @@
     <string name="e2e_note">E2E · сообщения шифруются на устройстве</string>
     <string name="verify_peer">Проверить ключ собеседника</string>
     <string name="profile_avatar_open">Открыть аватар профиля</string>
-    <string name="avatar_tap_hint">Нажмите, чтобы открыть или выбрать фото</string>
+    <string name="avatar_tap_hint">Нажмите на аватар, чтобы открыть фото</string>
     <string name="settings_account_group">Аккаунт</string>
     <string name="settings_interface_group">Интерфейс</string>
     <string name="settings_device_group">Устройство и сеть</string>
@@ -144,6 +146,10 @@
     <string name="status_reconnecting">переподключаемся…</string>
     <string name="status_online">в сети</string>
     <string name="transport_switching">Меняем защищённый маршрут…</string>
+    <string name="status_short_connecting">соединение</string>
+    <string name="status_short_reconnecting">нет связи</string>
+    <string name="status_short_route">маршрут</string>
+    <string name="status_short_tor">Tor</string>
 
     <string name="bad_device">Введите код OBS-ABCDE-23456 или полный адрес устройства</string>
     <string name="own_device">Это ваш собственный адрес</string>

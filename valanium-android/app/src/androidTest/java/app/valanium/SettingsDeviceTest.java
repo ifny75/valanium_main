@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.test.InstrumentationTestCase;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 import java.lang.reflect.Method;
 
 public final class SettingsDeviceTest extends InstrumentationTestCase {
@@ -100,6 +101,13 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
             assertFalse(context.getSharedPreferences("appearance", 0).getBoolean("screen_privacy", true));
             assertEquals("onion", context.getSharedPreferences("appearance", 0).getString("transport", ""));
             assertEquals(Color.rgb(151, 112, 255), call(activity, "accentColor", new Class<?>[]{}));
+            String reconnecting = activity.getString(R.string.status_reconnecting);
+            call(activity, "setStatus", new Class<?>[]{String.class}, reconnecting);
+            assertEquals("Header uses a compact connection label",
+                    activity.getString(R.string.status_short_reconnecting),
+                    ((TextView) activity.findViewById(R.id.status_text)).getText().toString());
+            assertEquals("Full connection detail remains available to accessibility",
+                    reconnecting, activity.findViewById(R.id.status).getContentDescription());
             activity.finish();
         });
     }
