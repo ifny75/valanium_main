@@ -26,16 +26,14 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
         View root = activity.findViewById(R.id.app_root);
         View header = topBar(screen);
         assertNotNull("Screen has a top bar", header);
-        int[] rootLocation = new int[2];
-        int[] headerLocation = new int[2];
-        root.getLocationOnScreen(rootLocation);
-        header.getLocationOnScreen(headerLocation);
-        int tolerance = Math.max(2, Math.round(activity.getResources()
-                .getDisplayMetrics().density * 2));
-        assertTrue("Top bar reaches the left display edge after transition",
-                Math.abs(rootLocation[0] - headerLocation[0]) <= tolerance);
+        assertEquals("Top bar compensates the content inset", -root.getPaddingLeft(),
+                header.getTranslationX(), .5f);
         assertEquals("Top bar is laid out for the full display width", root.getWidth(),
                 header.getLayoutParams().width);
+        assertEquals("Screen transition never moves the top bar", 0f,
+                screen.getTranslationX(), .1f);
+        assertEquals("Screen transition never fades the top bar", 1f,
+                header.getAlpha(), .01f);
     }
 
     private Object call(Activity activity, String name, Class<?>[] types, Object... args) {

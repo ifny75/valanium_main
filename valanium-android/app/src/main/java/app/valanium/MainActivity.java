@@ -799,14 +799,19 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private boolean containsTopBar(View view) {
-        if (view == null) return false;
-        if ("valanium_top_bar".equals(view.getTag())) return true;
-        if (!(view instanceof ViewGroup)) return false;
+        return findTopBar(view) != null;
+    }
+
+    private View findTopBar(View view) {
+        if (view == null) return null;
+        if ("valanium_top_bar".equals(view.getTag())) return view;
+        if (!(view instanceof ViewGroup)) return null;
         ViewGroup group = (ViewGroup) view;
         for (int i = 0; i < group.getChildCount(); i++) {
-            if (containsTopBar(group.getChildAt(i))) return true;
+            View found = findTopBar(group.getChildAt(i));
+            if (found != null) return found;
         }
-        return false;
+        return null;
     }
 
     private void updateSystemTopSurface() {
@@ -3380,6 +3385,18 @@ public final class MainActivity extends Activity implements Events.Listener {
             boolean alreadyShown = candidate.getVisibility() == View.VISIBLE;
             candidate.setVisibility(View.VISIBLE);
             if (alreadyShown) continue;
+            // Полноширинная шапка теперь является продолжением status bar и
+            // не должна ездить вместе со страницей. Двигается только контент
+            // под ней — меньше работы для GPU и нет отстающих краёв.
+            if (containsTopBar(candidate)) {
+                candidate.animate().cancel();
+                candidate.setAlpha(1f);
+                candidate.setTranslationX(0f);
+                candidate.setTranslationY(0f);
+                animateBelowTopBar(candidate, enter, motionEnabled());
+                if (motionEnabled()) animateScreenSignature(screen);
+                continue;
+            }
             if (!motionEnabled()) {
                 candidate.setAlpha(1f);
                 candidate.setTranslationX(0f);
@@ -3402,10 +3419,35 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
     }
 
+    /** Короткий переход содержимого при неподвижной системной шапке. */
+    private void animateBelowTopBar(View screen, int direction, boolean animate) {
+        View topBar = findTopBar(screen);
+        if (topBar == null || !(topBar.getParent() instanceof ViewGroup)) return;
+        ViewGroup host = (ViewGroup) topBar.getParent();
+        int topBarIndex = host.indexOfChild(topBar);
+        for (int i = topBarIndex + 1; i < host.getChildCount(); i++) {
+            View content = host.getChildAt(i);
+            content.animate().cancel();
+            content.setAlpha(1f);
+            content.setTranslationX(0f);
+            content.setTranslationY(0f);
+            if (!animate || content.getVisibility() != View.VISIBLE) continue;
+            content.setAlpha(.72f);
+            content.setTranslationX(direction * dp(8));
+            content.setTranslationY(dp(3));
+            content.animate()
+                    .alpha(1f)
+                    .translationX(0f)
+                    .translationY(0f)
+                    .setDuration(190)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.8f))
+                    .start();
+        }
+    }
+
     /** Один мягкий акцент на входе: бренд или аватар, а не весь экран сразу. */
     private void animateScreenSignature(View screen) {
-        View signature = screen == screenChat ? findViewById(R.id.chat_logo)
-                : screen == screenProfile ? profileAvatar
+        View signature = screen == screenProfile ? profileAvatar
                 : screen == screenEntry ? findViewById(R.id.entry_logo) : null;
         if (signature == null) return;
         signature.animate().cancel();
