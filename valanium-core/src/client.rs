@@ -276,15 +276,14 @@ enum Claim {
 
 /// Состояние, переживающее переподключение.
 ///
-/// Живёт в `session`, а не в `pump`: и отправной ящик, и память о неудачных
-/// конвертах имеют смысл только между попытками соединения.
+/// Живёт в `session`, а не в `pump`: отправной ящик и пул билетов имеют смысл
+/// только между попытками соединения. Память о нечитаемых конвертах здесь
+/// **не** живёт — это, в отличие от них, обязано пережить не переподключение,
+/// а перезапуск всего приложения, и потому лежит на диске (`store`, см.
+/// `on_envelope`).
 #[derive(Default)]
 struct Live {
     outbox: Outbox,
-    /// Конверты, которые не удалось прочитать. Первый промах прощается —
-    /// сообщение могло опередить приглашение и на следующем подключении
-    /// разберётся. Второй означает, что оно не разберётся уже никогда.
-    failed: std::collections::HashSet<[u8; ID_LEN]>,
     /// Sealed sender (ARCHITECTURE.md §7a): непотраченные билеты. Живут в
     /// `Live`, а не в `pump`, по той же причине, что и `outbox`, — переживают
     /// переподключение. Свой короткий срок годности билеты и так несут сами;
@@ -3107,7 +3106,7 @@ async fn on_frame(
     match opcode {
         op::PONG => {}
         op::QUEUE_DONE => sink(Event::QueueDone),
-        op::ENVELOPE => on_envelope(socket, body, store, mls, sink, live).await?,
+        op::ENVELOPE => on_envelope(socket, body, store, mls, sink).await?,
         op::KEYPKG => {
             let sealed = Some(SealedSenderCtx {
                 tickets: &mut live.tickets,
@@ -3227,6 +3226,39 @@ async fn on_frame(
     Ok(())
 }
 
+/// Конверты, промахнувшиеся мимо расшифровки один раз, но ещё не подтверждённые.
+///
+/// Лежит на диске, а не в памяти сессии, — и это важнее, чем кажется. Мобильная
+/// ОС убивает процесс приложения между чем угодно: сворачиванием, нехваткой
+/// памяти, обычным «смахнул из списка задач». Если бы список первых промахов
+/// жил в `Live` (как было раньше), каждый новый процесс видел бы любой такой
+/// конверт впервые, и «первый промах прощается» превращалось бы в «прощается
+/// каждый раз» — письмо застревало бы в очереди сервера до истечения TTL,
+/// вообще никогда не подтверждаясь. Это и происходило на практике: живое
+/// устройство, подключавшееся регулярно, годами не разгружало один и тот же
+/// конверт (правило про ACK в ARCHITECTURE.md §7 «Правила»).
+const FAILED_ENVELOPES_KEY: &str = "failed_envelopes";
+/// Не даёт множеству расти без границ при потоке действительно неразбираемых
+/// конвертов — потолок спасает от накопления, а не заменяет TTL на сервере:
+/// конверт, который так и не прочитается, всё равно рано или поздно протухнет
+/// там сам.
+const MAX_TRACKED_FAILURES: usize = 500;
+
+fn load_failed_envelopes(store: &Store) -> std::collections::HashSet<String> {
+    store
+        .load_setting(FAILED_ENVELOPES_KEY)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_failed_envelopes(store: &Store, set: &std::collections::HashSet<String>) {
+    if let Ok(encoded) = serde_json::to_vec(set) {
+        let _ = store.save_setting(FAILED_ENVELOPES_KEY, &encoded);
+    }
+}
+
 /// Расшифровывает конверт и раскладывает по беседам.
 ///
 /// ACK отправляется в любом случае, даже если расшифровать не удалось: сервер
@@ -3238,7 +3270,6 @@ async fn on_envelope(
     store: &Store,
     mls: &mut Mls,
     sink: &EventSink,
-    live: &mut Live,
 ) -> Result<()> {
     let envelope = proto::parse_envelope(body)?;
 
@@ -3422,9 +3453,21 @@ async fn on_envelope(
             // следующем подключении оно разберётся. Но и держать его вечно
             // нельзя — конверт, не читаемый дважды, не прочитается уже никогда,
             // а очередь занимать будет до истечения срока.
-            if live.failed.insert(envelope.id) {
+            //
+            // «Первый раз» проверяется по диску, а не по памяти этого запуска:
+            // приложение может быть убито и перезапущено между двумя попытками,
+            // и тогда в памяти это снова выглядело бы как первый промах —
+            // конверт прощался бы бесконечно и никогда не подтверждался.
+            let id_hex = hex::encode(envelope.id);
+            let mut seen_failing = load_failed_envelopes(store);
+            if seen_failing.insert(id_hex.clone()) {
+                if seen_failing.len() <= MAX_TRACKED_FAILURES {
+                    save_failed_envelopes(store, &seen_failing);
+                }
                 return Ok(());
             }
+            seen_failing.remove(&id_hex);
+            save_failed_envelopes(store, &seen_failing);
             sink(Event::Failed {
                 code: "undecryptable".into(),
                 message: "сообщение не удалось прочитать — снято с очереди".into(),
@@ -4248,6 +4291,36 @@ mod tests {
         assert_eq!(
             routes_for("wss://example.org/ws", &store.0),
             vec!["wss://example.org/ws".to_string()],
+        );
+    }
+
+    /// Регресс: список первых промахов обязан лежать на диске, а не в памяти
+    /// одного запуска.
+    ///
+    /// Раньше он жил в `Live`, которая создаётся заново при каждом старте
+    /// приложения. Мобильная ОС убивает процесс когда захочет, и «первый
+    /// промах прощается» превращалось в «прощается каждый раз»: конверт
+    /// приезжал бы снова и снова, каждый раз выглядел бы новым, и ACK для
+    /// него не ушёл бы никогда. Тест не гоняет реальный `on_envelope` (там
+    /// нужны живые `Mls`/`Socket`), а бьёт по свойству напрямую: то, что
+    /// сохранено, обязано читаться заново независимо от того, есть ли рядом
+    /// хоть какое-то состояние в памяти — ровно это и означает «пережить
+    /// перезапуск процесса».
+    #[test]
+    fn failed_envelopes_survive_a_fresh_read() {
+        let store = TempStore::new("failed-envelopes");
+        assert!(load_failed_envelopes(&store.0).is_empty(), "начинаем с пустого");
+
+        let mut first_run = load_failed_envelopes(&store.0);
+        assert!(first_run.insert("aa".repeat(16)), "первый промах — это первая вставка");
+        save_failed_envelopes(&store.0, &first_run);
+
+        // "Новый процесс" — здесь буквально свежий вызов load, без всякой
+        // связи с переменной first_run: только то, что реально легло на диск.
+        let second_run = load_failed_envelopes(&store.0);
+        assert!(
+            second_run.contains(&"aa".repeat(16)),
+            "второй заход обязан увидеть тот же конверт, что и первый",
         );
     }
 
