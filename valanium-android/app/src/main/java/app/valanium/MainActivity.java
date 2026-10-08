@@ -6,6 +6,8 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.content.Intent;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -30,12 +32,15 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.HorizontalScrollView;
+import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
@@ -73,9 +78,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static long backgroundedAt = -1L;
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private volatile boolean networkWasLost;
 
     private static final String SERVER_BASIC_URL = "wss://valanium.com/ws";
-    private static final String SERVER_MULTIHOP_URL = "wss://valanium.com/multihop/ws";
     /*
       Адреса onion-входа здесь нет намеренно: их несколько, они меняются вместе
       с узлами, и сервер называет их сам в HELLO. Приложение просит режим, а
@@ -93,6 +99,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final String RELEASES_URL = "https://valanium.com/v1/releases/latest";
     /** Сколько сообщений поднимать за раз. Остальное — по прокрутке вверх. */
     private static final int HISTORY_PAGE = 40;
+    private final Set<String> refreshRequests = new HashSet<>();
 
     /**
      * Уже поднятая переписка — на время сеанса.
@@ -400,6 +407,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String ownChatCode = "";
     private String pendingChatCode;
     private boolean profilesSupported;
+    private boolean migratedMultiHop;
     private volatile boolean localPolling;
     private Thread localPoller;
 
@@ -568,6 +576,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.avatar_upload).setOnClickListener(v -> chooseAvatar());
         findViewById(R.id.profile_avatar).setOnClickListener(v -> showOwnAvatarOrChoose());
         findViewById(R.id.attach_photo).setOnClickListener(v -> choosePhoto());
+        findViewById(R.id.open_calculator).setOnClickListener(this::showCalculator);
         findViewById(R.id.verify_peer).setOnClickListener(v -> { if (currentPeer != null) submit(Commands.verify(currentPeer)); });
         configureRecovery();
         findViewById(R.id.revoke_other_devices).setOnClickListener(v ->
@@ -618,6 +627,13 @@ public final class MainActivity extends Activity implements Events.Listener {
         });
 
         show(screenBoot);
+        if (migratedMultiHop) {
+            new AlertDialog.Builder(this)
+                    .setTitle(R.string.route_migrated_title)
+                    .setMessage(R.string.route_migrated_message)
+                    .setPositiveButton(R.string.ok, null)
+                    .show();
+        }
         requestNotificationPermission();
         try {
             if (!ValaniumService.isSigningOut() && !ValaniumService.core().isOpen()) {
@@ -652,6 +668,11 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onStop() {
+        if (networkCallback != null) {
+            ConnectivityManager manager = getSystemService(ConnectivityManager.class);
+            if (manager != null) manager.unregisterNetworkCallback(networkCallback);
+            networkCallback = null;
+        }
         backgroundedAt = SystemClock.elapsedRealtime();
         foregroundAuthorized = false;
         stopRecording(false);
@@ -864,6 +885,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void configurePreferences() {
         SharedPreferences preferences = getSharedPreferences("appearance", MODE_PRIVATE);
         appearancePreferences = preferences;
+        if ("multihop".equals(preferences.getString(TRANSPORT_KEY, "auto"))) {
+            preferences.edit().putString(TRANSPORT_KEY, "basic").remove(HOP_KEY).apply();
+            migratedMultiHop = true;
+        }
         if (!preferences.getBoolean("friendly_visual_v1", false)) {
             SharedPreferences.Editor visual = preferences.edit();
             if (!preferences.contains("accent_color")
@@ -1013,44 +1038,37 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String serverUrl() {
         SharedPreferences preferences = appearancePreferences == null
                 ? getSharedPreferences("appearance", MODE_PRIVATE) : appearancePreferences;
-        String mode = preferences.getString(TRANSPORT_KEY, "onion");
-        if ("multihop".equals(mode)) {
-            /*
-              Первый узел выбирает Cloudflare, и повлиять на это нечем: у всех
-              relay один общий адрес. А кому он передаст дальше — выбирает
-              человек.
-
-              Если Cloudflare привёл на тот самый узел, что выбран вторым, узел
-              отвечает 421: двух разных плеч из одного не сделать. Ядро сочтёт
-              это отказом соединения и попробует снова — следующая попытка
-              почти наверняка придёт на другой вход.
-            */
-            String hop = preferences.getString(HOP_KEY, "");
-            for (String node : HOP_NODES) {
-                if (node.equals(hop)) return "wss://valanium.com/multihop/" + node + "/ws";
-            }
-            return SERVER_MULTIHOP_URL;
-        }
+        String mode = preferences.getString(TRANSPORT_KEY, "auto");
+        if ("multihop".equals(mode)) return SERVER_BASIC_URL;
         if ("onion".equals(mode)) return SERVER_ONION_URL;
         if ("basic".equals(mode)) return SERVER_BASIC_URL;
         return SERVER_AUTO_URL;
     }
 
+    private void connectSelectedRoute() {
+        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) {
+            prewarmTor();
+        } else {
+            submit(Commands.connect(serverUrl()));
+        }
+    }
+
     private void configureTransport() {
         RoutingView routes = findViewById(R.id.transport_mode);
-        routes.setMode(appearancePreferences.getString(TRANSPORT_KEY, "onion"));
+        routes.setMode(appearancePreferences.getString(TRANSPORT_KEY, "auto"));
         routes.setOnModeChangedListener(mode -> {
-            if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
+            if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
             appearancePreferences.edit().putString(TRANSPORT_KEY, mode).apply();
             showHopCard();
             renderConnectionOverview();
             // Выбрали Onion — начинаем строить цепь немедленно, параллельно с
             // попыткой подключиться. Иначе первая попытка упрётся в неготовый Tor.
-            if ("onion".equals(mode)) prewarmTor();
             if (!myDeviceHex.isEmpty()) {
                 submit(Commands.disconnect());
                 setStatus(getString(R.string.transport_switching));
-                ui.postDelayed(() -> submit(Commands.connect(serverUrl())), 250);
+                ui.postDelayed(this::connectSelectedRoute, 250);
+            } else if ("onion".equals(mode)) {
+                prewarmTor();
             }
         });
         configureHopPicker();
@@ -1061,7 +1079,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         TextView state = findViewById(R.id.tor_circuit_state);
         LinearLayout host = findViewById(R.id.tor_circuit_nodes);
         host.removeAllViews();
-        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) {
+        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) {
             state.setText(R.string.tor_circuit_unused);
             host.addView(torCircuitNode("—", getString(R.string.transport_onion_title),
                     getString(R.string.tor_node_waiting_detail)));
@@ -1157,7 +1175,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void renderConnectionOverview() {
         TextView state = findViewById(R.id.connection_state);
         if (state == null || appearancePreferences == null) return;
-        String mode = appearancePreferences.getString(TRANSPORT_KEY, "onion");
+        String mode = appearancePreferences.getString(TRANSPORT_KEY, "auto");
         String route;
         String privacy;
         if ("basic".equals(mode)) {
@@ -1184,12 +1202,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         ((TextView) findViewById(R.id.connection_route_privacy)).setText(privacy);
         ((TextView) findViewById(R.id.connection_destination)).setText(
                 R.string.connection_addresses_hidden);
-        StringBuilder infrastructure = new StringBuilder();
-        for (int i = 0; i < HOP_NODES.length; i++) {
-            if (i > 0) infrastructure.append('\n');
-            String name = Character.toUpperCase(HOP_NODES[i].charAt(0)) + HOP_NODES[i].substring(1);
-            infrastructure.append(getString(R.string.infrastructure_relay, name));
-        }
+        StringBuilder infrastructure = new StringBuilder(getString(R.string.infrastructure_relay, "hop1"));
+        infrastructure.append('\n').append(getString(R.string.infrastructure_relay, "hop3"));
         infrastructure.append('\n').append(getString(R.string.infrastructure_main));
         ((TextView) findViewById(R.id.connection_nodes)).setText(infrastructure);
         View dot = findViewById(R.id.connection_status_dot);
@@ -1220,7 +1234,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      */
     private void prewarmTor() {
         if (torWarming) return;
-        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
+        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
         torWarming = true;
         // Состояние Tor — рядом с базой, а не в общем кэше: среди него
         // guards.json, то есть список входных узлов этого человека.
@@ -1239,7 +1253,10 @@ public final class MainActivity extends Activity implements Events.Listener {
             final boolean ready = socks != null && !socks.isEmpty();
             torWarming = false;
             runOnUiThread(() -> {
-                if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
+                if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
+                if (ready && !myDeviceHex.isEmpty() && foregroundAuthorized) {
+                    submit(Commands.connect(SERVER_ONION_URL));
+                }
                 if (!getString(R.string.status_online).equals(statusText)) {
                     setStatus(getString(ready ? R.string.tor_ready : R.string.tor_failed));
                 }
@@ -1266,7 +1283,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void showHopCard() {
         View card = findViewById(R.id.hop_card);
         if (card == null) return;
-        boolean multihop = "multihop".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"));
+        boolean multihop = "multihop".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"));
         card.setVisibility(multihop ? View.VISIBLE : View.GONE);
         if (multihop) markChosenHop();
     }
@@ -1290,7 +1307,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (myDeviceHex.isEmpty()) return;
         submit(Commands.disconnect());
         setStatus(getString(R.string.transport_switching));
-        ui.postDelayed(() -> submit(Commands.connect(serverUrl())), 250);
+        ui.postDelayed(this::connectSelectedRoute, 250);
     }
 
     // --- тема ------------------------------------------------------------------
@@ -2210,6 +2227,26 @@ public final class MainActivity extends Activity implements Events.Listener {
         Events.subscribe(this);
         startEventDelivery();
         submit(Commands.status());
+        submit(Commands.conversations());
+        if (networkCallback == null) {
+            ConnectivityManager manager = getSystemService(ConnectivityManager.class);
+            if (manager != null) {
+                networkCallback = new ConnectivityManager.NetworkCallback() {
+                    @Override public void onLost(Network network) { networkWasLost = true; }
+                    @Override public void onAvailable(Network network) {
+                        if (!networkWasLost) return;
+                        networkWasLost = false;
+                        ui.post(() -> {
+                            if (!foregroundAuthorized || myDeviceHex.isEmpty()) return;
+                            submit(Commands.disconnect());
+                            connectSelectedRoute();
+                            submit(Commands.conversations());
+                        });
+                    }
+                };
+                manager.registerDefaultNetworkCallback(networkCallback);
+            }
+        }
     }
 
     private void requestNotificationPermission() {
@@ -2293,7 +2330,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.account_reconnect).setOnClickListener(v -> {
             if (myDeviceHex.isEmpty()) return;
             submit(Commands.disconnect());
-            ui.postDelayed(() -> submit(Commands.connect(serverUrl())), 250);
+            ui.postDelayed(this::connectSelectedRoute, 250);
             toast("Переподключаемся…");
         });
         findViewById(R.id.account_updates).setOnClickListener(v -> checkForUpdates(true));
@@ -2364,7 +2401,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void checkForUpdates(boolean manual) {
-        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))
+        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))
                 || (myDeviceHex.isEmpty() && ((Switch) findViewById(R.id.entry_tor_only)).isChecked())) {
             if (manual) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
             return;
@@ -2819,7 +2856,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         submit(Commands.fingerprint(myIdentityHex));
         submit(Commands.conversations());
         setStatus(getString(R.string.status_connecting));
-        submit(Commands.connect(serverUrl()));
+        connectSelectedRoute();
     }
 
     private void onFailed(JSONObject event) {
@@ -2871,6 +2908,15 @@ public final class MainActivity extends Activity implements Events.Listener {
             }
         }
         renderPeers();
+        if (currentPeer != null && screenConversation.getVisibility() == View.VISIBLE) {
+            refreshHistory(conversations.get(currentPeer));
+        }
+    }
+
+    private void refreshHistory(String conversation) {
+        if (TextUtils.isEmpty(conversation) || !page(conversation).loaded
+                || !refreshRequests.add(conversation)) return;
+        submit(Commands.history(conversation, HISTORY_PAGE, null));
     }
 
     private void onMessage(JSONObject event) {
@@ -2913,6 +2959,11 @@ public final class MainActivity extends Activity implements Events.Listener {
                 if (preview != null) previews.put(peer, preview);
                 renderPeers();
             }
+            return;
+        }
+
+        if (refreshRequests.remove(conversation)) {
+            mergeRecentHistory(conversation, items);
             return;
         }
 
@@ -3273,9 +3324,61 @@ public final class MainActivity extends Activity implements Events.Listener {
             scrollScreenToTop(screen);
             return;
         }
+
         history.clear();
         navDirection = screen == screenChat ? -1 : 1;
         show(screen);
+    }
+
+    private void mergeRecentHistory(String conversation, JSONArray items) {
+        if (items == null) return;
+        ChatPage entry = page(conversation);
+        Set<String> known = new HashSet<>();
+        for (TimelineItem old : entry.timeline) {
+            if (!old.separator) known.add(TextUtils.isEmpty(old.id)
+                    ? old.body + "@" + old.timestamp : old.id);
+        }
+        Set<String> incoming = new HashSet<>();
+        boolean changed = false;
+        for (int i = items.length() - 1; i >= 0; i--) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            String body = item.optString("body");
+            JSONObject content = parseContent(body);
+            if ("read".equals(content.optString("type"))) {
+                applyRead(content.optJSONArray("ids"));
+                continue;
+            }
+            String id = content.optString("id");
+            long timestamp = normalizeTimestamp(item.optLong("created_at"));
+            String key = TextUtils.isEmpty(id) ? body + "@" + timestamp : id;
+            if (!known.add(key)) continue;
+            boolean outgoing = item.optBoolean("outgoing");
+            entry.timeline.add(TimelineItem.message(body, outgoing, timestamp, id));
+            if (!outgoing && !id.isEmpty()) incoming.add(id);
+            changed = true;
+        }
+        if (!changed) return;
+        entry.timeline.removeIf(item -> item.separator);
+        entry.timeline.sort((a, b) -> Long.compare(a.timestamp, b.timestamp));
+        String day = null;
+        for (int i = 0; i < entry.timeline.size(); i++) {
+            TimelineItem item = entry.timeline.get(i);
+            String next = dateKey(item.timestamp);
+            if (!next.equals(day)) {
+                entry.timeline.add(i++, TimelineItem.separator(item.timestamp));
+                day = next;
+            }
+        }
+        regroupTimeline(entry.timeline);
+        if (conversation.equals(conversations.get(currentPeer))
+                && screenConversation.getVisibility() == View.VISIBLE) {
+            boolean atLatest = messagesList.getLastVisiblePosition()
+                    >= messageListAdapter.getCount() - 2;
+            messageListAdapter.submit(entry.timeline);
+            if (atLatest) messagesList.post(() -> scrollToLatest(false));
+            sendRead(currentPeer, incoming);
+        }
     }
 
     /** Повторное нажатие активной вкладки возвращает её к началу. */
@@ -3738,6 +3841,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             // Уже открывали — показываем мгновенно и в базу не ходим.
             paintConversation(conversation);
             if (!entry.loaded) loadOlder(conversation);
+            else refreshHistory(conversation);
         }
         if (profilesSupported && !profiles.containsKey(peer)) submit(Commands.profileGet(peer));
     }
@@ -4084,10 +4188,42 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         String logical = content.optString("id");
         if (!logical.isEmpty()) {
-            // Долгое нажатие — мобильный аналог правой кнопки.
-            bubble.setOnLongClickListener(v -> {
-                showMessageMenu(logical, content.optString("text", ""), outgoing);
-                return true;
+            final String messageText = content.optString("text", "");
+            final float[] start = new float[2];
+            final boolean[] swiping = {false};
+            bubble.setOnTouchListener((view, event) -> {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        start[0] = event.getX(); start[1] = event.getY();
+                        swiping[0] = false;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        float dx = event.getX() - start[0];
+                        float dy = event.getY() - start[1];
+                        if (!swiping[0] && Math.abs(dy) > dp(10) && Math.abs(dy) > Math.abs(dx)) {
+                            return false;
+                        }
+                        if (Math.abs(dx) > dp(12) && Math.abs(dx) > Math.abs(dy)) {
+                            swiping[0] = true;
+                            view.getParent().requestDisallowInterceptTouchEvent(true);
+                            view.setTranslationX(Math.max(-dp(64), Math.min(dp(64), dx)));
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        float distance = event.getX() - start[0];
+                        view.animate().translationX(0).setDuration(150).start();
+                        if (swiping[0] && Math.abs(distance) >= dp(48)) {
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+                            showMessageMenu(view, logical, messageText, outgoing);
+                        } else if (!swiping[0]) {
+                            showMessageMenu(view, logical, messageText, outgoing);
+                        }
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        view.setTranslationX(0);
+                        return false;
+                    default: return false;
+                }
             });
         }
         return bubble;
@@ -4190,25 +4326,124 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String replyId;
     private String replyText;
 
-    private void showMessageMenu(String id, String text, boolean outgoing) {
-        // Просить об удалении можно только своё: чужую копию мы не
-        // контролируем, и пункт обещал бы обратное.
-        CharSequence[] items = outgoing
-                ? new CharSequence[]{getString(R.string.reply), getString(R.string.copy),
-                                     getString(R.string.delete_mine), getString(R.string.delete_both)}
-                : new CharSequence[]{getString(R.string.reply), getString(R.string.copy),
-                                     getString(R.string.delete_mine)};
+    private void showMessageMenu(View anchor, String id, String text, boolean outgoing) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+        scroll.setBackgroundResource(R.drawable.card_flat);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setPadding(dp(6), dp(5), dp(6), dp(5));
+        scroll.addView(actions);
+        PopupWindow popup = new PopupWindow(scroll,
+                Math.min(getResources().getDisplayMetrics().widthPixels - dp(24), dp(340)),
+                dp(52), true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(10));
+        addMessageAction(actions, popup, getString(R.string.reply), () -> setReply(id, text));
+        addMessageAction(actions, popup, getString(R.string.copy), () -> copyToClipboard(text, "Скопировано"));
+        addMessageAction(actions, popup, getString(R.string.delete_mine), () -> confirmDelete(id, false));
+        if (outgoing) addMessageAction(actions, popup, getString(R.string.delete_both),
+                () -> confirmDelete(id, true));
+        int[] location = new int[2];
+        anchor.getLocationOnScreen(location);
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        int y = location[1] + anchor.getHeight() + dp(4);
+        if (y + dp(52) > screenHeight - dp(20)) y = location[1] - dp(56);
+        int x = Math.max(dp(12), Math.min(location[0],
+                getResources().getDisplayMetrics().widthPixels - popup.getWidth() - dp(12)));
+        popup.showAtLocation(getWindow().getDecorView(), Gravity.TOP | Gravity.START, x, y);
+    }
 
-        new AlertDialog.Builder(this)
-                .setItems(items, (dialog, which) -> {
-                    switch (which) {
-                        case 0: setReply(id, text); break;
-                        case 1: copyToClipboard(text, "Скопировано"); break;
-                        case 2: confirmDelete(id, false); break;
-                        default: confirmDelete(id, true); break;
-                    }
-                })
-                .show();
+    private void addMessageAction(LinearLayout actions, PopupWindow popup, String label, Runnable action) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setTextColor(themeText());
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+        actions.addView(button);
+    }
+
+    private void showCalculator(View anchor) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(12), dp(12), dp(12), dp(12));
+        panel.setBackgroundResource(R.drawable.card_flat);
+        EditText expression = new EditText(this);
+        expression.setSingleLine(true);
+        expression.setHint("2 × (3 + 4)");
+        expression.setTextColor(themeText());
+        expression.setTextSize(16);
+        panel.addView(expression);
+        TextView result = new TextView(this);
+        result.setTextSize(18);
+        result.setTextColor(themeText());
+        result.setGravity(Gravity.END);
+        result.setPadding(0, dp(8), 0, dp(8));
+        panel.addView(result);
+        android.widget.GridLayout keys = new android.widget.GridLayout(this);
+        keys.setColumnCount(4);
+        panel.addView(keys);
+        Button insert = new Button(this);
+        insert.setText("Вставить результат");
+        insert.setAllCaps(false);
+        panel.addView(insert);
+        Runnable update = () -> {
+            try {
+                result.setText(Calculator.evaluate(expression.getText().toString()));
+                insert.setEnabled(true);
+            } catch (IllegalArgumentException error) {
+                result.setText(error.getMessage());
+                insert.setEnabled(false);
+            }
+        };
+        expression.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { update.run(); }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        });
+        for (String symbol : new String[]{"7","8","9","/","4","5","6","*",
+                "1","2","3","-","0",".","(",")","C","⌫","+","="}) {
+            Button key = new Button(this);
+            key.setText(symbol);
+            key.setAllCaps(false);
+            key.setTextSize(15);
+            android.widget.GridLayout.LayoutParams params = new android.widget.GridLayout.LayoutParams();
+            params.width = dp(56); params.height = dp(42);
+            key.setLayoutParams(params);
+            key.setOnClickListener(v -> {
+                if ("C".equals(symbol)) expression.setText("");
+                else if ("⌫".equals(symbol)) {
+                    String value = expression.getText().toString();
+                    if (!value.isEmpty()) expression.setText(value.substring(0, value.length() - 1));
+                } else if (!"=".equals(symbol)) expression.append(symbol);
+                update.run();
+            });
+            keys.addView(key);
+        }
+        PopupWindow popup = new PopupWindow(panel, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(12));
+        insert.setOnClickListener(v -> {
+            int at = composer.getSelectionStart();
+            int to = composer.getSelectionEnd();
+            if (at < 0) at = composer.length();
+            if (to < at) to = at;
+            composer.getText().replace(at, to, result.getText());
+            popup.dismiss();
+            composer.requestFocus();
+        });
+        update.run();
+        int[] position = new int[2];
+        anchor.getLocationOnScreen(position);
+        popup.showAtLocation(getWindow().getDecorView(), Gravity.BOTTOM | Gravity.START,
+                Math.max(dp(8), position[0] - dp(8)), dp(90));
     }
 
     /**

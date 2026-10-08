@@ -35,10 +35,12 @@ $env:VALANIUM_DB = "$env:TEMP\valanium-b.db"; .\valanium-windows.exe
 
 Без переменной база лежит в `%APPDATA%\app.valanium.messenger\valanium.db`.
 
-В настройках подключения доступны Auto, Basic, Multi-hop и Onion. Auto
-перебирает маршруты Basic → Multi-hop → Onion. Onion-режим
-ожидает локальный SOCKS5 Tor Browser/службы Tor на `127.0.0.1:9050`; адрес
-`.onion` разрешается самим Tor, без системного DNS.
+В настройках подключения доступны Auto, Relay и Onion. Auto пробует Relay
+через hop1 или hop3, затем их Tor-входы. Multi-hop временно выключен:
+старые маршруты ссылаются на недоступные узлы. При обновлении старый выбор Multi-hop переводится
+на Relay с уведомлением о смене сетевой приватности. Onion-режим использует
+встроенный Tor либо локальный SOCKS5 на `127.0.0.1:9050`; адрес `.onion`
+разрешается самим Tor, без системного DNS.
 
 ## Что где
 

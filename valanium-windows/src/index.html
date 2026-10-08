@@ -175,7 +175,7 @@
             <h1 id="intro-title">valanium</h1>
             <div id="intro-text" class="intro-story">
               <p data-intro-part="0">Valanium is a private messenger with reliable end-to-end encryption.</p>
-              <p data-intro-part="1">Messages are encrypted on your device. Relay, Multihop and Tor keep the main server out of sight.</p>
+              <p data-intro-part="1">Messages are encrypted on your device. Relay and Tor keep the main server out of sight.</p>
               <p data-intro-part="2">Privacy by design. Open source. No phone number required.</p>
             </div>
             <div class="intro-links"><a href="https://github.com/ifny75/valanium" target="_blank" rel="noreferrer noopener">Github</a><i>/</i><a href="https://valanium.com" target="_blank" rel="noreferrer noopener">Website</a><i>/</i><span>onion website</span></div>
@@ -196,9 +196,9 @@
         <h1 id="route-title">Valanium server</h1>
         <p id="route-text">Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.</p>
         <div class="route-list">
-          <button class="route-option" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
-          <button class="route-option" type="button" data-transport="multihop"><img src="assets/onboarding/route-multihop.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Multihop</b><small id="route-multi-text">Дополнительный промежуточный узел</small></span><u>✓</u></button>
-          <button class="route-option active" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
+          <button class="route-option active" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
+          <button class="route-option hidden" type="button" data-transport="multihop" hidden disabled><img src="assets/onboarding/route-multihop.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Multihop</b><small id="route-multi-text">Multi-hop временно выключен</small></span><u>✓</u></button>
+          <button class="route-option" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
         </div>
       </div>
       <div class="onboarding-art" aria-hidden="true"><canvas id="route-shader" class="onboarding-shader"></canvas><img src="assets/svg/spy.svg" alt="" /></div>
@@ -216,7 +216,7 @@
           <input id="handle" type="text" placeholder="username" autocomplete="username" maxlength="20" />
           <label for="entry-password" id="entry-password-label">Пароль восстановления</label>
           <input id="entry-password" type="password" placeholder="Минимум 10 символов" autocomplete="new-password" minlength="10" />
-          <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" checked /> Только Tor — без перехода на прямое соединение</label>
+          <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" /> Только Tor — без перехода на Relay</label>
           <p class="registration-privacy-note">Tor скрывает сетевой адрес от сервера, но не гарантирует абсолютную анонимность. Не используйте знакомый юзернейм, если не хотите связывать аккаунты.</p>
           <button class="ghost-button" type="button" id="entry-install-tor">Установить Tor (загрузка по HTTPS)</button>
           <button class="onboarding-submit" type="submit" id="entry-submit">Зарегистрироваться</button>
@@ -385,7 +385,10 @@
             <button id="attach-image" class="attach-button" type="button" disabled title="Отправить фото" aria-label="Отправить фото">＋</button>
             <input id="message-image-file" type="file" accept="image/jpeg,image/png,image/webp" hidden />
             <button id="emoji-open" class="attach-button" type="button" disabled title="Эмодзи" aria-label="Эмодзи"><span class="ui-icon icon-smile"></span></button>
-            <textarea id="composer" rows="1" placeholder="Сообщение" disabled></textarea>
+            <div class="composer-input">
+              <textarea id="composer" rows="1" placeholder="Сообщение" disabled></textarea>
+              <div class="composer-mirror" aria-hidden="true"><span id="composer-mirror-text"></span><span id="composer-calculation" class="composer-calculation hidden"></span></div>
+            </div>
             <div id="recording-bar" class="recording-bar hidden" aria-live="polite">
               <span class="recording-dot" aria-hidden="true"></span>
               <span>Запись <b id="recording-time">0:00</b></span>
@@ -540,10 +543,10 @@
           <section class="settings-section hidden" data-section="transport">
             <h1>Подключение</h1>
             <p class="settings-sub">Клиент никогда не обращается к main напрямую. Нажмите на схему, чтобы сменить маршрут текущего соединения.</p>
-            <p class="warning-strip">До main ваш адрес не доходит ни одним маршрутом: входной узел заменяет его жетоном, из которого IP не восстановить. Разница между маршрутами в другом — сколько узлов и кто ещё видит адрес по дороге. Cloudflare видит его на Relay и Multi-hop; не видит никто только на Onion.</p>
+            <p class="warning-strip">До main ваш адрес не доходит: входной relay заменяет его жетоном, из которого IP не восстановить. На Relay сетевой адрес видят Cloudflare и входной узел — hop1 или hop3. Onion скрывает его от инфраструктуры Valanium, но входной узел Tor видит адрес подключения к сети Tor.</p>
             <div class="routing-options" id="transport-segment" role="radiogroup" aria-label="Маршрут Valanium">
               <button class="routing-option" data-transport="auto" type="button" role="radio" aria-checked="false">
-                <span class="routing-head"><span><b>Auto</b><small>Доступный маршрут автоматически</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Пробует по порядку: Relay, Multi-hop, затем Onion — и остаётся на том, который открылся. Перебор возобновится, только если путь перестанет работать: например, вход заблокировали.</span></span><i class="routing-radio"></i></span>
+                <span class="routing-head"><span><b>Auto</b><small>Relay через рабочий узел, при сбое — Onion</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Сначала подключается через Relay на hop1 или hop3. Если маршрут недоступен, пробует их Tor-входы.</span></span><i class="routing-radio"></i></span>
                 <span class="routing-diagram">
                   <span class="route-node"><svg viewBox="0 0 24 24"><path d="M22 15.18V8a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5v7.18A3 3 0 0 0 3 21h18a3 3 0 0 0 1-5.82ZM7 5h10a3 3 0 0 1 3 3v7h-4.15a2 2 0 0 0-1.53.71l-.25.29H9.93l-.25-.29A2 2 0 0 0 8.15 15H4V8a3 3 0 0 1 3-3Zm14 14H3a1 1 0 0 1 0-2h5.15l.25.29a2 2 0 0 0 1.53.71h4.14a2 2 0 0 0 1.53-.71l.25-.29H21a1 1 0 0 1 0 2Z"/></svg><small>Устройство</small></span>
                   <span class="route-link"></span>
@@ -564,7 +567,7 @@
                 </span>
               </button>
 
-              <button class="routing-option" data-transport="multihop" type="button" role="radio" aria-checked="false">
+              <button class="routing-option hidden" data-transport="multihop" type="button" role="radio" aria-checked="false" hidden disabled>
                 <span class="routing-head"><span><b>Multi-hop</b><small>Два узла · адрес знает только первый</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Cloudflare → первый узел → второй узел → main. Адрес видит только первый узел и только мгновение: второму уезжает уже жетон. Захвативший второй узел не получит ни адреса, ни содержимого. Плата — лишний переход, то есть чуть медленнее.</span></span><i class="routing-radio"></i></span>
                 <span class="routing-diagram route-four">
                   <span class="route-node"><svg viewBox="0 0 24 24"><path d="M22 15.18V8a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5v7.18A3 3 0 0 0 3 21h18a3 3 0 0 0 1-5.82ZM7 5h10a3 3 0 0 1 3 3v7h-4.15a2 2 0 0 0-1.53.71l-.25.29H9.93l-.25-.29A2 2 0 0 0 8.15 15H4V8a3 3 0 0 1 3-3Zm14 14H3a1 1 0 0 1 0-2h5.15l.25.29a2 2 0 0 0 1.53.71h4.14a2 2 0 0 0 1.53-.71l.25-.29H21a1 1 0 0 1 0 2Z"/></svg><small>Устройство</small></span><span class="route-link"></span>
@@ -588,16 +591,15 @@
             <div class="settings-card relay-locations" aria-label="Доступные узлы Valanium">
               <div class="setting-block">
                 <b>Доступные узлы</b>
-                <small>Для Relay и Multi-hop доступны три независимых узла. В Multi-hop можно закрепить второй узел ниже.</small>
+                <small>Доступны два relay: hop1 и hop3. Каждый передаёт трафик на main через WireGuard.</small>
                 <div class="relay-location-list">
-                  <span><img src="assets/route-flag-se.svg" alt="Швеция" /><b>Alpha</b><small>Швеция</small></span>
-                  <span><img src="assets/route-flag-fi.svg" alt="Финляндия" /><b>Beta</b><small>Финляндия</small></span>
-                  <span><img src="assets/route-flag-de.svg" alt="Германия" /><b>Gamma</b><small>Германия</small></span>
+                  <span><b>hop1</b><small>Relay мессенджера</small></span>
+                  <span><b>hop3</b><small>Relay мессенджера</small></span>
                 </div>
               </div>
             </div>
 
-            <div class="settings-card hop-picker" id="hop-picker">
+            <div class="settings-card hop-picker hidden" id="hop-picker">
               <div class="setting-block">
                 <b>Второй узел Multi-hop</b>
                 <small>Какой узел говорит с main. Первый выбирает Cloudflare — он ближайший, и заменить его нечем. Имена те же, что на странице состояния сети.</small>
@@ -922,6 +924,12 @@
           <button id="editor-send" class="primary-button" type="button">Отправить</button>
         </div>
       </div>
+    </div>
+
+    <div id="image-viewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Просмотр фото">
+      <button id="image-viewer-close" class="image-viewer-close" type="button" aria-label="Закрыть фото"><span class="ui-icon icon-cross"></span></button>
+      <img id="image-viewer-photo" alt="" />
+      <p id="image-viewer-caption" class="image-viewer-caption hidden"></p>
     </div>
 
     <!-- Полоса отката: удаление выполняется не сразу, и всё это время его

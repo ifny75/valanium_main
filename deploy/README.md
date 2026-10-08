@@ -113,15 +113,19 @@ node src/index.ts
 скачивает троян с правильного адреса. Поэтому версии и хеши подписываются
 ключом, которого на сервере нет.
 
-```bash
-node deploy/sign-release.mjs windows 0.11.0 release/Valanium-Portable-Windows-0.11.0.exe                              android 0.6.2 release/Valanium-Android-arm64-0.6.2.apk
+```powershell
+$env:VALANIUM_SIGNING_KEY="$env:USERPROFILE\.obsidian-release\signing.key"
+node deploy/sign-release.mjs windows 0.13.4 release/Valanium-0.13.4.exe android 0.7.3 release/Valanium-0.7.3.apk
 ```
 
 Получившийся `deploy/releases.json` кладётся на сервер в `data/releases.json`,
 рядом с базой. Сервер отдаёт его строкой байт в байт: пересобирать манифест ему
 нельзя — подпись перестанет сходиться.
 
-Приватный ключ лежит в `~/.valanium-release/signing.key` и в репозиторий не
+Действующий приватный ключ на машине выпуска пока лежит в
+`~/.obsidian-release/signing.key`; путь передаётся через
+`VALANIUM_SIGNING_KEY`. Без этой переменной скрипт ищет ключ в
+`~/.valanium-release/signing.key`. Ключ в репозиторий не
 попадает **никогда**. Открытая половина зашита в клиент (`RELEASE_PUBLIC_KEY` в
 `valanium-windows/src-tauri/src/main.rs`). Потеряете ключ — придётся выпустить
 клиент с новым: до тех пор обновления не будут подтверждаться, и окно честно

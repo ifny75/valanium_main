@@ -100,21 +100,22 @@ const AUTO_ROUTE_URL: &str = "valanium://auto";
 /// вписывая в себя ни одного адреса.
 const ONION_ROUTE_URL: &str = "valanium://onion";
 
-/// Постоянные маршруты: обычный relay и два relay подряд.
-const DIRECT_ROUTES: [&str; 2] = [
-    "wss://valanium.com/ws",
-    "wss://valanium.com/multihop/ws",
-];
+/// Cloudflare распределяет этот маршрут между hop1 и hop3; оба ведут на main.
+const DIRECT_ROUTES: [&str; 1] = ["wss://valanium.com/ws"];
 
 /// Запасные onion-входы — на случай, когда HELLO ещё не получали ни разу.
 ///
-/// Relay-узлы держат независимые скрытые сервисы: падение одного Tor-входа
-/// не выключает onion-режим, пока доступен хотя бы один запасной. Дальше
-/// список приезжает от сервера и обновляется сам.
-const FALLBACK_ONION: [&str; 3] = [
-    "ws://ho2sji2l42eqclnmu6gtbbg5nvtrz5jvpr5nqkehbstshcmspsnfkiyd.onion/ws",
-    "ws://anb5vtfi4ztizycwj6nnclo75kpjb4mhz4wmc6ax3zwy2xlz3slx26yd.onion/ws",
+/// Два независимых Tor-входа; сервер обновляет список подписанным HELLO.
+const FALLBACK_ONION: [&str; 2] = [
+    "ws://5kghvwyxzmtzba4foenmg5pkhcoxv6iq2c6wf4pbg5uyjrviwkckvead.onion/ws",
     "ws://5amnu2di3yhtpqcpbcoaabfbzotw3giap2lvoe5bi5juflzhzdrsq4ad.onion/ws",
+];
+
+/// Эти входы принадлежали выведенным из сети узлам. Они могли остаться в
+/// подписанном локальном кеше старого клиента.
+const RETIRED_ONION_HOSTS: [&str; 2] = [
+    "ho2sji2l42eqclnmu6gtbbg5nvtrz5jvpr5nqkehbstshcmspsnfkiyd.onion",
+    "anb5vtfi4ztizycwj6nnclo75kpjb4mhz4wmc6ax3zwy2xlz3slx26yd.onion",
 ];
 
 /// Ключ настройки, где лежат onion-адреса, названные сервером.
@@ -127,8 +128,8 @@ fn valid_onion_host(host: &str) -> bool {
 
 /// Что перебирать в этом режиме.
 ///
-/// Порядок для Auto — от быстрого к самому скрытному: обычный relay, два
-/// relay, потом Tor. Для onion-режима — только Tor, сколько бы входов ни было.
+/// Порядок для Auto — доступный Relay, затем два Tor-входа.
+/// Для onion-режима — только Tor.
 fn routes_for(url: &str, store: &Store) -> Vec<String> {
     let onion: Vec<String> = load_onion_hosts(store);
     match url {
@@ -219,7 +220,7 @@ fn load_onion_hosts(store: &Store) -> Vec<String> {
 
     let mut routes: Vec<String> = known
         .iter()
-        .filter(|host| valid_onion_host(host))
+        .filter(|host| valid_onion_host(host) && !RETIRED_ONION_HOSTS.contains(&host.as_str()))
         .map(|host| format!("ws://{host}/ws"))
         .collect();
     for fallback in FALLBACK_ONION {
@@ -4146,17 +4147,14 @@ mod tests {
         let routes = routes_for(AUTO_ROUTE_URL, &store.0);
 
         assert!(routes[0].ends_with("valanium.com/ws"), "первым — обычный relay");
-        assert!(routes[1].contains("/multihop/"), "вторым — два relay");
         assert!(
-            routes[2..].iter().all(|route| route.contains(".onion")),
-            "Tor обязан быть последним: {routes:?}",
+            routes[1..].iter().all(|route| route.contains(".onion")),
+            "после relay идут только живые Tor-входы: {routes:?}",
         );
-        // Все запасные входы на месте: с одним падение единственного Tor
-        // выключало бы onion-режим целиком, хотя рядом стоит живой узел.
-        //
-        // Считается от длины списка, а не числом: добавление узла в сеть — это
-        // обычное дело, и ронять на нём тест значит приучать его чинить не
-        // глядя.
+        assert!(
+            routes.iter().all(|route| !route.contains("/multihop/")),
+            "Auto не должен пробовать недоступный второй relay: {routes:?}",
+        );
         assert_eq!(
             routes.len(),
             DIRECT_ROUTES.len() + FALLBACK_ONION.len(),
@@ -4213,6 +4211,18 @@ mod tests {
         let junk_sig = onion::sign(&key, &junk, 101);
         remember_onion_hosts(&store.0, &junk, &junk_sig, 101, &public, &sink);
         assert_eq!(routes_for(ONION_ROUTE_URL, &store.0)[0], format!("ws://{fresh}/ws"));
+    }
+
+    #[test]
+    fn retired_hosts_from_a_previous_release_are_not_retried() {
+        let store = TempStore::new("retired-onion");
+        let old = RETIRED_ONION_HOSTS.to_vec();
+        store
+            .0
+            .save_setting(ONION_HOSTS_KEY, &serde_json::to_vec(&old).unwrap())
+            .unwrap();
+
+        assert_eq!(routes_for(ONION_ROUTE_URL, &store.0), FALLBACK_ONION);
     }
 
     #[test]

@@ -86,7 +86,7 @@ body.square-avatars .preview-avatar{border-radius:8px}
 /* Пузыри занимают ширину содержимого, а не растягиваются до max-width. */
 .message-list li{width:fit-content;min-width:54px;align-self:flex-start}
 .message-list li.out{align-self:flex-end}
-.message-image{display:block;width:auto;max-width:min(420px,62vw);max-height:420px;margin:0 0 5px;border-radius:calc(var(--bubble-radius) - 5px);object-fit:contain}
+.message-image{display:block;width:auto;max-width:min(420px,62vw);max-height:420px;margin:0 0 5px;border-radius:calc(var(--bubble-radius) - 5px);object-fit:contain;cursor:zoom-in}
 .message-meta{display:flex;align-items:center;justify-content:flex-end;gap:7px;margin-top:5px;opacity:.62;font-size:9.5px}
 .message-meta time{margin:0;opacity:1}.delivery{white-space:nowrap}.message-list li.read .delivery{opacity:1}
 
@@ -630,6 +630,7 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 .message-menu button{width:100%;height:32px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--text);font-size:11.5px;text-align:left}
 .message-menu button:hover{background:var(--surface)}
 .message-menu button.danger{color:var(--danger)}
+.message-menu{max-height:min(260px,55vh);overflow-y:auto;overscroll-behavior:contain}
 .message-list li.selected{outline:2px solid color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:2px}
 
 /* --- цитата в сообщении ----------------------------------------------------------- */
@@ -976,9 +977,9 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .brand-row{height:80px;gap:14px}
 #screen-main .brand{gap:11px}
 #screen-main .brand-logo{
-  width:54px;height:72px;border:0;border-radius:0;background:transparent;overflow:visible;
+  width:54px;height:72px;display:flex;align-items:center;justify-content:center;border:0;border-radius:0;background:transparent;overflow:hidden;
 }
-#screen-main .brand-logo img{width:54px;height:72px;object-fit:contain}
+#screen-main .brand-logo img{width:68px;height:80px;max-width:none;flex:none;object-fit:contain}
 #screen-main .brand-copy strong{font:600 25px/1.05 "Unbounded",sans-serif;letter-spacing:-.06em}
 #screen-main .brand-copy span{margin-top:3px;color:var(--accent);font:500 13px/1.2 "Inter UI",sans-serif;letter-spacing:.01em}
 #screen-main .brand-actions{gap:4px}
@@ -1044,26 +1045,27 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 }
 #screen-main .sidebar-bottom::before{display:none}
 #screen-main .profile-row{
-  grid-template-columns:46px minmax(0,1fr);
+  grid-template-columns:46px minmax(0,1fr) 16px;
   gap:11px;
   min-height:66px;
   margin:0;
   padding:8px 11px;
-  border:0!important;
+  border:1px solid rgba(255,255,255,.055)!important;
   border-radius:18px;
-  background:#101010!important;
+  background:linear-gradient(135deg,#171717,#101010 72%)!important;
   transform:none!important;
-  transition:background .16s ease,transform .12s ease;
+  transition:border-color .18s ease,background .18s ease,transform .16s ease;
 }
-#screen-main .profile-row:hover{background:#191919!important}
+#screen-main .profile-row::after{content:"›";color:#666;font-size:24px;line-height:1;text-align:right}
+#screen-main .profile-row:hover{border-color:rgba(255,255,255,.12)!important;background:linear-gradient(135deg,#202020,#151515 72%)!important}
 #screen-main .profile-row:active{transform:scale(.985)!important}
 #screen-main .profile-avatar{width:46px;height:46px;font:600 14px/1 "Inter UI",sans-serif;border-radius:50%}
 #screen-main .profile-copy b{display:flex;align-items:center;min-width:0;font:600 15px/1.28 "Inter UI",sans-serif;letter-spacing:-.015em;color:#f4f4f4}
-#screen-main .profile-copy small{display:block;margin-top:4px;color:#686868;font:400 11px/1.25 "Inter UI",sans-serif}
+#screen-main .profile-copy small{display:block;margin-top:4px;color:#858585;font:400 11px/1.25 "Inter UI",sans-serif}
 #screen-main .owner-dot{display:none}
 
 #screen-main .chat-panel{
-  grid-template-rows:108px auto auto minmax(0,1fr) 89px;background:#020202;
+  grid-template-rows:108px auto auto minmax(0,1fr) minmax(89px,max-content);background:#020202;
 }
 #screen-main .chat-panel::before{display:none}
 #screen-main .chat-header{
@@ -1090,6 +1092,10 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .header-actions .call-button:hover{background:rgba(255,255,255,.05);color:#777}
 #screen-main .header-actions .call-button:active{transform:scale(.94)}
 #screen-main .chat-panel:has(#chat-empty:not(.hidden)) .header-actions{opacity:.75}
+#screen-main .chat-panel:has(#chat-empty:not(.hidden)) .chat-header,
+#screen-main .chat-panel:has(#chat-empty:not(.hidden)) .composer-wrap{display:none}
+#screen-main .chat-panel:has(#chat-empty:not(.hidden)){grid-template-rows:1fr}
+#screen-main .chat-panel:has(#chat-empty:not(.hidden)) .chat-empty{grid-row:1;padding:0 24px}
 
 #screen-main .chat-empty{padding-bottom:54px}
 #screen-main .empty-icon{width:62px;height:62px;border-color:#272727;border-radius:18px;background:#111;color:#777}
@@ -1097,9 +1103,12 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .chat-empty p{max-width:390px;color:#777;font:400 13px/1.45 "Inter UI",sans-serif}
 
 #screen-main .message-list{
-  grid-column:1;grid-row:1/6;z-index:1;gap:18px;padding:108px 10.35% 112px;overflow-x:hidden;
+  grid-column:1;grid-row:1/6;z-index:1;gap:18px;padding:108px 10.35% var(--composer-space,112px);overflow-x:hidden;
   clip-path:inset(25px 0 31px 0);
 }
+#screen-main .message-list li.in,#screen-main .message-list li.out{animation:none}
+#screen-main .message-list li.fresh-message{animation:message-fresh .16s ease-out both}
+@keyframes message-fresh{from{opacity:.7;transform:translateY(3px)}to{opacity:1;transform:none}}
 #screen-main .message-list::before{margin-top:auto}
 #screen-main .message-list li{
   position:relative;width:fit-content;min-width:72px;max-width:min(43%,515px);margin:0;padding:11px 13px;
@@ -1115,6 +1124,11 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .message-list li.in>.message-avatar{left:-42px}
 #screen-main .message-list li.out>.message-avatar{right:-42px}
 #screen-main .message-list .body{font:500 14.5px/1.42 "Inter UI",sans-serif;letter-spacing:-.01em}
+#screen-main .message-list li:not(.day-divider){box-sizing:border-box;min-width:0;max-width:min(72%,515px)}
+#screen-main .message-list .body,#screen-main .reply-quote{min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+#screen-main .message-list .body a{overflow-wrap:anywhere;word-break:break-word}
+#screen-main .message-image{box-sizing:border-box;max-width:100%;height:auto;object-fit:contain}
+#screen-main .message-list li[data-message-id]{touch-action:pan-y}
 #screen-main .message-meta{gap:4px;margin-top:4px;color:#999;font:500 10px/1 "Inter UI",sans-serif}
 #screen-main .message-meta time{color:#999}
 #screen-main .delivery{font-size:0}
@@ -1131,7 +1145,7 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 }
 #screen-main .session-note{display:none}
 #screen-main .composer{
-  height:57px;grid-template-columns:34px 34px minmax(0,1fr) 34px 34px;align-items:center;gap:5px;
+  min-height:57px;grid-template-columns:34px 34px minmax(0,1fr) 34px 34px;align-items:center;gap:5px;
   padding:0 12px;border:1px solid rgba(255,255,255,.035);border-radius:25px;background:rgba(15,15,15,.7);
   backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12);box-shadow:0 -8px 30px rgba(0,0,0,.18);
 }
@@ -1147,10 +1161,15 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main #attach-image{display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;padding-bottom:2px}
 #screen-main #emoji-open{display:flex;align-items:center;justify-content:center}
 #screen-main #emoji-open .ui-icon{width:20px;height:20px;margin:0;transform:translateY(1.5px)}
+#screen-main .composer-input{position:relative;display:flex;min-width:0;flex-direction:column;justify-content:center;overflow:hidden}
+#screen-main .composer-input textarea{position:relative;z-index:1;width:100%;overflow-wrap:anywhere;scrollbar-width:none}
+#screen-main .composer-input textarea::-webkit-scrollbar{display:none}
+#screen-main .composer-mirror{position:absolute;left:0;right:0;z-index:2;padding:10px 4px;pointer-events:none;white-space:pre-wrap;overflow-wrap:anywhere;color:transparent;font:400 12.5px/1.6 "Inter UI",sans-serif}
+#screen-main .composer-calculation{color:#727272;font-variant-numeric:tabular-nums}
 #screen-main #record-voice{display:flex;align-items:center;justify-content:center}
 #screen-main #record-voice .ui-icon{width:19px;height:19px;margin:0;transform:translateY(1.5px)}
 #screen-main .composer textarea,#screen-main .composer textarea:focus{
-  min-height:40px;max-height:40px;padding:10px 4px;border-radius:0!important;color:#eee;
+  min-height:40px;max-height:130px;padding:10px 4px;border-radius:0!important;color:#eee;
   font:400 12.5px/1.6 "Inter UI",sans-serif;
 }
 #screen-main .composer textarea::placeholder{color:#555}
@@ -1163,25 +1182,22 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .send-button:not(:disabled):active{transform:scale(.94)}
 #screen-main .send-button:disabled{opacity:.28;cursor:default}
 #screen-main .send-button .ui-icon{width:15px;height:15px;margin:0}
-#screen-main .composer.is-recording textarea,#screen-main .composer.is-recording #record-voice,#screen-main .composer.is-recording #send{display:none}
+#screen-main .composer.is-recording .composer-input,#screen-main .composer.is-recording #record-voice,#screen-main .composer.is-recording #send{display:none}
 #screen-main .composer.is-recording .recording-bar{grid-column:3/6;width:100%;height:40px;border:0;background:transparent;padding:0 2px 0 7px;animation:recording-inline-in .18s ease both}
 #screen-main .composer.is-recording .recording-bar .ghost-button{border-color:rgba(255,255,255,.06);background:rgba(255,255,255,.025)}
 #screen-main .composer.is-recording .recording-bar .ghost-button:hover{background:rgba(255,255,255,.07)}
+.emoji-scrim{display:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.emoji-panel{background:#202020;backdrop-filter:none;-webkit-backdrop-filter:none}
 
-#screen-main .sidebar[data-pane-direction="next"] .conversation-list:not(.hidden),
-#screen-main .sidebar[data-pane-direction="next"] #channels-pane:not(.hidden){animation:pane-next-in .24s cubic-bezier(.2,.75,.25,1) both}
-#screen-main .sidebar[data-pane-direction="prev"] .conversation-list:not(.hidden),
-#screen-main .sidebar[data-pane-direction="prev"] #channels-pane:not(.hidden){animation:pane-prev-in .24s cubic-bezier(.2,.75,.25,1) both}
-#screen-main .conversation-list:not(.hidden) li{animation:conversation-card-in .22s ease both}
-#screen-main .conversation-list:not(.hidden) li:nth-child(2){animation-delay:18ms}
-#screen-main .conversation-list:not(.hidden) li:nth-child(3){animation-delay:36ms}
-#screen-main .conversation-list:not(.hidden) li:nth-child(4){animation-delay:54ms}
 #screen-main .section-tabs button{transition:background .2s,color .2s,transform .16s}
 #screen-main .section-tabs button:active{transform:scale(.97)}
-@keyframes pane-next-in{from{opacity:0;transform:translateX(14px);filter:blur(2px)}}
-@keyframes pane-prev-in{from{opacity:0;transform:translateX(-14px);filter:blur(2px)}}
-@keyframes conversation-card-in{from{opacity:0;transform:translateY(5px)}}
 @keyframes recording-inline-in{from{opacity:0;transform:translateX(8px)}}
+#screen-main .conversation-list li{animation:none}
+.image-viewer{position:fixed;inset:var(--titlebar) 0 0;z-index:200;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:58px 32px 28px;background:rgba(0,0,0,.94)}
+.image-viewer img{display:block;max-width:100%;max-height:100%;min-height:0;object-fit:contain;border-radius:8px}
+.image-viewer-close{position:absolute;top:18px;right:22px;width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.16);border-radius:50%;background:#242424;color:#eee}
+.image-viewer-close .ui-icon{width:16px;height:16px}
+.image-viewer-caption{max-width:min(780px,100%);margin:0;color:#ddd;font-size:12px;text-align:center;overflow-wrap:anywhere}
 #screen-main .jump-down{right:4%;bottom:104px}
 
 /* Поиск и проверка пары не режут рабочую область полосами: это такие же
@@ -1217,7 +1233,8 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 }
 @media(max-width:1500px){
   #screen-main .brand-row{height:70px}
-  #screen-main .brand-logo,#screen-main .brand-logo img{width:44px;height:58px}
+  #screen-main .brand-logo{width:44px;height:58px}
+  #screen-main .brand-logo img{width:58px;height:68px}
   #screen-main .brand{gap:8px}
   #screen-main .brand-copy strong{font-size:18px}
   #screen-main .brand-copy span{font-size:11px}

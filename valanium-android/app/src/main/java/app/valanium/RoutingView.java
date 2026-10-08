@@ -17,14 +17,14 @@ import android.view.animation.LinearInterpolator;
 public final class RoutingView extends View {
     public interface OnModeChangedListener { void onModeChanged(String mode); }
 
-    private static final String[] MODES = {"auto", "basic", "multihop", "onion"};
+    private static final String[] MODES = {"auto", "basic", "onion"};
     private static final int[] TITLES = {
             R.string.transport_auto_title, R.string.transport_basic_title,
-            R.string.transport_multihop_title, R.string.transport_onion_title
+            R.string.transport_onion_title
     };
     private static final int[] SUBTITLES = {
             R.string.transport_auto_hint, R.string.transport_basic_hint,
-            R.string.transport_multihop_hint, R.string.transport_onion_card_hint
+            R.string.transport_onion_card_hint
     };
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -68,7 +68,7 @@ public final class RoutingView extends View {
     public void setOnModeChangedListener(OnModeChangedListener value) { listener = value; }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
-        int wanted = dp(4 * 112 + 3 * 8);
+        int wanted = dp(MODES.length * 112 + (MODES.length - 1) * 8);
         setMeasuredDimension(MeasureSpec.getSize(widthSpec), resolveSize(wanted, heightSpec));
     }
 
@@ -93,7 +93,7 @@ public final class RoutingView extends View {
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         float gap = dp(8);
-        float h = (getHeight() - gap * 3) / 4f;
+        float h = (getHeight() - gap * (MODES.length - 1)) / MODES.length;
         for (int i = 0; i < MODES.length; i++) {
             float top = i * (h + gap);
             drawCard(canvas, i, top, h);
@@ -131,14 +131,12 @@ public final class RoutingView extends View {
         }
 
         float y = top + dp(72);
-        if (index == 2 || index == 3) {
+        if (index == 2) {
             float[] xs = {dp(27), getWidth() * .35f, getWidth() * .65f, getWidth() - dp(27)};
             drawLinks(canvas, xs, y, active);
             drawNode(canvas, laptop, xs[0], y, getContext().getString(R.string.route_device));
-            drawNode(canvas, index == 3 ? tor : relay, xs[1], y,
-                    getContext().getString(index == 3 ? R.string.route_tor : R.string.route_nl));
-            drawNode(canvas, index == 3 ? tor : relay, xs[2], y,
-                    getContext().getString(index == 3 ? R.string.route_onion : R.string.route_de));
+            drawNode(canvas, tor, xs[1], y, getContext().getString(R.string.route_tor));
+            drawNode(canvas, tor, xs[2], y, getContext().getString(R.string.route_onion));
             drawNode(canvas, envelope, xs[3], y, getContext().getString(R.string.route_main));
         } else {
             float[] xs = {dp(30), getWidth() / 2f, getWidth() - dp(30)};
@@ -217,7 +215,8 @@ public final class RoutingView extends View {
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (event.getAction() != MotionEvent.ACTION_UP) return true;
         performClick();
-        int next = Math.max(0, Math.min(3, (int) (event.getY() / (getHeight() / 4f))));
+        int next = Math.max(0, Math.min(MODES.length - 1,
+                (int) (event.getY() / (getHeight() / (float) MODES.length))));
         if (next != selected) {
             selected = next;
             invalidate();

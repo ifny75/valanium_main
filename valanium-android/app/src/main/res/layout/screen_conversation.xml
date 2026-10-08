@@ -48,6 +48,7 @@
 
     <LinearLayout android:id="@+id/composer_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/composer_pill" android:gravity="center_vertical" android:orientation="horizontal" android:padding="4dp">
         <Button android:id="@+id/attach_photo" style="@style/Valanium.Button.IconCircle" android:text="＋" />
+        <Button android:id="@+id/open_calculator" style="@style/Valanium.Button.IconCircle" android:text="▦" android:contentDescription="Калькулятор" />
         <EditText android:id="@+id/composer" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:autofillHints="" android:background="@null" android:hint="@string/message" android:inputType="textMultiLine|textCapSentences" android:maxLines="4" android:minHeight="46dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:textColor="@color/valanium_white" android:textColorHint="@color/valanium_dim" android:textSize="15sp" />
         <ImageButton android:id="@+id/record_voice" style="@style/Valanium.Icon.Composer" android:contentDescription="@string/voice_record" android:src="@drawable/ic_mic" />
         <Button android:id="@+id/send" style="@style/Valanium.Button.Round" android:layout_marginStart="4dp" android:text="@string/send" />

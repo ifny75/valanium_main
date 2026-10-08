@@ -9,30 +9,15 @@
 const SERVER_URLS = Object.freeze({
   auto: "valanium://auto",
   basic: "wss://valanium.com/ws",
-  multihop: "wss://valanium.com/multihop/ws",
   onion: "valanium://onion",
 });
 
 /** Узлы, из которых можно выбрать второе плечо. Имена те же, что на /status. */
 const HOP_NODES = Object.freeze(["alpha", "beta", "gamma"]);
 
-/*
-  Адрес для Multi-hop с закреплённым вторым узлом.
-
-  Первый узел выбирает Cloudflare, и повлиять на это нечем: у всех relay один
-  общий адрес, отвечает ближайший коннектор. А вот кому он передаст дальше —
-  выбирает человек.
-
-  Если Cloudflare привёл на тот самый узел, что выбран вторым, узел отвечает
-  421: двух разных плеч из одного не сделать. Ядро воспримет это как отказ
-  соединения и попробует снова — следующая попытка почти наверняка придёт на
-  другой вход.
-*/
+/* Cloudflare направляет Relay на один из доступных узлов hop1 и hop3. */
 function serverUrl() {
   const mode = preferences.transport;
-  if (mode === "multihop" && HOP_NODES.includes(preferences.multihopNode)) {
-    return `wss://valanium.com/multihop/${preferences.multihopNode}/ws`;
-  }
   return SERVER_URLS[mode] || SERVER_URLS.basic;
 }
 // Версия не хранится здесь копией: её отдаёт ядро приложения (Cargo.toml).
@@ -315,18 +300,18 @@ const ONBOARDING_LANGUAGE = "valanium.onboarding.language";
 const ONBOARDING_COMPLETE = "valanium.onboarding.complete";
 let onboardingLanguage = localStorage.getItem(ONBOARDING_LANGUAGE)
   || (navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en");
-let chosenTransport = "onion";
+let chosenTransport = "auto";
 
 const onboardingCopy = {
   ru: {
     introTitle: "valanium",
     introParts: [
       "Valanium — приватный мессенджер с надёжным сквозным шифрованием.",
-      "Сообщения шифруются на вашем устройстве. Главный сервер скрыт за relay-инфраструктурой, а маршрут можно выбрать между Relay, Multihop и Tor.",
+      "Сообщения шифруются на вашем устройстве. К main ведут Relay через hop1 или hop3 и Tor.",
       "Приватность заложена в архитектуру. Открытый код. Номер телефона не нужен.",
     ],
     start: "Проведите, чтобы начать", next: "Продолжить", routeText: "Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.",
-    relay: "Быстрое прямое соединение", multi: "Дополнительный промежуточный узел", tor: "Максимальная сетевая приватность",
+    relay: "Через hop1 или hop3 к main", multi: "Multi-hop временно выключен", tor: "Максимальная сетевая приватность",
     entryTitle: "Начните с Valanium", entryLead: "Имя увидят собеседники. Пароль нужен для запасного входа с другого устройства.",
     routeTitle: "сервер Valanium", back: "Назад", relayTitle: "Relay (автоматически)",
     username: "Имя пользователя", usernamePlaceholder: "username", recoveryPassword: "Пароль восстановления", passwordPlaceholder: "Минимум 10 символов",
@@ -341,11 +326,11 @@ const onboardingCopy = {
     introTitle: "valanium",
     introParts: [
       "Valanium is a private messenger with reliable end-to-end encryption.",
-      "Messages are encrypted on your device. The main server stays behind relay infrastructure, with Relay, Multihop and Tor routing.",
+      "Messages are encrypted on your device. Relay through hop1 or hop3 and Tor reach the main server.",
       "Privacy by design. Open source. No phone number required.",
     ],
     start: "Slide to start", next: "Continue", routeText: "Choose how the app connects to the network. You can change this later.",
-    relay: "Fast direct connection", multi: "An additional intermediate relay", tor: "Maximum network privacy",
+    relay: "Through hop1 or hop3 to main", multi: "Multi-hop temporarily off", tor: "Maximum network privacy",
     entryTitle: "Get started with Valanium", entryLead: "Your contacts see the username. The password enables recovery on another device.",
     routeTitle: "Valanium server", back: "Back", relayTitle: "Relay (automatic)",
     username: "Username", usernamePlaceholder: "username", recoveryPassword: "Recovery password", passwordPlaceholder: "At least 10 characters",
@@ -671,10 +656,8 @@ $("form-entry").addEventListener("submit", async (event) => {
     preferences.transport = "onion";
     savePreferences();
     try {
-      const tor = await invoke("onionize_status");
-      if (!tor?.installed) throw new Error("Сначала установите Tor кнопкой ниже. Регистрация ещё не отправлена.");
       button.textContent = "Подготавливаем Tor…";
-      await invoke("onionize_start");
+      await ensureOnionize();
     } catch (error) {
       $("entry-error").textContent = `Регистрация через Tor не началась: ${error.message ?? error}`;
       state.pendingRecoverySetup = null;
@@ -1372,6 +1355,26 @@ $("messages").addEventListener("scroll", () => {
   if (list.scrollTop < list.clientHeight) loadOlder(conversation);
 });
 
+function closeImageViewer() {
+  $("image-viewer").classList.add("hidden");
+  $("image-viewer-photo").removeAttribute("src");
+}
+$("messages").addEventListener("click", (event) => {
+  const image = event.target.closest(".message-image");
+  if (!image) return;
+  $("image-viewer-photo").src = image.src;
+  $("image-viewer-photo").alt = image.alt;
+  const caption = image.alt === "Фото" ? "" : image.alt;
+  $("image-viewer-caption").textContent = caption;
+  $("image-viewer-caption").classList.toggle("hidden", !caption);
+  $("image-viewer").classList.remove("hidden");
+  $("image-viewer-close").focus();
+});
+$("image-viewer-close").addEventListener("click", closeImageViewer);
+$("image-viewer").addEventListener("click", (event) => {
+  if (event.target === $("image-viewer")) closeImageViewer();
+});
+
 $("history-more").addEventListener("click", () => {
   const conversation = conversationOf(state.current);
   if (conversation) loadOlder(conversation);
@@ -1388,6 +1391,7 @@ $("form-send").addEventListener("submit", async (event) => {
   if (!body || !state.current) return;
   $("composer").value = "";
   resizeComposer();
+  updateComposerCalculation();
 
   // Режим правки: сообщение не отправляется заново, а заменяется на месте.
   // Новый идентификатор здесь был бы ошибкой — по нему собеседник не найдёт,
@@ -1426,6 +1430,7 @@ function resizeComposer() {
   const composer = $("composer");
   composer.style.height = "auto";
   composer.style.height = `${Math.min(composer.scrollHeight, 130)}px`;
+  $("form-send").closest(".chat-panel")?.style.setProperty("--composer-space", `${$("form-send").offsetHeight + 24}px`);
 }
 
 $("composer").addEventListener("input", resizeComposer);
@@ -1439,6 +1444,14 @@ $("composer").addEventListener("keydown", (event) => {
   if (wantsSend) {
     event.preventDefault();
     $("form-send").requestSubmit();
+  } else if ($("composer").selectionStart === $("composer").value.length) {
+    const suggestion = $("composer-calculation");
+    if (!suggestion.classList.contains("hidden")) {
+      event.preventDefault();
+      const field = $("composer");
+      field.setRangeText(`${suggestion.textContent}\n`, field.value.length, field.value.length, "end");
+      field.dispatchEvent(new Event("input"));
+    }
   }
 });
 
@@ -1657,7 +1670,9 @@ function appendMessage({ outgoing, body, created_at, from }, conversation, { cac
     const lastDay = [...list.querySelectorAll(".day-divider")].at(-1)?.dataset.day;
     const day = new Date(created_at ?? Date.now()).toDateString();
     if (lastDay !== day) list.appendChild(dayDivider(created_at ?? Date.now()));
+    built.node.classList.add("fresh-message");
     list.appendChild(built.node);
+    setTimeout(() => built.node.classList.remove("fresh-message"), 220);
     if (follow) list.scrollTop = list.scrollHeight;
     else if (!outgoing) missedWhileUp += 1;
     updateJumpButton();
@@ -1957,7 +1972,13 @@ const handlers = {
     submit({ type: "directory_list" });
     submit({ type: "access_get" });
     setConnection("connecting", "подключаемся…");
-    submit({ type: "connect", url: serverUrl() });
+    if (preferences.transport === "onion") {
+      ensureOnionize().then(() => {
+        if (preferences.transport === "onion") submit({ type: "connect", url: serverUrl() });
+      }).catch((error) => setConnection("offline", `Tor: ${error.message ?? error}`));
+    } else {
+      submit({ type: "connect", url: serverUrl() });
+    }
   },
 
   connected(event) {
@@ -2801,7 +2822,7 @@ $("avatar-file").addEventListener("change", () => {
 
 const settingsPage = $("settings-page");
 const preferenceDefaults = {
-  transport: "onion",
+  transport: "auto",
   theme: "dark",
   accent: "#7b2cff",
   accentText: "#ffffff",
@@ -2835,9 +2856,17 @@ const preferenceDefaults = {
   notificationSound: true,
 };
 
+const ROUTE_MIGRATION_NOTICE = "valanium.route-migrated-from-multihop";
+
 function loadPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem("valanium.preferences") || "{}");
+    if (saved.transport === "multihop") {
+      saved.transport = "basic";
+      delete saved.multihopNode;
+      localStorage.setItem("valanium.preferences", JSON.stringify(saved));
+      localStorage.setItem(ROUTE_MIGRATION_NOTICE, "1");
+    }
     // До этой версии белый был не выбором пользователя, а значением по
     // умолчанию. Однократно переводим такие установки на новый фиолетовый
     // акцент; после этого любой цвет, включая белый, сохраняется буквально.
@@ -3233,6 +3262,7 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key !== "Escape") return;
+  if (!$("image-viewer").classList.contains("hidden")) return closeImageViewer();
   // Закрываем по одному слою за нажатие: Escape в открытом окне исключений не
   // должен заодно захлопывать и настройки под ним.
   if (emojiPanel) return closeEmoji();
@@ -3674,19 +3704,25 @@ for (const button of document.querySelectorAll("#settings-nav button[data-sectio
 }
 
 for (const button of document.querySelectorAll("#transport-segment [data-transport]")) {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     const mode = button.dataset.transport;
     if (!SERVER_URLS[mode] || mode === preferences.transport) return;
     preferences.transport = mode;
     savePreferences();
     applyPreferences();
     submit({ type: "disconnect" });
-    window.setTimeout(() => submit({ type: "connect", url: serverUrl() }), 250);
+    if (mode === "onion") {
+      try {
+        await ensureOnionize();
+        if (preferences.transport === "onion") submit({ type: "connect", url: serverUrl() });
+      } catch (error) {
+        toast(`Tor не запустился: ${error.message ?? error}`);
+      }
+    } else {
+      window.setTimeout(() => submit({ type: "connect", url: serverUrl() }), 250);
+    }
     toast(mode === "onion" ? "Подключаемся через Tor…"
       : mode === "auto" ? "Выбираем доступный маршрут…" : "Меняем маршрут…");
-    // Выбрали Onion — начинаем строить цепь немедленно, параллельно с
-    // попыткой подключиться. Иначе первая попытка упрётся в неподнятый Tor.
-    if (mode === "onion") prewarmOnionize();
   });
 }
 
@@ -3776,18 +3812,29 @@ async function refreshOnionize() {
   оставлять след там, где его не просили.
 */
 let onionizeWarming = false;
+let onionizeStartup = null;
+
+function ensureOnionize() {
+  if (onionizeStartup) return onionizeStartup;
+  onionizeStartup = (async () => {
+    const state = await invoke("onionize_status");
+    if (!state?.installed) await invoke("onionize_install");
+    return invoke("onionize_start");
+  })().finally(() => { onionizeStartup = null; });
+  return onionizeStartup;
+}
 
 async function prewarmOnionize() {
   if (onionizeWarming || preferences.transport !== "onion") return;
   const state = await invoke("onionize_status").catch(() => null);
   if (!state || typeof state !== "object") return;
-  if (!state.installed || state.running) return;
+  if (state.running) return;
 
   onionizeWarming = true;
   onionizeError = "";
   refreshOnionize();
   try {
-    await invoke("onionize_start");
+    await ensureOnionize();
   } catch (error) {
     onionizeError = String(error.message ?? error);
   } finally {
@@ -5883,6 +5930,17 @@ function confirmAction(title, detail, onYes) {
   modal.querySelector("[data-no]").focus();
 }
 
+function showRouteMigrationNotice() {
+  const modal = document.createElement("div");
+  modal.className = "modal";
+  modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2>Маршрут изменён</h2></div>
+    <p class="modal-copy">Multi-hop временно выключен. Подключение переключено на Relay через hop1 или hop3. Cloudflare и входной relay видят ваш сетевой адрес; main получает только жетон. Для соединения без Cloudflare выберите Onion.</p>
+    <div class="setting-actions peer-actions"><button class="ghost-button" type="button">Понятно</button></div></div>`;
+  modal.querySelector("button").addEventListener("click", () => modal.remove());
+  document.body.appendChild(modal);
+  modal.querySelector("button").focus();
+}
+
 
 // --- эмодзи ------------------------------------------------------------------
 
@@ -5915,7 +5973,6 @@ let emojiPanel = null;
 function closeEmoji() {
   emojiPanel?._emojiObserver?.disconnect();
   emojiPanel?.remove();
-  emojiPanel?._scrim?.remove();
   emojiPanel = null;
 }
 
@@ -5983,28 +6040,96 @@ $("emoji-open").addEventListener("click", (event) => {
   openEmojiCategory(0);
   // Внутри панели щелчок не должен её закрывать: выбирают часто по нескольку.
   panel.addEventListener("click", (inner) => inner.stopPropagation());
-  /*
-    Подложка за панелью.
-
-    Сама панель размывает лишь то, что под ней, и переписка вокруг оставалась
-    резкой — панель висела поверх чужих сообщений и фотографий, как вырезанный
-    прямоугольник. Подложка размывает всё окно разговора, и панель перестаёт
-    спорить с тем, что за ней.
-
-    Отдельным элементом, а не фильтром на самой панели: backdrop-filter
-    действует только под элементом, и растянуть его на окно, не растянув
-    панель, нечем.
-  */
-  const scrim = document.createElement("div");
-  scrim.className = "emoji-scrim";
   const host = document.querySelector(".composer");
   host.appendChild(panel);
-  (document.querySelector(".chat-panel") ?? host).appendChild(scrim);
-  panel._scrim = scrim;
   emojiPanel = panel;
 });
 
 document.addEventListener("click", closeEmoji);
+
+function calculateExpression(source) {
+  const input = source.toLowerCase().replaceAll(",", ".").replace(/\s+/g, "");
+  if (!input || input.length > 120 || /[^a-z\d.+\-*/();]/.test(input)) throw new Error("Выражение не распознано");
+  const parts = input.match(/[a-z]+|(?:\d+(?:\.\d*)?|\.\d+)|[()+\-*/;]/g) || [];
+  if (parts.join("") !== input) throw new Error("Выражение не распознано");
+  let at = 0;
+  const factor = () => {
+    if (parts[at] === "+" || parts[at] === "-") {
+      const sign = parts[at++] === "-" ? -1 : 1;
+      return sign * factor();
+    }
+    if (parts[at] === "(") {
+      at++;
+      const value = sum();
+      if (parts[at++] !== ")") throw new Error("Проверьте скобки");
+      return value;
+    }
+    if (/^[a-z]+$/.test(parts[at] ?? "")) {
+      const name = parts[at++];
+      if (parts[at++] !== "(") throw new Error("Проверьте функцию");
+      const args = [sum()];
+      while (parts[at] === ";") { at++; args.push(sum()); }
+      if (parts[at++] !== ")") throw new Error("Проверьте скобки");
+      if (name === "max" && args.length >= 2) return Math.max(...args);
+      if (name === "min" && args.length >= 2) return Math.min(...args);
+      if (name === "abs" && args.length === 1) return Math.abs(args[0]);
+      if (name === "sqrt" && args.length === 1) return Math.sqrt(args[0]);
+      if (name === "log" && args.length === 1) return Math.log10(args[0]);
+      throw new Error("Проверьте функцию");
+    }
+    const value = Number(parts[at++]);
+    if (!Number.isFinite(value)) throw new Error("Выражение не распознано");
+    return value;
+  };
+  const product = () => {
+    let value = factor();
+    while (parts[at] === "*" || parts[at] === "/") {
+      const op = parts[at++];
+      const right = factor();
+      if (op === "/" && right === 0) throw new Error("Деление на ноль");
+      value = op === "*" ? value * right : value / right;
+    }
+    return value;
+  };
+  const sum = () => {
+    let value = product();
+    while (parts[at] === "+" || parts[at] === "-") {
+      const op = parts[at++];
+      value += (op === "+" ? 1 : -1) * product();
+    }
+    return value;
+  };
+  const value = sum();
+  if (at !== parts.length || !Number.isFinite(value)) throw new Error("Выражение не распознано");
+  return String(Number(value.toPrecision(12)));
+}
+
+function updateComposerCalculation() {
+  const output = $("composer-calculation");
+  const field = $("composer");
+  const source = field.value;
+  $("composer-mirror-text").textContent = source;
+  $("composer-mirror").style.top = `${-field.scrollTop}px`;
+  const line = source.split("\n").at(-1).trimEnd();
+  const match = line.match(/(?:^|[\s:])((?:\d|\(|(?:max|min|log|sqrt|abs)\()[a-z\d\s.,()+\-*/;]*)(=?)$/i);
+  const expression = match?.[1]?.trim();
+  if (!expression || !(/(?:\d|\))\s*[+\-*/]\s*(?:\d|\()/.test(expression) || /^(?:max|min|log|sqrt|abs)\(/i.test(expression))) {
+    output.textContent = "";
+    output.classList.add("hidden");
+    return;
+  }
+  try {
+    output.textContent = `${match[2] ? "" : "="}${calculateExpression(expression).replace(".", ",")}`;
+    output.classList.remove("hidden");
+  } catch {
+    output.textContent = "";
+    output.classList.add("hidden");
+  }
+}
+$("composer").addEventListener("input", updateComposerCalculation);
+$("composer").addEventListener("scroll", () => {
+  $("composer-mirror").style.top = `${-$("composer").scrollTop}px`;
+});
 
 /** Вставляет знак туда, где стоит курсор, а не в конец строки. */
 function insertEmoji(symbol) {
@@ -6033,6 +6158,7 @@ function startEdit(id, text) {
   replyingTo = null;
   const field = $("composer");
   field.value = text;
+  updateComposerCalculation();
   field.focus();
   field.setSelectionRange(text.length, text.length);
   renderEditBar();
@@ -6041,6 +6167,7 @@ function startEdit(id, text) {
 function cancelEdit() {
   editing = null;
   $("composer").value = "";
+  updateComposerCalculation();
   renderEditBar();
 }
 
@@ -6208,6 +6335,40 @@ $("messages").addEventListener("contextmenu", (event) => {
   event.preventDefault();
   openMessageMenu(item, event.clientX, event.clientY);
 });
+
+// Горизонтальный жест открывает те же действия, что правая кнопка мыши.
+// Вертикальное движение оставляем списку для обычной прокрутки.
+let messageSwipe = null;
+$("messages").addEventListener("pointerdown", (event) => {
+  const item = event.target.closest("li[data-message-id]");
+  if (!item || event.button !== 0) return;
+  messageSwipe = { item, x: event.clientX, y: event.clientY, pointerId: event.pointerId, horizontal: false };
+});
+$("messages").addEventListener("pointermove", (event) => {
+  const gesture = messageSwipe;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  const dx = event.clientX - gesture.x;
+  const dy = event.clientY - gesture.y;
+  if (!gesture.horizontal && Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
+    messageSwipe = null;
+    return;
+  }
+  if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) gesture.horizontal = true;
+  if (gesture.horizontal) gesture.item.style.translate = `${Math.max(-70, Math.min(70, dx))}px 0`;
+});
+function finishMessageSwipe(event) {
+  const gesture = messageSwipe;
+  messageSwipe = null;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  gesture.item.style.translate = "";
+  if (gesture.horizontal && Math.abs(event.clientX - gesture.x) >= 48) {
+    event.preventDefault();
+    const box = gesture.item.getBoundingClientRect();
+    openMessageMenu(gesture.item, box.left + box.width / 2, box.bottom + 4);
+  }
+}
+document.addEventListener("pointerup", finishMessageSwipe);
+document.addEventListener("pointercancel", finishMessageSwipe);
 
 function openMessageMenu(item, x, y) {
   const menu = $("message-menu");
@@ -6549,3 +6710,7 @@ $("lock-apply").addEventListener("click", async () => {
 });
 
 renderLockState();
+if (localStorage.getItem(ROUTE_MIGRATION_NOTICE) === "1") {
+  localStorage.removeItem(ROUTE_MIGRATION_NOTICE);
+  window.setTimeout(showRouteMigrationNotice, 300);
+}
