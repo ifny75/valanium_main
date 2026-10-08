@@ -16,7 +16,7 @@ use tokio_socks::tcp::Socks5Stream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{client_async_tls_with_config, MaybeTlsStream, WebSocketStream};
 
-use crate::command::{Command, ConversationItem, Event, HistoryItem};
+use crate::command::{Command, ConversationItem, DeviceItem, Event, HistoryItem};
 use crate::crypto::random_bytes;
 use crate::error::{CoreError, Result};
 use crate::keys::Credentials;
@@ -79,6 +79,16 @@ async fn open_socket(url: &str) -> Result<Socket> {
 /// сервер вдруг не назвал период — берём безопасное значение сами.
 const FALLBACK_HEARTBEAT_SEC: u64 = 30;
 const MAX_BACKOFF_SEC: u64 = 60;
+/// Билетов на руках меньше — просим ещё, не дожидаясь, пока кончатся совсем:
+/// доставка не должна упираться в пустой запас посреди набора сообщения.
+const TICKET_LOW_WATERMARK: usize = 3;
+/// Столько просим за раз. Сервер по умолчанию отдаёт до двадцати — берём с
+/// запасом, но не всю пачку: несколько отправок между запросами это переживут.
+const TICKET_BATCH_SIZE: u8 = 10;
+/// Сколько ждать анонимную отправку целиком — открытие соединения (иногда
+/// через Tor), HELLO, ответ. Дольше — не тише, а просто медленнее: сообщение
+/// уйдёт обычным путём, как только это станет ясно.
+const ANON_SEND_TIMEOUT: Duration = Duration::from_secs(25);
 /// Внутренний адрес, который UI передаёт для автоматического выбора пути.
 /// Он никогда не попадает в DNS или URL-парсер: `session` разворачивает его в
 /// реальные маршруты перед каждой попыткой соединения.
@@ -90,21 +100,22 @@ const AUTO_ROUTE_URL: &str = "valanium://auto";
 /// вписывая в себя ни одного адреса.
 const ONION_ROUTE_URL: &str = "valanium://onion";
 
-/// Постоянные маршруты: обычный relay и два relay подряд.
-const DIRECT_ROUTES: [&str; 2] = [
-    "wss://valanium.com/ws",
-    "wss://valanium.com/multihop/ws",
-];
+/// Cloudflare распределяет этот маршрут между hop1 и hop3; оба ведут на main.
+const DIRECT_ROUTES: [&str; 1] = ["wss://valanium.com/ws"];
 
 /// Запасные onion-входы — на случай, когда HELLO ещё не получали ни разу.
 ///
-/// Relay-узлы держат независимые скрытые сервисы: падение одного Tor-входа
-/// не выключает onion-режим, пока доступен хотя бы один запасной. Дальше
-/// список приезжает от сервера и обновляется сам.
-const FALLBACK_ONION: [&str; 3] = [
-    "ws://ho2sji2l42eqclnmu6gtbbg5nvtrz5jvpr5nqkehbstshcmspsnfkiyd.onion/ws",
-    "ws://anb5vtfi4ztizycwj6nnclo75kpjb4mhz4wmc6ax3zwy2xlz3slx26yd.onion/ws",
+/// Два независимых Tor-входа; сервер обновляет список подписанным HELLO.
+const FALLBACK_ONION: [&str; 2] = [
+    "ws://5kghvwyxzmtzba4foenmg5pkhcoxv6iq2c6wf4pbg5uyjrviwkckvead.onion/ws",
     "ws://5amnu2di3yhtpqcpbcoaabfbzotw3giap2lvoe5bi5juflzhzdrsq4ad.onion/ws",
+];
+
+/// Эти входы принадлежали выведенным из сети узлам. Они могли остаться в
+/// подписанном локальном кеше старого клиента.
+const RETIRED_ONION_HOSTS: [&str; 2] = [
+    "ho2sji2l42eqclnmu6gtbbg5nvtrz5jvpr5nqkehbstshcmspsnfkiyd.onion",
+    "anb5vtfi4ztizycwj6nnclo75kpjb4mhz4wmc6ax3zwy2xlz3slx26yd.onion",
 ];
 
 /// Ключ настройки, где лежат onion-адреса, названные сервером.
@@ -117,8 +128,8 @@ fn valid_onion_host(host: &str) -> bool {
 
 /// Что перебирать в этом режиме.
 ///
-/// Порядок для Auto — от быстрого к самому скрытному: обычный relay, два
-/// relay, потом Tor. Для onion-режима — только Tor, сколько бы входов ни было.
+/// Порядок для Auto — доступный Relay, затем два Tor-входа.
+/// Для onion-режима — только Tor.
 fn routes_for(url: &str, store: &Store) -> Vec<String> {
     let onion: Vec<String> = load_onion_hosts(store);
     match url {
@@ -209,7 +220,7 @@ fn load_onion_hosts(store: &Store) -> Vec<String> {
 
     let mut routes: Vec<String> = known
         .iter()
-        .filter(|host| valid_onion_host(host))
+        .filter(|host| valid_onion_host(host) && !RETIRED_ONION_HOSTS.contains(&host.as_str()))
         .map(|host| format!("ws://{host}/ws"))
         .collect();
     for fallback in FALLBACK_ONION {
@@ -266,15 +277,51 @@ enum Claim {
 
 /// Состояние, переживающее переподключение.
 ///
-/// Живёт в `session`, а не в `pump`: и отправной ящик, и память о неудачных
-/// конвертах имеют смысл только между попытками соединения.
+/// Живёт в `session`, а не в `pump`: отправной ящик и пул билетов имеют смысл
+/// только между попытками соединения. Память о нечитаемых конвертах здесь
+/// **не** живёт — это, в отличие от них, обязано пережить не переподключение,
+/// а перезапуск всего приложения, и потому лежит на диске (`store`, см.
+/// `on_envelope`).
 #[derive(Default)]
 struct Live {
     outbox: Outbox,
-    /// Конверты, которые не удалось прочитать. Первый промах прощается —
-    /// сообщение могло опередить приглашение и на следующем подключении
-    /// разберётся. Второй означает, что оно не разберётся уже никогда.
-    failed: std::collections::HashSet<[u8; ID_LEN]>,
+    /// Sealed sender (ARCHITECTURE.md §7a): непотраченные билеты. Живут в
+    /// `Live`, а не в `pump`, по той же причине, что и `outbox`, — переживают
+    /// переподключение. Свой короткий срок годности билеты и так несут сами;
+    /// протухший просто не пройдёт на сервере, и это не отличить от того,
+    /// что сообщение отправилось обычным путём.
+    tickets: VecDeque<[u8; proto::TICKET_LEN]>,
+}
+
+/// Анонимная отправка не удалась (билетов не было / Tor недоступен / сервер
+/// отказал / соединение оборвалось) — сообщить об этом некому, кроме `pump`:
+/// только он держит основной, уже аутентифицированный сокет, через который
+/// можно попробовать снова.
+///
+/// Канал, а не прямой вызов: отправка идёт своим, отдельным соединением и
+/// своей задачей — она не может занимать `&mut Socket`/`&mut Mls` основного
+/// соединения, они уже заняты циклом `pump`. Канал создаётся в `session()` и
+/// переживает переподключение, поэтому исход, пришедший уже после разрыва
+/// связи, не потеряется — дождётся следующего захода `pump`.
+struct AnonFallback {
+    device: [u8; KEY_LEN],
+    body: String,
+}
+
+/// Что нужно `encrypt_and_send`, чтобы попробовать отправить письмо в обход
+/// уже открытого, аутентифицированного соединения.
+///
+/// Отдельная структура, а не россыпь параметров, ровно потому, что параметр
+/// этот — не про одно сообщение, а про всю сессию: пул билетов и канал исхода
+/// общие на всю связь и передаются по цепочке `on_send → deliver_to_person →
+/// deliver → encrypt_and_send` реborrow'ом, без клонирования состояния.
+struct SealedSenderCtx<'a> {
+    tickets: &'a mut VecDeque<[u8; proto::TICKET_LEN]>,
+    /// Сказал ли сервер в HELLO, что умеет TICKET_REQUEST/SEND_ANON. Кадр,
+    /// которого сервер не знает, — это для него битый кадр и разрыв связи, а
+    /// не отказ, поэтому спрашивать наугад нельзя (см. `Greeting`).
+    available: bool,
+    outcomes: mpsc::UnboundedSender<AnonFallback>,
 }
 
 /// Обрыв связи, а не отказ сервера. Такую ошибку лечит переподключение, и
@@ -528,7 +575,38 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             Err(_) => fail(sink, "bad_identity", "identity must be hex"),
         },
 
-        Command::Conversations => match store.list_conversations() {
+        // Список чатов — по нитям, а не по группам: у собеседника с телефоном
+        // и ноутбуком групп две, а строка одна.
+        /*
+          Свои устройства.
+
+          Отвечаем из того, что уже лежит: список приезжает при подключении и
+          проверяется нашим же ключом личности. Отдельного похода в сеть нет —
+          значит экран открывается и без связи, показывая то, что было в
+          прошлый раз. Пустой список — не ошибка: список ещё не приезжал, либо
+          сервер старый и такого не умеет.
+
+          Порядок — по времени появления. Не по свежести: она меняется от
+          каждого подключения, и строки прыгали бы при каждом открытии экрана.
+        */
+        Command::Devices => {
+            let mine = store
+                .load_credentials()
+                .map(|creds| hex::encode(creds.device_pub()))
+                .unwrap_or_default();
+            let mut devices: Vec<DeviceItem> = own_devices(store)
+                .into_iter()
+                .map(|(device, (_cert, added_at))| DeviceItem {
+                    current: device == mine,
+                    device,
+                    added_at,
+                })
+                .collect();
+            devices.sort_by_key(|item| item.added_at);
+            sink(Event::Devices { devices });
+        }
+
+        Command::Conversations => match store.list_threads() {
             Ok(items) => sink(Event::Conversations {
                 items: items
                     .into_iter()
@@ -635,6 +713,7 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             | Command::ChannelDelete { .. }
             | Command::ChannelUpdate { .. }
             | Command::ChannelAdmin { .. }
+            | Command::RevokeDevice { .. }
             | Command::RevokeOtherDevices
             | Command::AdminAction { .. }
             | Command::RecoverySetup { .. }
@@ -843,7 +922,7 @@ async fn announce_presence(
             body: crate::access::presence_signal(),
             stored: true,
         };
-        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await?;
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, None).await?;
     }
     Ok(())
 }
@@ -875,7 +954,193 @@ async fn send_typing(
         body: crate::access::typing_signal(active),
         stored: true,
     };
-    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
+    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, None).await
+}
+
+/// Нить для только что заведённой беседы.
+///
+/// Если с этим человеком нить уже есть — новая группа встаёт в неё. Если нет,
+/// нить и есть сама группа, и записывать ничего не нужно: отсутствие записи в
+/// `threads` именно это и означает.
+///
+/// Личность мы знаем не всегда: до первого объявления собеседник для нас —
+/// просто устройство. Тогда группа становится собственной нитью, а когда
+/// объявление придёт, [`merge_threads`] сведёт их вместе.
+fn adopt_thread(store: &Store, device: &[u8], group_id: &[u8]) -> Result<Vec<u8>> {
+    let Some(identity) = store.identity_of_device(device)? else {
+        return Ok(group_id.to_vec());
+    };
+    let Some(thread) = store.thread_of_identity(&identity)? else {
+        return Ok(group_id.to_vec());
+    };
+    if thread == group_id {
+        return Ok(thread);
+    }
+    store.set_thread(group_id, &thread)?;
+    Ok(thread)
+}
+
+/// Сводит все беседы одной личности в одну нить.
+///
+/// Нужно потому, что личность узнаётся задним числом: беседа с человеком могла
+/// начаться до того, как он прислал список устройств, а с его вторым
+/// устройством — и вовсе отдельно. Пока мы не знали, что это один человек, в
+/// списке чатов он двоился.
+///
+/// Нитью становится самая ранняя из групп: под ней уже лежит история, и
+/// переносить сообщения не требуется.
+fn merge_threads(store: &Store, identity: &[u8]) -> Result<()> {
+    let Some(thread) = store.thread_of_identity(identity)? else { return Ok(()) };
+    for (device, group_id) in store.list_conversations()? {
+        if store.identity_of_device(&device)?.as_deref() != Some(identity) {
+            continue;
+        }
+        if group_id != thread {
+            store.set_thread(&group_id, &thread)?;
+        }
+    }
+    Ok(())
+}
+
+/// Свой проверенный список устройств: hex ключа → (hex сертификата, когда завели).
+const OWN_DEVICES: &str = "own_devices";
+
+/// Что лежит в [`OWN_DEVICES`]. Пусто — список ещё не приезжал.
+fn own_devices(store: &Store) -> std::collections::BTreeMap<String, (String, i64)> {
+    store
+        .load_setting(OWN_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
+}
+/// Кому этот список уже разослан. Ключ — hex устройства собеседника.
+const OWN_DEVICES_TOLD: &str = "own_devices_told";
+
+/// Пришёл ответ на запрос своих устройств.
+///
+/// # Почему список всё равно проверяется
+///
+/// Он про нас самих, и спросили его мы сами — но пришёл он от сервера, а
+/// подписи под ним ставил наш собственный ключ личности. Проверить их нам
+/// ничего не стоит, а разница велика: непроверенный список мы бы разослали
+/// собеседникам, и приписанное в него чужое устройство начало бы получать
+/// копии нашей переписки. Сервер здесь — почтальон, а не свидетель.
+///
+/// Своё текущее устройство обязано найтись в ответе. Если его там нет, список
+/// не про нас, и рассылать его нельзя: собеседники перестали бы писать нам
+/// самим.
+async fn own_devices_arrived(
+    socket: &mut Socket,
+    store: &Store,
+    mls: &mut Mls,
+    sink: &EventSink,
+    live: &mut Live,
+    own: proto::OwnDevices,
+) -> Result<()> {
+    let credentials = store.load_credentials()?;
+    if own.identity != hex::encode(credentials.identity_pub()) {
+        return Ok(());
+    }
+    let identity = credentials.identity_pub();
+    let mine = hex::encode(credentials.device_pub());
+
+    let verified: std::collections::BTreeMap<String, (String, i64)> = own
+        .devices
+        .into_iter()
+        .filter(|entry| {
+            let (Ok(device), Ok(cert)) = (hex::decode(&entry.device), hex::decode(&entry.cert))
+            else {
+                return false;
+            };
+            keys::verify(&cert, &keys::device_cert_message(&identity, &device), &identity)
+        })
+        .map(|entry| (entry.device, (entry.cert, entry.added_at)))
+        .collect();
+
+    if !verified.contains_key(&mine) {
+        return Ok(());
+    }
+
+    let known: std::collections::BTreeMap<String, (String, i64)> = store
+        .load_setting(OWN_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+
+    if known != verified {
+        // Состав изменился — прежние рассылки устарели, и рассказать надо всем
+        // заново. Иначе отозванное устройство осталось бы у собеседников
+        // навсегда, а «выйти на других устройствах» ничего бы не значило.
+        store.save_setting(OWN_DEVICES, &serde_json::to_vec(&verified)?)?;
+        store.save_setting(OWN_DEVICES_TOLD, &serde_json::to_vec::<Vec<String>>(&Vec::new())?)?;
+    }
+
+    announce_devices(socket, store, mls, sink, live).await
+}
+
+/// Рассылает свой список устройств тем, с кем беседа уже заведена.
+///
+/// Тем, с кем канала ещё нет, рассылка откладывается — ровно как с пропусками:
+/// передать список в открытую нельзя, а заводить ради него беседу незачем. Он
+/// уедет сам, как только беседа появится и сверка пройдёт в следующий раз.
+///
+/// Каждому — по разу на состав: отметка о рассказанном лежит в настройках,
+/// поэтому переподключение не превращается в рассылку.
+async fn announce_devices(
+    socket: &mut Socket,
+    store: &Store,
+    mls: &mut Mls,
+    sink: &EventSink,
+    live: &mut Live,
+) -> Result<()> {
+    let entries = own_devices(store);
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut pairs: Vec<([u8; KEY_LEN], [u8; keys::SIG_LEN])> = Vec::new();
+    for (device, (cert, _added_at)) in &entries {
+        let (Ok(device), Ok(cert)) = (hex::decode(device), hex::decode(cert)) else { continue };
+        let (Ok(device), Ok(cert)) = (device.try_into(), cert.try_into()) else { continue };
+        pairs.push((device, cert));
+    }
+
+    let identity = store.load_credentials()?.identity_pub();
+    let body = crate::access::devices_announce(&identity, &pairs);
+
+    let mut told: std::collections::BTreeSet<String> = store
+        .load_setting(OWN_DEVICES_TOLD)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+
+    let mut sent_any = false;
+    for (peer, group_id) in store.list_conversations()? {
+        let device = hex::encode(&peer);
+        if told.contains(&device) {
+            continue;
+        }
+        let Ok(key): std::result::Result<[u8; KEY_LEN], _> = peer.clone().try_into() else {
+            continue;
+        };
+        let waiting = PendingSend {
+            device: key,
+            // Служебное сообщение в переписку не кладётся.
+            body: body.clone(),
+            stored: true,
+        };
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox, None).await?;
+        told.insert(device);
+        sent_any = true;
+    }
+
+    if sent_any {
+        store.save_setting(OWN_DEVICES_TOLD, &serde_json::to_vec(&told)?)?;
+    }
+    Ok(())
 }
 
 /// Приводит выданные пропуска в соответствие с правилом.
@@ -930,7 +1195,7 @@ async fn grant_missing(
             // Служебное сообщение в переписку не кладётся.
             stored: true,
         };
-        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox).await?;
+        encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox, None).await?;
 
         access.remember_grant(&device, &hash);
         changed = true;
@@ -964,7 +1229,7 @@ async fn grant_missing(
                 body: crate::access::profile_key_gift(&hex::encode(key)),
                 stored: true,
             };
-            encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox)
+            encrypt_and_send(socket, store, mls, sink, &group_id, waiting, &mut live.outbox, None)
                 .await?;
             sent.insert(device.clone());
             shared = true;
@@ -1096,10 +1361,39 @@ const REKEY_AFTER_SEC: i64 = 24 * 3600;
 
 /// Свой ключ профиля: им запечатан наш аватар.
 const PROFILE_KEY: &str = "profile_key";
+/// Запоминает разошедшиеся по одному человеку устройства.
+///
+/// Список кладётся под каждое из них: с какого бы устройства собеседник ни
+/// написал, мы найдём остальные. Прежние записи для этих же устройств
+/// затираются — объявление всегда свежее того, что лежит, а устройство,
+/// пропавшее из списка, из него именно что убрали.
+fn remember_peer_devices(store: &Store, devices: &[[u8; KEY_LEN]]) {
+    let list: Vec<String> = devices.iter().map(hex::encode).collect();
+    let mut known: std::collections::BTreeMap<String, Vec<String>> = store
+        .load_setting(PEER_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    for device in &list {
+        known.insert(device.clone(), list.clone());
+    }
+    if let Ok(encoded) = serde_json::to_vec(&known) {
+        let _ = store.save_setting(PEER_DEVICES, &encoded);
+    }
+}
+
 /// Ключи профилей собеседников: device в hex → ключ в hex.
 const PEER_PROFILE_KEYS: &str = "peer_profile_keys";
 /// Кому наш ключ профиля уже отправлен.
 const PROFILE_KEY_SENT: &str = "profile_key_sent";
+/// Устройства собеседников: устройство в hex → все устройства того же человека.
+///
+/// Ключ здесь — устройство, а не личность, потому что весь остальной код ядра
+/// адресует собеседника устройством: и беседы, и справочник, и правила
+/// приватности. Личность станет ключом на следующем шаге, вместе со схемой; до
+/// тех пор список лежит рядом с каждым известным устройством того же человека.
+const PEER_DEVICES: &str = "peer_devices";
 
 /// Свой юзернейм из локальной базы.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -1572,6 +1866,11 @@ async fn session(
     let mut entry = entry;
     let mut backoff = 1u64;
     let mut live = Live::default();
+    // Один канал на всю сессию, а не на каждое соединение: исход анонимной
+    // отправки может прийти уже после того, как основное соединение оборвалось
+    // и pump() успел вернуться. Канал переживает это молча — следующий заход
+    // pump() получит тот же приёмник и разберёт то, что накопилось.
+    let (anon_tx, mut anon_rx) = mpsc::unbounded_channel::<AnonFallback>();
     // Список маршрутов считается один раз на сессию: он меняется только вместе
     // с настройкой, а её смена и так пересоздаёт соединение.
     let routes = routes_for(url, store);
@@ -1588,7 +1887,7 @@ async fn session(
         let attempt_url = routes.get(route).map(String::as_str).unwrap_or(url);
         match connect_once(
             attempt_url, &credentials, &entry, store, &mut mls, sink, commands, &mut live,
-            &mut established,
+            &mut established, anon_tx.clone(), &mut anon_rx,
         )
         .await
         {
@@ -1738,6 +2037,10 @@ struct Greeting {
     ton_entry: bool,
     profiles: bool,
     decor: bool,
+    /// Умеет ли сервер отдавать наш собственный список устройств.
+    devices: bool,
+    /// Умеет ли сервер TICKET_REQUEST/SEND_ANON (ARCHITECTURE.md §7a).
+    sealed_sender: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1751,6 +2054,8 @@ async fn connect_once(
     commands: &mut mpsc::UnboundedReceiver<Command>,
     live: &mut Live,
     established: &mut bool,
+    anon_tx: mpsc::UnboundedSender<AnonFallback>,
+    anon_rx: &mut mpsc::UnboundedReceiver<AnonFallback>,
 ) -> Result<Outcome> {
     // Заголовки Cloudflare Access, если сборка их знает: без них закрытый
     // периметр пришлось бы держать выключенным (§10.1).
@@ -1777,9 +2082,11 @@ async fn connect_once(
         ton_entry: hello.entry.ton,
         profiles: hello.features.profiles,
         decor: hello.features.decor,
+        devices: hello.features.devices,
+        sealed_sender: hello.features.sealed_sender,
     };
 
-    pump(socket, store, mls, sink, commands, greeting, handshake, live).await
+    pump(socket, store, mls, sink, commands, greeting, handshake, live, anon_tx, anon_rx).await
 }
 
 async fn expect_hello(socket: &mut Socket, sink: &EventSink) -> Result<Hello> {
@@ -1904,6 +2211,7 @@ async fn handshake(
 }
 
 /// Рабочий цикл соединения: входящие кадры, команды UI и heartbeat.
+#[allow(clippy::too_many_arguments)]
 async fn pump(
     mut socket: Socket,
     store: &Store,
@@ -1913,6 +2221,8 @@ async fn pump(
     greeting: Greeting,
     handshake: Handshake,
     live: &mut Live,
+    anon_tx: mpsc::UnboundedSender<AnonFallback>,
+    anon_rx: &mut mpsc::UnboundedReceiver<AnonFallback>,
 ) -> Result<Outcome> {
     let authenticated = matches!(handshake, Handshake::Authenticated { .. });
     let device_id = match &handshake {
@@ -1963,6 +2273,25 @@ async fn pump(
             send(&mut socket, proto::pass_present_frame(&recipient, &pass)?).await?;
         }
 
+        // Спрашиваем свои же устройства. Ответ придёт отдельным кадром и сам
+        // разошлёт список собеседникам: до него мы не знаем, появилось ли
+        // где-то новое устройство и не отозвали ли старое.
+        //
+        // Только если сервер сказал, что умеет. Неизвестный код кадра он считает
+        // битым кадром и закрывает соединение — спросив наугад, мы отвалились бы
+        // сразу после входа на любом сервере старее этой строки. А свои узлы люди
+        // обновляют когда захотят.
+        if greeting.devices {
+            send(&mut socket, proto::device_list_frame()?).await?;
+        }
+
+        // Sealed sender: прогреваем пул заранее, а не в момент первой отправки —
+        // иначе первое сообщение после каждого подключения гарантированно
+        // уходило бы обычным путём, дожидаясь пачки.
+        if greeting.sealed_sender {
+            send(&mut socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
+        }
+
         // Выдаём пропуска тем, кому они полагаются, но ещё не достались.
         // Сверка идёт при каждом подключении, поэтому включение политики никого
         // не отрезает: знакомые получают пропуска тем же заходом. Это же чинит
@@ -2007,8 +2336,16 @@ async fn pump(
         // То, что не ушло из-за обрыва. Досылаем до всего остального: порядок
         // сообщений для человека важнее, чем свежесть.
         for waiting in std::mem::take(&mut live.outbox) {
-            if let Err(err) =
-                deliver(&mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox).await
+            let mut sealed = Some(SealedSenderCtx {
+                tickets: &mut live.tickets,
+                available: greeting.sealed_sender,
+                outcomes: anon_tx.clone(),
+            });
+            if let Err(err) = deliver(
+                &mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox,
+                sealed.as_mut(),
+            )
+            .await
             {
                 if is_transport(&err) {
                     return Ok(Outcome::Retry);
@@ -2163,7 +2500,11 @@ async fn pump(
                         continue;
                     }
                     if let Err(err) =
-                        on_frame(&mut socket, &data, store, mls, sink, &mut pending, live).await
+                        on_frame(
+                            &mut socket, &data, store, mls, sink, &mut pending, live,
+                            greeting.sealed_sender, &anon_tx,
+                        )
+                        .await
                     {
                         // Битый кадр — рвём соединение, а не гадаем.
                         sink(Event::Disconnected { reason: err.to_string() });
@@ -2198,11 +2539,14 @@ async fn pump(
                                 // повторить просьбу человек сможет.
                                 if for_both {
                                     if let Some(device) = peer {
+                                        // На все устройства: удаление,
+                                        // доехавшее до одного, оставляет
+                                        // сообщение на остальных, и «удалить у
+                                        // обоих» оказывается неправдой.
                                         let body = crate::access::delete_request(&[id.clone()]);
-                                        let waiting = PendingSend { device, body, stored: true };
-                                        if let Err(err) = deliver(
-                                            &mut socket, store, mls, sink, &mut pending, waiting,
-                                            &mut live.outbox,
+                                        if let Err(err) = deliver_to_person(
+                                            &mut socket, store, mls, sink, &mut pending,
+                                            device, body, true, &mut live.outbox, None,
                                         ).await {
                                             if is_transport(&err) {
                                                 return Ok(Outcome::Retry);
@@ -2223,12 +2567,11 @@ async fn pump(
                                 // исправлено, а повторить человек сможет.
                                 if for_both {
                                     if let Some(device) = peer {
+                                        // Как и удаление — на все устройства.
                                         let request = crate::access::edit_request(&id, &body);
-                                        let waiting =
-                                            PendingSend { device, body: request, stored: true };
-                                        if let Err(err) = deliver(
-                                            &mut socket, store, mls, sink, &mut pending, waiting,
-                                            &mut live.outbox,
+                                        if let Err(err) = deliver_to_person(
+                                            &mut socket, store, mls, sink, &mut pending,
+                                            device, request, true, &mut live.outbox, None,
                                         ).await {
                                             if is_transport(&err) {
                                                 return Ok(Outcome::Retry);
@@ -2559,6 +2902,29 @@ async fn pump(
                         send(&mut socket, proto::channel_frame(op::CHANNEL_ADMIN,
                             &serde_json::json!({ "channel": channel, "who": who, "admin": admin }))?).await?;
                     }
+                    Command::RevokeDevice { device } => {
+                        // Своё текущее сервер откажется отзывать, и правильно
+                        // сделает. Проверять это ещё и здесь незачем: два
+                        // места, решающих одно, расходятся, и расходится
+                        // обычно то, что снаружи.
+                        let credentials = match store.load_credentials() {
+                            Ok(credentials) => credentials,
+                            Err(err) => { fail(sink, "no_identity", &err.to_string()); continue; }
+                        };
+                        let Ok(target) = hex::decode(&device) else {
+                            fail(sink, "bad_device", "device must be hex");
+                            continue;
+                        };
+                        let message = crate::keys::revoke_device_message(
+                            &credentials.identity_pub(), &target,
+                        );
+                        let signature = credentials.identity.sign(&message);
+                        send(&mut socket, proto::json_frame(op::DEVICE_REVOKE,
+                            &serde_json::json!({
+                                "device": device,
+                                "signature": hex::encode(signature),
+                            }))?).await?;
+                    }
                     Command::RevokeOtherDevices => {
                         let credentials = match store.load_credentials() {
                             Ok(credentials) => credentials,
@@ -2647,6 +3013,11 @@ async fn pump(
                         } else if let Err(err) = on_send(
                             &mut socket, store, mls, sink, &mut pending, &recipient_device, body,
                             &mut live.outbox,
+                            Some(SealedSenderCtx {
+                                tickets: &mut live.tickets,
+                                available: greeting.sealed_sender,
+                                outcomes: anon_tx.clone(),
+                            }),
                         )
                         .await
                         {
@@ -2696,6 +3067,26 @@ async fn pump(
             _ = ticker.tick() => {
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
             }
+            // Анонимная отправка не удалась (см. spawn_anon_send) — единственный
+            // способ попробовать снова живёт здесь: только у pump есть открытый,
+            // аутентифицированный сокет. Своей копии в базе уже ничего не грозит,
+            // поэтому `deliver` заходит с `stored: true`.
+            Some(AnonFallback { device, body }) = anon_rx.recv() => {
+                let waiting = PendingSend { device, body, stored: true };
+                // `None`, а не новая попытка sealed sender: иначе застрявший Tor
+                // гонял бы одно и то же письмо между анонимной отправкой и этим
+                // же обработчиком бесконечно. Здесь письмо обязано уйти.
+                if let Err(err) = deliver(
+                    &mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox, None,
+                )
+                .await
+                {
+                    if is_transport(&err) {
+                        return Ok(Outcome::Retry);
+                    }
+                    fail(sink, "send", &err.to_string());
+                }
+            }
         }
     }
 }
@@ -2709,14 +3100,27 @@ async fn on_frame(
     sink: &EventSink,
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     live: &mut Live,
+    sealed_sender_available: bool,
+    anon_tx: &mpsc::UnboundedSender<AnonFallback>,
 ) -> Result<()> {
     let (opcode, body) = proto::split(data)?;
     match opcode {
         op::PONG => {}
         op::QUEUE_DONE => sink(Event::QueueDone),
-        op::ENVELOPE => on_envelope(socket, body, store, mls, sink, live).await?,
+        op::ENVELOPE => on_envelope(socket, body, store, mls, sink).await?,
         op::KEYPKG => {
-            on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox).await?
+            let sealed = Some(SealedSenderCtx {
+                tickets: &mut live.tickets,
+                available: sealed_sender_available,
+                outcomes: anon_tx.clone(),
+            });
+            on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox, sealed).await?
+        }
+        // Sealed sender: пачка билетов, заказанная encrypt_and_send. Спрятать
+        // их негде, кроме как здесь — TICKET_REQUEST не привязан к конкретной
+        // отправке, и ответ может прийти в любой момент между ними.
+        op::TICKET_GRANT => {
+            live.tickets.extend(proto::parse_ticket_grant(body)?);
         }
         op::PROFILE => {
             let profile: proto::ProfilePayload = proto::parse_json(body)?;
@@ -2776,10 +3180,18 @@ async fn on_frame(
             sink(Event::ChannelPost { report });
         }
         op::DEVICE_OK => {
+            // Одним кодом отвечают и на отзыв, и на запрос списка. Различаем по
+            // полю: у отзыва его нет, а придумывать второй код ради этого
+            // значило бы держать в протоколе лишнюю запись.
             let report: serde_json::Value = proto::parse_json(body)?;
-            sink(Event::DevicesRevoked {
-                count: report.get("revoked").and_then(|v| v.as_u64()).unwrap_or(0),
-            });
+            if report.get("devices").is_some() {
+                let own: proto::OwnDevices = proto::parse_json(body)?;
+                own_devices_arrived(socket, store, mls, sink, live, own).await?;
+            } else {
+                sink(Event::DevicesRevoked {
+                    count: report.get("revoked").and_then(|v| v.as_u64()).unwrap_or(0),
+                });
+            }
         }
         op::SUPPORT_OK => {
             // Как и ADMIN_OK: набор полей задаёт сервер, разбирать их здесь
@@ -2815,6 +3227,39 @@ async fn on_frame(
     Ok(())
 }
 
+/// Конверты, промахнувшиеся мимо расшифровки один раз, но ещё не подтверждённые.
+///
+/// Лежит на диске, а не в памяти сессии, — и это важнее, чем кажется. Мобильная
+/// ОС убивает процесс приложения между чем угодно: сворачиванием, нехваткой
+/// памяти, обычным «смахнул из списка задач». Если бы список первых промахов
+/// жил в `Live` (как было раньше), каждый новый процесс видел бы любой такой
+/// конверт впервые, и «первый промах прощается» превращалось бы в «прощается
+/// каждый раз» — письмо застревало бы в очереди сервера до истечения TTL,
+/// вообще никогда не подтверждаясь. Это и происходило на практике: живое
+/// устройство, подключавшееся регулярно, годами не разгружало один и тот же
+/// конверт (правило про ACK в ARCHITECTURE.md §7 «Правила»).
+const FAILED_ENVELOPES_KEY: &str = "failed_envelopes";
+/// Не даёт множеству расти без границ при потоке действительно неразбираемых
+/// конвертов — потолок спасает от накопления, а не заменяет TTL на сервере:
+/// конверт, который так и не прочитается, всё равно рано или поздно протухнет
+/// там сам.
+const MAX_TRACKED_FAILURES: usize = 500;
+
+fn load_failed_envelopes(store: &Store) -> std::collections::HashSet<String> {
+    store
+        .load_setting(FAILED_ENVELOPES_KEY)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_failed_envelopes(store: &Store, set: &std::collections::HashSet<String>) {
+    if let Ok(encoded) = serde_json::to_vec(set) {
+        let _ = store.save_setting(FAILED_ENVELOPES_KEY, &encoded);
+    }
+}
+
 /// Расшифровывает конверт и раскладывает по беседам.
 ///
 /// ACK отправляется в любом случае, даже если расшифровать не удалось: сервер
@@ -2826,7 +3271,6 @@ async fn on_envelope(
     store: &Store,
     mls: &mut Mls,
     sink: &EventSink,
-    live: &mut Live,
 ) -> Result<()> {
     let envelope = proto::parse_envelope(body)?;
 
@@ -2841,11 +3285,12 @@ async fn on_envelope(
             remember_stranger(store, sink, &device, "написал первым");
 
             store.set_conversation(&peer_device, &group_id)?;
+            let thread = adopt_thread(store, &peer_device, &group_id)?;
             persist(store, mls, sink);
             check_membership(mls, store, &group_id, sink);
             sink(Event::ConversationStarted {
                 peer_device: device,
-                conversation: hex::encode(&group_id),
+                conversation: hex::encode(&thread),
             });
         }
         Ok(Incoming::Message { group_id, sender_device, plaintext }) => {
@@ -2883,26 +3328,60 @@ async fn on_envelope(
                         }
                     }
                     Some(Control::Delete(ids)) => {
-                        let group = hex::encode(&group_id);
+                        // Нить, а не группа: сообщения лежат под нитью, и
+                        // просьба удалить, пришедшая со второго устройства
+                        // собеседника, обязана находить то же самое.
+                        let thread = store.thread_of(&group_id)?;
                         let mut removed = Vec::new();
                         for id in ids {
-                            if store.delete_message_by_id(&group_id, &id).unwrap_or(false) {
+                            if store.delete_message_by_id(&thread, &id).unwrap_or(false) {
                                 removed.push(id);
                             }
                         }
                         if !removed.is_empty() {
-                            sink(Event::Deleted { conversation: group, ids: removed });
+                            sink(Event::Deleted {
+                                conversation: hex::encode(&thread),
+                                ids: removed,
+                            });
                         }
                     }
                     Some(Control::Edit { id, body }) => {
-                        if store.update_message_by_id(&group_id, &id, body.as_bytes())
+                        let thread = store.thread_of(&group_id)?;
+                        if store.update_message_by_id(&thread, &id, body.as_bytes())
                             .unwrap_or(false)
                         {
                             sink(Event::Edited {
-                                conversation: hex::encode(&group_id),
+                                conversation: hex::encode(&thread),
                                 id,
                                 body,
                             });
+                        }
+                    }
+                    Some(Control::Devices(announcement)) => {
+                        /*
+                          Список устройств собеседника.
+
+                          `accept` берёт устройство, от которого пришло
+                          сообщение, и требует, чтобы оно нашлось в самом
+                          списке: иначе собеседник объявляет список, в котором
+                          его нет, и переписка целиком уезжает к тем, кто в нём
+                          перечислен. Строки с несошедшейся подписью `accept`
+                          выбрасывает молча.
+
+                          Пока список только запоминается. Веером по нему
+                          отправка пойдёт следующим шагом — сейчас доставка
+                          по-прежнему идёт на то устройство, с которого пришло
+                          сообщение.
+                        */
+                        if let Ok(from) = <[u8; KEY_LEN]>::try_from(sender_device.as_slice()) {
+                            if let Some((identity, devices)) = announcement.accept(&from) {
+                                remember_peer_devices(store, &devices);
+                                let _ = store.remember_peer_identity(&identity, &devices);
+                                // Беседы с разными устройствами одного человека
+                                // сводятся в одну нить прямо здесь: узнали, что
+                                // это один человек, — значит и переписка одна.
+                                let _ = merge_threads(store, &identity);
+                            }
                         }
                     }
                     Some(Control::Typing(active)) => {
@@ -2946,12 +3425,15 @@ async fn on_envelope(
 
             remember_stranger(store, sink, &device, "написал первым");
 
-            store.insert_message(&envelope.id, &group_id, false, envelope.server_ts as i64, &plaintext)?;
+            // Под нить, а не под группу: у собеседника с телефоном и ноутбуком
+            // групп две, и переписка иначе легла бы в две разные ленты.
+            let thread = store.thread_of(&group_id)?;
+            store.insert_message(&envelope.id, &thread, false, envelope.server_ts as i64, &plaintext)?;
             persist(store, mls, sink);
             check_membership(mls, store, &group_id, sink);
             sink(Event::Message {
                 envelope_id: hex::encode(envelope.id),
-                conversation: hex::encode(&group_id),
+                conversation: hex::encode(&thread),
                 sender_device: device,
                 server_ts: envelope.server_ts,
                 body: String::from_utf8_lossy(&plaintext).into_owned(),
@@ -2972,9 +3454,21 @@ async fn on_envelope(
             // следующем подключении оно разберётся. Но и держать его вечно
             // нельзя — конверт, не читаемый дважды, не прочитается уже никогда,
             // а очередь занимать будет до истечения срока.
-            if live.failed.insert(envelope.id) {
+            //
+            // «Первый раз» проверяется по диску, а не по памяти этого запуска:
+            // приложение может быть убито и перезапущено между двумя попытками,
+            // и тогда в памяти это снова выглядело бы как первый промах —
+            // конверт прощался бы бесконечно и никогда не подтверждался.
+            let id_hex = hex::encode(envelope.id);
+            let mut seen_failing = load_failed_envelopes(store);
+            if seen_failing.insert(id_hex.clone()) {
+                if seen_failing.len() <= MAX_TRACKED_FAILURES {
+                    save_failed_envelopes(store, &seen_failing);
+                }
                 return Ok(());
             }
+            seen_failing.remove(&id_hex);
+            save_failed_envelopes(store, &seen_failing);
             sink(Event::Failed {
                 code: "undecryptable".into(),
                 message: "сообщение не удалось прочитать — снято с очереди".into(),
@@ -3140,6 +3634,7 @@ async fn request_invite(
 }
 
 /// Приехал KeyPackage собеседника — заводим группу и досылаем отложенное.
+#[allow(clippy::too_many_arguments)]
 async fn on_key_package(
     socket: &mut Socket,
     body: &[u8],
@@ -3148,6 +3643,7 @@ async fn on_key_package(
     sink: &EventSink,
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     outbox: &mut Outbox,
+    mut sealed: Option<SealedSenderCtx<'_>>,
 ) -> Result<()> {
     let (client_ref, package) = proto::parse_keypkg(body)?;
     let Some(claim) = pending.remove(&client_ref) else {
@@ -3182,12 +3678,13 @@ async fn on_key_package(
         }
     };
     store.set_conversation(&waiting.device, &group_id)?;
+    let thread = adopt_thread(store, &waiting.device, &group_id)?;
     persist(store, mls, sink);
     // Отправитель узнаёт идентификатор беседы тем же событием, что и
     // получатель: интерфейсу иначе некуда класть исходящие сообщения.
     sink(Event::ConversationStarted {
         peer_device: hex::encode(waiting.device),
-        conversation: hex::encode(&group_id),
+        conversation: hex::encode(&thread),
     });
 
     // Сначала приглашение, потом само сообщение — порядок важен: без Welcome
@@ -3196,7 +3693,88 @@ async fn on_key_package(
         outbox.push(waiting);
         return Err(err);
     }
-    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await
+    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed.as_mut()).await
+}
+
+/// Все устройства человека, которому адресовано сообщение.
+///
+/// Названное устройство остаётся в списке всегда — даже если о личности мы
+/// ничего не знаем: тогда список из него одного, и отправка ведёт себя ровно
+/// как прежде.
+///
+/// Порядок не случайный: сначала те, с кем беседа уже заведена. Своя копия
+/// сообщения ложится в базу первой отправкой, а заведение новой беседы —
+/// это поход за KeyPackage и ответ отдельным кадром. Поставь мы такое
+/// устройство первым, копия ждала бы ответа сервера, и при отказе человек
+/// увидел бы, что его сообщение исчезло.
+fn recipients(store: &Store, device: &[u8; KEY_LEN]) -> Vec<[u8; KEY_LEN]> {
+    let Ok(Some(identity)) = store.identity_of_device(device) else {
+        return vec![*device];
+    };
+    let known: std::collections::BTreeMap<String, Vec<String>> = store
+        .load_setting(PEER_DEVICES)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    let Some(list) = known.get(&hex::encode(device)) else {
+        return vec![*device];
+    };
+
+    let mut devices: Vec<[u8; KEY_LEN]> = Vec::new();
+    for entry in list {
+        let Ok(raw) = hex::decode(entry) else { continue };
+        let Ok(key): std::result::Result<[u8; KEY_LEN], _> = raw.clone().try_into() else {
+            continue;
+        };
+        // Список хранится под каждым устройством человека, но принадлежать он
+        // мог другому: сверяем личность, а не верим ключу настройки.
+        if store.identity_of_device(&raw).ok().flatten().as_deref() != Some(&identity) {
+            continue;
+        }
+        devices.push(key);
+    }
+    if !devices.contains(device) {
+        devices.push(*device);
+    }
+    devices.sort_by_key(|entry| {
+        matches!(store.conversation_with(entry), Ok(None) | Err(_))
+    });
+    devices
+}
+
+/// Отправка человеку, а не устройству.
+///
+/// Одно сообщение — по конверту на каждое его устройство. Иначе оно уходит
+/// только туда, где человек был активнее, и до телефона, лежащего в кармане,
+/// не доезжает никогда: выглядит это не как потеря, а как «ему не пришло».
+///
+/// Своя копия в базу ложится **один раз** — с первой отправки. Остальные
+/// помечены как уже сохранённые, иначе одно написанное сообщение появилось бы
+/// в собственной переписке столько раз, сколько у собеседника устройств.
+#[allow(clippy::too_many_arguments)]
+async fn deliver_to_person(
+    socket: &mut Socket,
+    store: &Store,
+    mls: &mut Mls,
+    sink: &EventSink,
+    pending: &mut HashMap<[u8; ID_LEN], Claim>,
+    device: [u8; KEY_LEN],
+    body: String,
+    stored: bool,
+    outbox: &mut Outbox,
+    mut sealed: Option<SealedSenderCtx<'_>>,
+) -> Result<()> {
+    let devices = recipients(store, &device);
+    let mut saved = stored;
+    for target in devices {
+        let waiting = PendingSend { device: target, body: body.clone(), stored: saved };
+        // Реborrow на каждый круг: у человека может быть несколько устройств,
+        // и пул билетов/канал исхода у них общий на всё сообщение целиком.
+        deliver(socket, store, mls, sink, pending, waiting, outbox, sealed.as_mut()).await?;
+        saved = true;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3209,11 +3787,12 @@ async fn on_send(
     recipient_device: &str,
     body: String,
     outbox: &mut Outbox,
+    sealed: Option<SealedSenderCtx<'_>>,
 ) -> Result<()> {
     let device = hex::decode(recipient_device).map_err(|_| CoreError::BadFrame)?;
     let device: [u8; KEY_LEN] = device.try_into().map_err(|_| CoreError::BadKeyLength)?;
 
-    deliver(socket, store, mls, sink, pending, PendingSend { device, body, stored: false }, outbox).await
+    deliver_to_person(socket, store, mls, sink, pending, device, body, false, outbox, sealed).await
 }
 
 /// Общий путь для новой отправки и для досылки из ящика.
@@ -3221,6 +3800,7 @@ async fn on_send(
 /// При обрыве сообщение возвращается в ящик, а не теряется: до этой правки
 /// неудачная отправка оставляла человеку одну строку в журнале ошибок и
 /// собственную копию в базе, которой собеседник никогда не увидит.
+#[allow(clippy::too_many_arguments)]
 async fn deliver(
     socket: &mut Socket,
     store: &Store,
@@ -3229,14 +3809,19 @@ async fn deliver(
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     waiting: PendingSend,
     outbox: &mut Outbox,
+    sealed: Option<&mut SealedSenderCtx<'_>>,
 ) -> Result<()> {
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
     }
     match store.conversation_with(&waiting.device)? {
-        Some(group_id) => encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox).await,
+        Some(group_id) => {
+            encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed).await
+        }
         None => {
             // Беседы ещё нет: просим KeyPackage и досылаем сообщение по ответу.
+            // Билет здесь никак не поможет — сообщение уйдёт уже потом, из
+            // on_key_package, своим отдельным заходом за sealed sender.
             let mut client_ref = [0u8; ID_LEN];
             client_ref.copy_from_slice(&random_bytes(ID_LEN));
             let device = waiting.device;
@@ -3252,6 +3837,7 @@ async fn deliver(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn encrypt_and_send(
     socket: &mut Socket,
     store: &Store,
@@ -3260,6 +3846,7 @@ async fn encrypt_and_send(
     group_id: &[u8],
     waiting: PendingSend,
     outbox: &mut Outbox,
+    sealed: Option<&mut SealedSenderCtx<'_>>,
 ) -> Result<()> {
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
@@ -3284,7 +3871,29 @@ async fn encrypt_and_send(
     // Своя копия ложится в базу открытым текстом — но в запечатанной записи.
     // При досылке из ящика она там уже есть: повторять нельзя.
     if !waiting.stored {
-        store.insert_message(&client_ref, group_id, true, now_millis(), body.as_bytes())?;
+        let thread = store.thread_of(group_id)?;
+        store.insert_message(&client_ref, &thread, true, now_millis(), body.as_bytes())?;
+    }
+
+    // Sealed sender: билет и Tor-вход есть — пробуем анонимно, отдельным
+    // соединением, которое к этой сессии не привязать. Не удастся — узнаем
+    // об этом каналом исхода, а не отсюда: пока пишем этот кадр, ответа с
+    // другого соединения ещё нет и быть не может.
+    if let Some(ctx) = sealed {
+        if ctx.available {
+            if ctx.tickets.len() < TICKET_LOW_WATERMARK {
+                // Не ждём ответа — пачка доедет по этому же соединению позже,
+                // а сообщение не должно стоять из-за пополнения запаса.
+                let _ = send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await;
+            }
+            if let (Some(route), Some(ticket)) = (pick_onion_route(store), ctx.tickets.pop_front()) {
+                spawn_anon_send(
+                    route, client_ref, ticket, *device, ciphertext, waiting.body,
+                    sink.clone(), ctx.outcomes.clone(),
+                );
+                return Ok(());
+            }
+        }
     }
 
     if let Err(err) =
@@ -3296,6 +3905,131 @@ async fn encrypt_and_send(
         return Err(err);
     }
     Ok(())
+}
+
+/// Один из известных onion-входов — специально для sealed sender.
+///
+/// Обычное соединение выбирает путь один раз на сессию и держится его, пока
+/// он открывается (см. `routes_for`/`session`); анонимной отправке это не
+/// подходит: если она год за годом ходит тем же путём, что и основное
+/// соединение, наблюдатель сети свяжет их по одному этому факту, даже не
+/// заглядывая внутрь протокола. Поэтому вход выбирается заново на каждую
+/// попытку и намеренно не через `session`-маршрутизацию.
+///
+/// Только Tor: спрятать отправителя от сервера, но не от сети, — не та защита,
+/// которую sealed sender обещает (ARCHITECTURE.md §7a). Список онион-входов
+/// почти никогда не пуст — три запасных зашиты в сборку, — но défensive-`None`
+/// оставлен на случай, если это когда-нибудь перестанет быть так.
+fn pick_onion_route(store: &Store) -> Option<String> {
+    let hosts = load_onion_hosts(store);
+    if hosts.is_empty() {
+        return None;
+    }
+    let index = (random_bytes(1)[0] as usize) % hosts.len();
+    hosts.into_iter().nth(index)
+}
+
+/// Один анонимный SEND: своё, отдельное соединение, которое никогда не
+/// проходит AUTH — открывает его, ждёт HELLO, тратит билет и закрывается.
+///
+/// Не различает исход отказа: просроченный билет, неверная подпись, отказ
+/// сервера, оборвавшийся Tor-circuit — для вызывающего все они означают одно
+/// и то же, «анонимно не вышло», и ведут к одному и тому же лечению — письмо
+/// уходит обычным путём через уже открытую, аутентифицированную сессию. Разбор
+/// причины не добавляет здесь ничего: подделывающему билет не должно быть
+/// виднее, что именно он не угадал (это же верно и на сервере, см.
+/// `valanium-server/src/auth/tickets.ts`), а настоящему отказу — что билет,
+/// что обрыв связи — одинаково нужно просто попробовать иначе.
+async fn send_anon_once(
+    route: String,
+    client_ref: [u8; ID_LEN],
+    ticket: [u8; proto::TICKET_LEN],
+    device: [u8; KEY_LEN],
+    ciphertext: Vec<u8>,
+) -> Result<[u8; ID_LEN]> {
+    let mut socket = open_socket(&route).await?;
+
+    loop {
+        let message = socket
+            .next()
+            .await
+            .ok_or_else(|| CoreError::Transport("closed before hello".into()))?
+            .map_err(|err| CoreError::Transport(err.to_string()))?;
+        if let Message::Binary(data) = message {
+            let (opcode, _) = proto::split(&data)?;
+            if opcode == op::HELLO {
+                break;
+            }
+        }
+    }
+
+    send(
+        &mut socket,
+        proto::send_anon_frame(&client_ref, &ticket, &device, DEFAULT_TTL_SEC, &ciphertext),
+    )
+    .await?;
+
+    let envelope_id = loop {
+        let message = socket
+            .next()
+            .await
+            .ok_or_else(|| CoreError::Transport("closed before response".into()))?
+            .map_err(|err| CoreError::Transport(err.to_string()))?;
+        let Message::Binary(data) = message else { continue };
+        let (opcode, body) = proto::split(&data)?;
+        match opcode {
+            op::SEND_OK => {
+                let (_, envelope_id) = proto::parse_send_ok(body)?;
+                break envelope_id;
+            }
+            op::ERROR => {
+                let err: ServerError = proto::parse_json(body)?;
+                return Err(CoreError::Rejected(err.code));
+            }
+            // Постороннее (например, чужой PONG) — соединение только на это и
+            // заведено, но неизвестный кадр рвать его не должен.
+            _ => continue,
+        }
+    };
+    let _ = socket.close(None).await;
+    Ok(envelope_id)
+}
+
+/// Заводит `send_anon_once` отдельной задачей и не ждёт её здесь: `pump` не
+/// должен стоять всё это время, особенно если путь идёт через Tor.
+///
+/// Успех сообщает о себе сам — `sink` можно звать из любой задачи. Неудача
+/// возвращается каналом: только у `pump` есть открытый, аутентифицированный
+/// сокет, через который есть чем попробовать снова.
+#[allow(clippy::too_many_arguments)]
+fn spawn_anon_send(
+    route: String,
+    client_ref: [u8; ID_LEN],
+    ticket: [u8; proto::TICKET_LEN],
+    device: [u8; KEY_LEN],
+    ciphertext: Vec<u8>,
+    body: String,
+    sink: EventSink,
+    fallback: mpsc::UnboundedSender<AnonFallback>,
+) {
+    tokio::spawn(async move {
+        let attempt = tokio::time::timeout(
+            ANON_SEND_TIMEOUT,
+            send_anon_once(route, client_ref, ticket, device, ciphertext),
+        )
+        .await;
+        match attempt {
+            Ok(Ok(envelope_id)) => sink(Event::Accepted {
+                client_ref: hex::encode(client_ref),
+                envelope_id: hex::encode(envelope_id),
+            }),
+            // Таймаут и ошибка отправки лечатся одинаково: сообщить pump,
+            // что нужен обычный путь.
+            _ => {
+                let _ = fallback.send(AnonFallback { device, body });
+            }
+        }
+    });
 }
 
 /// Служебный кадр MLS (Welcome, коммит) едет тем же конвертом, что и сообщения.
@@ -3413,17 +4147,14 @@ mod tests {
         let routes = routes_for(AUTO_ROUTE_URL, &store.0);
 
         assert!(routes[0].ends_with("valanium.com/ws"), "первым — обычный relay");
-        assert!(routes[1].contains("/multihop/"), "вторым — два relay");
         assert!(
-            routes[2..].iter().all(|route| route.contains(".onion")),
-            "Tor обязан быть последним: {routes:?}",
+            routes[1..].iter().all(|route| route.contains(".onion")),
+            "после relay идут только живые Tor-входы: {routes:?}",
         );
-        // Все запасные входы на месте: с одним падение единственного Tor
-        // выключало бы onion-режим целиком, хотя рядом стоит живой узел.
-        //
-        // Считается от длины списка, а не числом: добавление узла в сеть — это
-        // обычное дело, и ронять на нём тест значит приучать его чинить не
-        // глядя.
+        assert!(
+            routes.iter().all(|route| !route.contains("/multihop/")),
+            "Auto не должен пробовать недоступный второй relay: {routes:?}",
+        );
         assert_eq!(
             routes.len(),
             DIRECT_ROUTES.len() + FALLBACK_ONION.len(),
@@ -3480,6 +4211,18 @@ mod tests {
         let junk_sig = onion::sign(&key, &junk, 101);
         remember_onion_hosts(&store.0, &junk, &junk_sig, 101, &public, &sink);
         assert_eq!(routes_for(ONION_ROUTE_URL, &store.0)[0], format!("ws://{fresh}/ws"));
+    }
+
+    #[test]
+    fn retired_hosts_from_a_previous_release_are_not_retried() {
+        let store = TempStore::new("retired-onion");
+        let old = RETIRED_ONION_HOSTS.to_vec();
+        store
+            .0
+            .save_setting(ONION_HOSTS_KEY, &serde_json::to_vec(&old).unwrap())
+            .unwrap();
+
+        assert_eq!(routes_for(ONION_ROUTE_URL, &store.0), FALLBACK_ONION);
     }
 
     #[test]
@@ -3561,6 +4304,36 @@ mod tests {
         );
     }
 
+    /// Регресс: список первых промахов обязан лежать на диске, а не в памяти
+    /// одного запуска.
+    ///
+    /// Раньше он жил в `Live`, которая создаётся заново при каждом старте
+    /// приложения. Мобильная ОС убивает процесс когда захочет, и «первый
+    /// промах прощается» превращалось в «прощается каждый раз»: конверт
+    /// приезжал бы снова и снова, каждый раз выглядел бы новым, и ACK для
+    /// него не ушёл бы никогда. Тест не гоняет реальный `on_envelope` (там
+    /// нужны живые `Mls`/`Socket`), а бьёт по свойству напрямую: то, что
+    /// сохранено, обязано читаться заново независимо от того, есть ли рядом
+    /// хоть какое-то состояние в памяти — ровно это и означает «пережить
+    /// перезапуск процесса».
+    #[test]
+    fn failed_envelopes_survive_a_fresh_read() {
+        let store = TempStore::new("failed-envelopes");
+        assert!(load_failed_envelopes(&store.0).is_empty(), "начинаем с пустого");
+
+        let mut first_run = load_failed_envelopes(&store.0);
+        assert!(first_run.insert("aa".repeat(16)), "первый промах — это первая вставка");
+        save_failed_envelopes(&store.0, &first_run);
+
+        // "Новый процесс" — здесь буквально свежий вызов load, без всякой
+        // связи с переменной first_run: только то, что реально легло на диск.
+        let second_run = load_failed_envelopes(&store.0);
+        assert!(
+            second_run.contains(&"aa".repeat(16)),
+            "второй заход обязан увидеть тот же конверт, что и первый",
+        );
+    }
+
     /// Сбой MLS не должен выглядеть как обрыв связи.
     ///
     /// Раньше и то и другое было `Transport`, а по нему клиент решает
@@ -3612,5 +4385,82 @@ mod tests {
             ensure_pin_allows(&store.0, &"bb".repeat(32)),
             Err(CoreError::Encoding(_))
         ));
+    }
+
+    // --- веер по устройствам --------------------------------------------------
+
+    #[test]
+    fn an_unknown_person_is_still_one_recipient() {
+        // Пока о личности собеседника ничего не известно, отправка обязана
+        // вести себя ровно как прежде: одно устройство, один конверт. Иначе
+        // первое же сообщение незнакомцу уходило бы в никуда.
+        let temp = TempStore::new("fanout-unknown");
+        let device = [1u8; KEY_LEN];
+        assert_eq!(recipients(&temp.0, &device), vec![device]);
+    }
+
+    #[test]
+    fn every_device_of_a_person_gets_a_copy() {
+        /*
+          То, ради чего весь этап. Сообщение, ушедшее на одно устройство, до
+          телефона, лежащего в кармане, не доезжает никогда — и выглядит это не
+          как потеря, а как «ему не пришло».
+        */
+        let temp = TempStore::new("fanout-all");
+        let store = &temp.0;
+        let identity = [9u8; KEY_LEN];
+        let phone = [1u8; KEY_LEN];
+        let laptop = [2u8; KEY_LEN];
+        store.remember_peer_identity(&identity, &[phone, laptop]).unwrap();
+        remember_peer_devices(store, &[phone, laptop]);
+
+        let mut got = recipients(store, &phone);
+        got.sort();
+        assert_eq!(got, vec![phone, laptop]);
+        // С какого бы устройства человек ни написал, отвечаем на все.
+        let mut back = recipients(store, &laptop);
+        back.sort();
+        assert_eq!(back, vec![phone, laptop]);
+    }
+
+    #[test]
+    fn devices_with_a_conversation_come_first() {
+        /*
+          Своя копия сообщения ложится в базу первой отправкой. Заведение новой
+          беседы — это поход за KeyPackage и ответ отдельным кадром; поставь мы
+          такое устройство первым, копия ждала бы ответа сервера, а при отказе
+          человек увидел бы, что его сообщение исчезло.
+        */
+        let temp = TempStore::new("fanout-order");
+        let store = &temp.0;
+        let identity = [9u8; KEY_LEN];
+        let fresh = [1u8; KEY_LEN];
+        let known = [2u8; KEY_LEN];
+        store.remember_peer_identity(&identity, &[fresh, known]).unwrap();
+        remember_peer_devices(store, &[fresh, known]);
+        store.set_conversation(&known, b"group").unwrap();
+
+        assert_eq!(recipients(store, &fresh).first(), Some(&known),
+            "первым обязано идти устройство с уже заведённой беседой");
+    }
+
+    #[test]
+    fn a_list_belonging_to_someone_else_is_ignored() {
+        /*
+          Список лежит под каждым устройством человека, но принадлежать он мог
+          другому. Личность сверяется отдельно, а не берётся на веру из ключа
+          настройки: иначе чужое устройство получало бы копии переписки — и это
+          ровно тот исход, ради недопущения которого объявления и подписываются.
+        */
+        let temp = TempStore::new("fanout-foreign");
+        let store = &temp.0;
+        let mine = [1u8; KEY_LEN];
+        let stranger = [2u8; KEY_LEN];
+        // Список говорит, что это одна личность, а записи о личностях — нет.
+        remember_peer_devices(store, &[mine, stranger]);
+        store.remember_peer_identity(&[9u8; KEY_LEN], &[mine]).unwrap();
+        store.remember_peer_identity(&[8u8; KEY_LEN], &[stranger]).unwrap();
+
+        assert_eq!(recipients(store, &mine), vec![mine], "чужое устройство просочилось");
     }
 }

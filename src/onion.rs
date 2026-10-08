@@ -52,7 +52,7 @@ const DOMAIN: &[u8] = b"valanium-onion-hosts-v1";
 /// живёт офлайн, у владельца, и на серверы не попадает никогда.
 ///
 /// Пустая строка = проверять нечем, списки не принимаются. См. шапку.
-pub const PUBLIC_KEY: &str = "";
+pub const PUBLIC_KEY: &str = "f6c40d8aae9f5abe327535ae22c5cb30f4d9120890990461e1c8f0197a3453be";
 
 /// То, что подписывает владелец.
 ///
@@ -176,5 +176,49 @@ mod tests {
             assert!(!verify(signature, &list, 1, &public));
         }
         assert!(!verify("00", &[], 1, &public), "пустой список принимать нечего");
+    }
+
+    /// Список, который на самом деле отдаёт боевой сервер, и подпись, которая
+    /// на самом деле лежит в его `.env`.
+    ///
+    /// Тест не про арифметику подписи — её проверяют соседи. Он про то, что
+    /// выложенное **сходится**: адреса, их порядок, время выпуска и зашитый в
+    /// сборку открытый ключ. Разойдись любое из четырёх, клиент молча остался
+    /// бы на запасных адресах, а выглядело бы это как «Onion почему-то не
+    /// пользуется нашими входами» — то есть никак.
+    const LIVE_HOSTS: [&str; 3] = [
+        "ho2sji2l42eqclnmu6gtbbg5nvtrz5jvpr5nqkehbstshcmspsnfkiyd.onion",
+        "anb5vtfi4ztizycwj6nnclo75kpjb4mhz4wmc6ax3zwy2xlz3slx26yd.onion",
+        "5amnu2di3yhtpqcpbcoaabfbzotw3giap2lvoe5bi5juflzhzdrsq4ad.onion",
+    ];
+    const LIVE_SIG: &str = "8b8e50762cce3e8b64ced74d0b7d28673a8a50ff9b33a7064fc6c7ea19902d439151e375d8266835b2479addc2679433db358993a4f53a017ef68df1c0c4e704";
+    const LIVE_ISSUED_AT: i64 = 1788725765;
+
+    #[test]
+    fn the_published_list_verifies_against_the_built_in_key() {
+        assert!(!PUBLIC_KEY.is_empty(), "ключ не вписан — списки не принимаются вовсе");
+        assert!(
+            verify(LIVE_SIG, &hosts(&LIVE_HOSTS), LIVE_ISSUED_AT, PUBLIC_KEY),
+            "выложенная подпись не сходится с зашитым ключом",
+        );
+    }
+
+    #[test]
+    fn the_order_of_the_published_hosts_is_part_of_the_signature() {
+        // Порядок входит в подписанные байты. Переставить адреса в `.env` и
+        // забыть переподписать — самая вероятная будущая ошибка, и стоить она
+        // будет тихо отключившихся входов.
+        let mut shuffled = hosts(&LIVE_HOSTS);
+        shuffled.swap(0, 2);
+        assert!(!verify(LIVE_SIG, &shuffled, LIVE_ISSUED_AT, PUBLIC_KEY));
+    }
+
+    #[test]
+    fn a_published_list_with_an_extra_host_is_refused() {
+        // Сервер, дописавший свой адрес в список, — ровно то, от чего подпись
+        // и защищает: подписать новый список он не может, ключ офлайн.
+        let mut extended = hosts(&LIVE_HOSTS);
+        extended.push("evilevilevilevilevilevilevilevilevilevilevilevi.onion".into());
+        assert!(!verify(LIVE_SIG, &extended, LIVE_ISSUED_AT, PUBLIC_KEY));
     }
 }
