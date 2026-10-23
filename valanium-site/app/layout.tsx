@@ -95,7 +95,7 @@ const STRUCTURED_DATA = {
       name: 'Valanium',
       url: 'https://valanium.com/',
       logo: 'https://valanium.com/og.png',
-      sameAs: ['https://github.com/ifny75/valanium'],
+      sameAs: ['https://github.com/ifny75/valanium_main'],
     },
   ],
 };

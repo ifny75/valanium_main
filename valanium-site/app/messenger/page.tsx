@@ -219,7 +219,7 @@ export default function Home() {
 
       <footer className="site-footer shell">
         <span>© 2026 Valanium · Public Beta · AGPL-3.0</span>
-        <nav aria-label="Служебные ссылки"><a href="/status">Статус сети</a><a href="/privacy">Политика конфиденциальности</a><a href="/terms">Соглашение</a><SupportDialog /><a href="https://github.com/ifny75/valanium" target="_blank" rel="noreferrer noopener">GitHub</a></nav>
+        <nav aria-label="Служебные ссылки"><a href="/status">Статус сети</a><a href="/privacy">Политика конфиденциальности</a><a href="/terms">Соглашение</a><SupportDialog /><a href="https://github.com/ifny75/valanium_main" target="_blank" rel="noreferrer noopener">GitHub</a></nav>
       </footer>
     </main>
   );

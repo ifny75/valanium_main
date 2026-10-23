@@ -253,7 +253,7 @@ export default function Home() {
           <a href="/privacy">Политика конфиденциальности</a>
           <a href="/terms">Соглашение</a>
           <SupportDialog />
-          <a href="https://github.com/ifny75/valanium" target="_blank" rel="noreferrer noopener">GitHub</a>
+          <a href="https://github.com/ifny75/valanium_main" target="_blank" rel="noreferrer noopener">GitHub</a>
         </nav>
       </footer>
     </main>

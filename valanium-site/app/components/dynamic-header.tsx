@@ -96,7 +96,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
         <div className="nav-actions">
           <a className="status-mobile-link" href="/status">Статус</a>
           <SupportDialog variant="header" />
-          <a className="github-link" href="https://github.com/ifny75/valanium" target="_blank" rel="noreferrer noopener">
+          <a className="github-link" href="https://github.com/ifny75/valanium_main" target="_blank" rel="noreferrer noopener">
             <GithubIcon /><b>GitHub</b>
           </a>
         </div>
