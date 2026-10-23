@@ -8,6 +8,7 @@
 //! здесь нет и не должно быть — его пришлось бы биндить дважды.
 
 pub mod access;
+mod anon_queue;
 pub mod channels;
 pub mod client;
 pub mod command;

@@ -137,13 +137,13 @@ impl Default for Privacy {
             calls: Rule::new(Scope::Approved),
             link_previews: Rule::new(Scope::Nobody),
 
-            presence: Rule::new(Scope::Contacts),
+            presence: Rule::new(Scope::Nobody),
             // Время последнего появления — самая охотно собираемая метаданная,
             // и по ней восстанавливают распорядок дня. По умолчанию — никому.
             last_seen: Rule::new(Scope::Nobody),
-            read_receipts: Rule::new(Scope::Everyone),
-            typing: Rule::new(Scope::Contacts),
-            voice_recording_hint: Rule::new(Scope::Contacts),
+            read_receipts: Rule::new(Scope::Nobody),
+            typing: Rule::new(Scope::Nobody),
+            voice_recording_hint: Rule::new(Scope::Nobody),
 
             // Юзернейма по умолчанию нет вовсе; когда человек его заводит, он
             // тем самым и соглашается быть находимым.
@@ -243,6 +243,9 @@ mod tests {
     fn defaults_are_the_private_ones() {
         let privacy = Privacy::default();
         assert_eq!(privacy.last_seen.scope, Scope::Nobody, "последняя активность — никому");
+        for name in ["presence", "read_receipts", "typing", "voice_recording_hint"] {
+            assert_eq!(privacy.rule(name).unwrap().scope, Scope::Nobody, "{name}");
+        }
         assert_eq!(privacy.link_previews.scope, Scope::Nobody, "превью ссылок — внешний запрос");
         for name in ["media", "voice", "files", "calls"] {
             assert_eq!(

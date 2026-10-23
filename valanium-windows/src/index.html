@@ -196,9 +196,9 @@
         <h1 id="route-title">Valanium server</h1>
         <p id="route-text">Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.</p>
         <div class="route-list">
-          <button class="route-option active" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
+          <button class="route-option" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
           <button class="route-option hidden" type="button" data-transport="multihop" hidden disabled><img src="assets/onboarding/route-multihop.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Multihop</b><small id="route-multi-text">Multi-hop временно выключен</small></span><u>✓</u></button>
-          <button class="route-option" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
+          <button class="route-option active" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
         </div>
       </div>
       <div class="onboarding-art" aria-hidden="true"><canvas id="route-shader" class="onboarding-shader"></canvas><img src="assets/svg/spy.svg" alt="" /></div>
@@ -216,7 +216,7 @@
           <input id="handle" type="text" placeholder="username" autocomplete="username" maxlength="20" />
           <label for="entry-password" id="entry-password-label">Пароль восстановления</label>
           <input id="entry-password" type="password" placeholder="Минимум 10 символов" autocomplete="new-password" minlength="10" />
-          <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" /> Только Tor — без перехода на Relay</label>
+          <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" checked /> Только Tor — без перехода на Relay</label>
           <p class="registration-privacy-note">Tor скрывает сетевой адрес от сервера, но не гарантирует абсолютную анонимность. Не используйте знакомый юзернейм, если не хотите связывать аккаунты.</p>
           <button class="ghost-button" type="button" id="entry-install-tor">Установить Tor (загрузка по HTTPS)</button>
           <button class="onboarding-submit" type="submit" id="entry-submit">Зарегистрироваться</button>

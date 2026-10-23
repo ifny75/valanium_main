@@ -897,7 +897,14 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void configurePreferences() {
         SharedPreferences preferences = getSharedPreferences("appearance", MODE_PRIVATE);
         appearancePreferences = preferences;
-        if ("multihop".equals(preferences.getString(TRANSPORT_KEY, "auto"))) {
+        // Migrate the former implicit Auto default once; keep an explicit Relay choice.
+        if (!preferences.getBoolean("onion_default_v1", false)) {
+            String previous = preferences.getString(TRANSPORT_KEY, "auto");
+            SharedPreferences.Editor migration = preferences.edit().putBoolean("onion_default_v1", true);
+            if ("auto".equals(previous)) migration.putString(TRANSPORT_KEY, "onion");
+            migration.apply();
+        }
+        if ("multihop".equals(preferences.getString(TRANSPORT_KEY, "onion"))) {
             preferences.edit().putString(TRANSPORT_KEY, "basic").remove(HOP_KEY).apply();
             migratedMultiHop = true;
         }
@@ -1055,7 +1062,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String serverUrl() {
         SharedPreferences preferences = appearancePreferences == null
                 ? getSharedPreferences("appearance", MODE_PRIVATE) : appearancePreferences;
-        String mode = preferences.getString(TRANSPORT_KEY, "auto");
+        String mode = preferences.getString(TRANSPORT_KEY, "onion");
         if ("multihop".equals(mode)) return SERVER_BASIC_URL;
         if ("onion".equals(mode)) return SERVER_ONION_URL;
         if ("basic".equals(mode)) return SERVER_BASIC_URL;
@@ -1063,7 +1070,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void connectSelectedRoute() {
-        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) {
+        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) {
             prewarmTor();
         } else {
             submit(Commands.connect(serverUrl()));
@@ -1072,9 +1079,9 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void configureTransport() {
         RoutingView routes = findViewById(R.id.transport_mode);
-        routes.setMode(appearancePreferences.getString(TRANSPORT_KEY, "auto"));
+        routes.setMode(appearancePreferences.getString(TRANSPORT_KEY, "onion"));
         routes.setOnModeChangedListener(mode -> {
-            if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
+            if (mode.equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
             appearancePreferences.edit().putString(TRANSPORT_KEY, mode).apply();
             showHopCard();
             renderConnectionOverview();
@@ -1096,7 +1103,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         TextView state = findViewById(R.id.tor_circuit_state);
         LinearLayout host = findViewById(R.id.tor_circuit_nodes);
         host.removeAllViews();
-        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) {
+        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) {
             state.setText(R.string.tor_circuit_unused);
             host.addView(torCircuitNode("—", getString(R.string.transport_onion_title),
                     getString(R.string.tor_node_waiting_detail)));
@@ -1192,7 +1199,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void renderConnectionOverview() {
         TextView state = findViewById(R.id.connection_state);
         if (state == null || appearancePreferences == null) return;
-        String mode = appearancePreferences.getString(TRANSPORT_KEY, "auto");
+        String mode = appearancePreferences.getString(TRANSPORT_KEY, "onion");
         String route;
         String privacy;
         if ("basic".equals(mode)) {
@@ -1251,7 +1258,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      */
     private void prewarmTor() {
         if (torWarming) return;
-        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
+        if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
         torWarming = true;
         // Состояние Tor — рядом с базой, а не в общем кэше: среди него
         // guards.json, то есть список входных узлов этого человека.
@@ -1270,7 +1277,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             final boolean ready = socks != null && !socks.isEmpty();
             torWarming = false;
             runOnUiThread(() -> {
-                if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))) return;
+                if (!"onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) return;
                 if (ready && !myDeviceHex.isEmpty() && foregroundAuthorized) {
                     submit(Commands.connect(SERVER_ONION_URL));
                 }
@@ -1300,7 +1307,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void showHopCard() {
         View card = findViewById(R.id.hop_card);
         if (card == null) return;
-        boolean multihop = "multihop".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"));
+        boolean multihop = "multihop".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"));
         card.setVisibility(multihop ? View.VISIBLE : View.GONE);
         if (multihop) markChosenHop();
     }
@@ -2418,7 +2425,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void checkForUpdates(boolean manual) {
-        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "auto"))
+        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))
                 || (myDeviceHex.isEmpty() && ((Switch) findViewById(R.id.entry_tor_only)).isChecked())) {
             if (manual) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
             return;
@@ -2882,6 +2889,10 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void onFailed(JSONObject event) {
         String code = event.optString("code");
+        if ("anonymous_delivery_waiting".equals(code)) {
+            toast(event.optString("message"));
+            return;
+        }
         // Transport failures must allow retry too, not only invalid names/invites.
         if (screenEntry.getVisibility() == View.VISIBLE) {
             entrySubmit.setEnabled(true);
@@ -5874,9 +5885,11 @@ public final class MainActivity extends Activity implements Events.Listener {
      * сообщения непрозрачно, тип вложения виден только здесь.
      */
     private boolean permits(String key, String peer) {
-        if (privacy == null || peer == null) return true;
+        boolean activitySignal = "presence".equals(key) || "last_seen".equals(key)
+                || "typing".equals(key) || "read_receipts".equals(key) || "voice_recording_hint".equals(key);
+        if (privacy == null || peer == null) return !activitySignal;
         JSONObject rule = privacy.optJSONObject(key);
-        if (rule == null) return true;
+        if (rule == null) return !activitySignal;
         if (contains(rule.optJSONArray("deny"), peer)) return false;
         if (contains(rule.optJSONArray("allow"), peer)) return true;
 

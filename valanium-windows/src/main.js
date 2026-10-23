@@ -18,7 +18,7 @@ const HOP_NODES = Object.freeze(["alpha", "beta", "gamma"]);
 /* Cloudflare направляет Relay на один из доступных узлов hop1 и hop3. */
 function serverUrl() {
   const mode = preferences.transport;
-  return SERVER_URLS[mode] || SERVER_URLS.basic;
+  return SERVER_URLS[mode] || SERVER_URLS.onion;
 }
 // Версия не хранится здесь копией: её отдаёт ядро приложения (Cargo.toml).
 // Хардкод в окне уже расходился с собранным бинарём, и клиент вечно
@@ -300,7 +300,7 @@ const ONBOARDING_LANGUAGE = "valanium.onboarding.language";
 const ONBOARDING_COMPLETE = "valanium.onboarding.complete";
 let onboardingLanguage = localStorage.getItem(ONBOARDING_LANGUAGE)
   || (navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en");
-let chosenTransport = "auto";
+let chosenTransport = "onion";
 
 const onboardingCopy = {
   ru: {
@@ -2502,6 +2502,7 @@ const handlers = {
   },
 
   failed(event) {
+    if (event.code === "anonymous_delivery_waiting") { toast(event.message); return; }
     if (event.code === "pin_not_pending" || (event.code === "storage" && state.pendingPinAction)) {
       state.pendingPinAction = null;
       toast("Новый ключ не подтверждён: действие остановлено");
@@ -2822,7 +2823,7 @@ $("avatar-file").addEventListener("change", () => {
 
 const settingsPage = $("settings-page");
 const preferenceDefaults = {
-  transport: "auto",
+  transport: "onion",
   theme: "dark",
   accent: "#7b2cff",
   accentText: "#ffffff",
@@ -2861,6 +2862,11 @@ const ROUTE_MIGRATION_NOTICE = "valanium.route-migrated-from-multihop";
 function loadPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem("valanium.preferences") || "{}");
+    if (!saved.onionDefaultVersion) {
+      if (!saved.transport || saved.transport === "auto") saved.transport = "onion";
+      saved.onionDefaultVersion = 1;
+      localStorage.setItem("valanium.preferences", JSON.stringify(saved));
+    }
     if (saved.transport === "multihop") {
       saved.transport = "basic";
       delete saved.multihopNode;
@@ -3818,7 +3824,7 @@ function ensureOnionize() {
   if (onionizeStartup) return onionizeStartup;
   onionizeStartup = (async () => {
     const state = await invoke("onionize_status");
-    if (!state?.installed) await invoke("onionize_install");
+    if (!state?.installed) throw new Error("Tor не установлен. Установите его в настройках подключения; загрузка требует обычного HTTPS-соединения.");
     return invoke("onionize_start");
   })().finally(() => { onionizeStartup = null; });
   return onionizeStartup;
@@ -5700,7 +5706,7 @@ $("channel-composer").addEventListener("submit", (event) => {
 function permits(ruleName, peer) {
   const rule = privacy?.[ruleName];
   // Правила ещё не пришли из ядра — не мешаем показывать переписку.
-  if (!rule || !peer) return true;
+  if (!rule || !peer) return !["presence", "last_seen", "typing", "read_receipts", "voice_recording_hint"].includes(ruleName);
   if (rule.deny.includes(peer)) return false;
   if (rule.allow.includes(peer)) return true;
 

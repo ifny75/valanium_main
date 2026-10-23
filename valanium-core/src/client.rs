@@ -4,7 +4,7 @@
 //! шифротекста: он оперирует открытым текстом, а граница доверия проходит
 //! ровно здесь.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -87,7 +87,7 @@ const TICKET_LOW_WATERMARK: usize = 3;
 const TICKET_BATCH_SIZE: u8 = 10;
 /// Сколько ждать анонимную отправку целиком — открытие соединения (иногда
 /// через Tor), HELLO, ответ. Дольше — не тише, а просто медленнее: сообщение
-/// уйдёт обычным путём, как только это станет ясно.
+/// останется в запечатанной очереди до следующей анонимной попытки.
 const ANON_SEND_TIMEOUT: Duration = Duration::from_secs(25);
 /// Внутренний адрес, который UI передаёт для автоматического выбора пути.
 /// Он никогда не попадает в DNS или URL-парсер: `session` разворачивает его в
@@ -288,24 +288,31 @@ struct Live {
     /// Sealed sender (ARCHITECTURE.md §7a): непотраченные билеты. Живут в
     /// `Live`, а не в `pump`, по той же причине, что и `outbox`, — переживают
     /// переподключение. Свой короткий срок годности билеты и так несут сами;
-    /// протухший просто не пройдёт на сервере, и это не отличить от того,
-    /// что сообщение отправилось обычным путём.
+    /// протухший билет приводит к новой анонимной попытке, без downgrade.
     tickets: VecDeque<[u8; proto::TICKET_LEN]>,
+    anon_inflight: HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
+    anon_retry_at: Option<tokio::time::Instant>,
+    require_anonymous: bool,
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        for task in self.anon_inflight.values() { task.abort(); }
+    }
 }
 
 /// Анонимная отправка не удалась (билетов не было / Tor недоступен / сервер
 /// отказал / соединение оборвалось) — сообщить об этом некому, кроме `pump`:
-/// только он держит основной, уже аутентифицированный сокет, через который
-/// можно попробовать снова.
+/// он обновляет запечатанную очередь и планирует следующую onion-попытку.
 ///
 /// Канал, а не прямой вызов: отправка идёт своим, отдельным соединением и
 /// своей задачей — она не может занимать `&mut Socket`/`&mut Mls` основного
 /// соединения, они уже заняты циклом `pump`. Канал создаётся в `session()` и
 /// переживает переподключение, поэтому исход, пришедший уже после разрыва
 /// связи, не потеряется — дождётся следующего захода `pump`.
-struct AnonFallback {
-    device: [u8; KEY_LEN],
-    body: String,
+struct AnonOutcome {
+    client_ref: [u8; ID_LEN],
+    result: std::result::Result<[u8; ID_LEN], ()>,
 }
 
 /// Что нужно `encrypt_and_send`, чтобы попробовать отправить письмо в обход
@@ -317,11 +324,13 @@ struct AnonFallback {
 /// deliver → encrypt_and_send` реborrow'ом, без клонирования состояния.
 struct SealedSenderCtx<'a> {
     tickets: &'a mut VecDeque<[u8; proto::TICKET_LEN]>,
+    inflight: &'a mut HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
+    required: bool,
     /// Сказал ли сервер в HELLO, что умеет TICKET_REQUEST/SEND_ANON. Кадр,
     /// которого сервер не знает, — это для него битый кадр и разрыв связи, а
     /// не отказ, поэтому спрашивать наугад нельзя (см. `Greeting`).
     available: bool,
-    outcomes: mpsc::UnboundedSender<AnonFallback>,
+    outcomes: mpsc::UnboundedSender<AnonOutcome>,
 }
 
 /// Обрыв связи, а не отказ сервера. Такую ошибку лечит переподключение, и
@@ -485,7 +494,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
         Command::AccessGet => sink(access_event(store)),
 
         Command::ClearConversation { conversation } => match hex::decode(conversation) {
-            Ok(id) => match store.delete_conversation(&id) {
+            Ok(id) => match crate::anon_queue::cancel_thread(store, &id).and_then(|_| store.delete_conversation(&id)) {
                 Ok(_) => sink(Event::ConversationCleared {
                     conversation: conversation.clone(),
                     forgotten: false,
@@ -496,7 +505,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
         },
 
         Command::DeleteConversation { conversation } => match hex::decode(conversation) {
-            Ok(id) => match store.forget_conversation(&id) {
+            Ok(id) => match crate::anon_queue::cancel_thread(store, &id).and_then(|_| store.forget_conversation(&id)) {
                 Ok(()) => sink(Event::ConversationCleared {
                     conversation: conversation.clone(),
                     forgotten: true,
@@ -856,6 +865,9 @@ fn edit_locally(
     body: &str,
 ) -> Result<Option<[u8; KEY_LEN]>> {
     let group = hex::decode(conversation).map_err(|_| CoreError::BadFrame)?;
+    if crate::anon_queue::contains_message(store, &group, id)? {
+        return Err(CoreError::Rejected("Дождитесь отправки или удалите сообщение из очереди перед изменением".into()));
+    }
     if store.update_message_by_id(&group, id, body.as_bytes())? {
         sink(Event::Edited {
             conversation: conversation.to_owned(),
@@ -876,6 +888,7 @@ fn delete_locally(
     id: &str,
 ) -> Result<Option<[u8; KEY_LEN]>> {
     let group = hex::decode(conversation).map_err(|_| CoreError::BadFrame)?;
+    crate::anon_queue::cancel_message(store, &group, id)?;
     if store.delete_message_by_id(&group, id)? {
         sink(Event::Deleted {
             conversation: conversation.to_owned(),
@@ -1866,11 +1879,12 @@ async fn session(
     let mut entry = entry;
     let mut backoff = 1u64;
     let mut live = Live::default();
+    live.require_anonymous = url == ONION_ROUTE_URL || url.contains(".onion");
     // Один канал на всю сессию, а не на каждое соединение: исход анонимной
     // отправки может прийти уже после того, как основное соединение оборвалось
     // и pump() успел вернуться. Канал переживает это молча — следующий заход
     // pump() получит тот же приёмник и разберёт то, что накопилось.
-    let (anon_tx, mut anon_rx) = mpsc::unbounded_channel::<AnonFallback>();
+    let (anon_tx, mut anon_rx) = mpsc::unbounded_channel::<AnonOutcome>();
     // Список маршрутов считается один раз на сессию: он меняется только вместе
     // с настройкой, а её смена и так пересоздаёт соединение.
     let routes = routes_for(url, store);
@@ -2054,8 +2068,8 @@ async fn connect_once(
     commands: &mut mpsc::UnboundedReceiver<Command>,
     live: &mut Live,
     established: &mut bool,
-    anon_tx: mpsc::UnboundedSender<AnonFallback>,
-    anon_rx: &mut mpsc::UnboundedReceiver<AnonFallback>,
+    anon_tx: mpsc::UnboundedSender<AnonOutcome>,
+    anon_rx: &mut mpsc::UnboundedReceiver<AnonOutcome>,
 ) -> Result<Outcome> {
     // Заголовки Cloudflare Access, если сборка их знает: без них закрытый
     // периметр пришлось бы держать выключенным (§10.1).
@@ -2221,8 +2235,8 @@ async fn pump(
     greeting: Greeting,
     handshake: Handshake,
     live: &mut Live,
-    anon_tx: mpsc::UnboundedSender<AnonFallback>,
-    anon_rx: &mut mpsc::UnboundedReceiver<AnonFallback>,
+    anon_tx: mpsc::UnboundedSender<AnonOutcome>,
+    anon_rx: &mut mpsc::UnboundedReceiver<AnonOutcome>,
 ) -> Result<Outcome> {
     let authenticated = matches!(handshake, Handshake::Authenticated { .. });
     let device_id = match &handshake {
@@ -2286,8 +2300,7 @@ async fn pump(
         }
 
         // Sealed sender: прогреваем пул заранее, а не в момент первой отправки —
-        // иначе первое сообщение после каждого подключения гарантированно
-        // уходило бы обычным путём, дожидаясь пачки.
+        // иначе первое сообщение после каждого подключения ждало бы пачки.
         if greeting.sealed_sender {
             send(&mut socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
         }
@@ -2338,6 +2351,8 @@ async fn pump(
         for waiting in std::mem::take(&mut live.outbox) {
             let mut sealed = Some(SealedSenderCtx {
                 tickets: &mut live.tickets,
+                inflight: &mut live.anon_inflight,
+                required: live.require_anonymous,
                 available: greeting.sealed_sender,
                 outcomes: anon_tx.clone(),
             });
@@ -2517,6 +2532,9 @@ async fn pump(
 
                 // Локальные команды отвечают одинаково, подключены мы или нет.
                 if handle_local(&command, store, sink) {
+                    if matches!(command, Command::ClearConversation { .. } | Command::DeleteConversation { .. }) {
+                        cancel_removed_anonymous(store, live)?;
+                    }
                     continue;
                 }
 
@@ -2534,6 +2552,7 @@ async fn pump(
                     Command::DeleteMessage { conversation, id, for_both } => {
                         match delete_locally(store, sink, &conversation, &id) {
                             Ok(peer) => {
+                                cancel_removed_anonymous(store, live)?;
                                 // Просьба уходит после удаления у себя: если
                                 // связь оборвётся, у нас оно уже исчезло, а
                                 // повторить просьбу человек сможет.
@@ -3015,6 +3034,8 @@ async fn pump(
                             &mut live.outbox,
                             Some(SealedSenderCtx {
                                 tickets: &mut live.tickets,
+                inflight: &mut live.anon_inflight,
+                required: live.require_anonymous,
                                 available: greeting.sealed_sender,
                                 outcomes: anon_tx.clone(),
                             }),
@@ -3066,26 +3087,28 @@ async fn pump(
             }
             _ = ticker.tick() => {
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
-            }
-            // Анонимная отправка не удалась (см. spawn_anon_send) — единственный
-            // способ попробовать снова живёт здесь: только у pump есть открытый,
-            // аутентифицированный сокет. Своей копии в базе уже ничего не грозит,
-            // поэтому `deliver` заходит с `stored: true`.
-            Some(AnonFallback { device, body }) = anon_rx.recv() => {
-                let waiting = PendingSend { device, body, stored: true };
-                // `None`, а не новая попытка sealed sender: иначе застрявший Tor
-                // гонял бы одно и то же письмо между анонимной отправкой и этим
-                // же обработчиком бесконечно. Здесь письмо обязано уйти.
-                if let Err(err) = deliver(
-                    &mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox, None,
-                )
-                .await
-                {
-                    if is_transport(&err) {
-                        return Ok(Outcome::Retry);
-                    }
-                    fail(sink, "send", &err.to_string());
+                if authenticated {
+                    flush_anonymous(&mut socket, store, live, greeting.sealed_sender, &anon_tx).await?;
                 }
+            }
+            // An anonymous outcome is never a reason to send via AUTH.
+            Some(AnonOutcome { client_ref, result }) = anon_rx.recv() => {
+                live.anon_inflight.remove(&client_ref);
+                match result {
+                    Ok(envelope_id) => {
+                        crate::anon_queue::acknowledge(store, &client_ref)?;
+                        sink(Event::Accepted {
+                            client_ref: hex::encode(client_ref),
+                            envelope_id: hex::encode(envelope_id),
+                        });
+                    }
+                    Err(()) => {
+                        live.anon_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+                        fail(sink, "anonymous_delivery_waiting",
+                            "Анонимная доставка ожидает Tor. Сообщение сохранено; обычная отправка отключена.");
+                    }
+                }
+                flush_anonymous(&mut socket, store, live, greeting.sealed_sender, &anon_tx).await?;
             }
         }
     }
@@ -3101,7 +3124,7 @@ async fn on_frame(
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     live: &mut Live,
     sealed_sender_available: bool,
-    anon_tx: &mpsc::UnboundedSender<AnonFallback>,
+    anon_tx: &mpsc::UnboundedSender<AnonOutcome>,
 ) -> Result<()> {
     let (opcode, body) = proto::split(data)?;
     match opcode {
@@ -3111,6 +3134,8 @@ async fn on_frame(
         op::KEYPKG => {
             let sealed = Some(SealedSenderCtx {
                 tickets: &mut live.tickets,
+                inflight: &mut live.anon_inflight,
+                required: live.require_anonymous,
                 available: sealed_sender_available,
                 outcomes: anon_tx.clone(),
             });
@@ -3121,6 +3146,7 @@ async fn on_frame(
         // отправке, и ответ может прийти в любой момент между ними.
         op::TICKET_GRANT => {
             live.tickets.extend(proto::parse_ticket_grant(body)?);
+            flush_anonymous(socket, store, live, sealed_sender_available, anon_tx).await?;
         }
         op::PROFILE => {
             let profile: proto::ProfilePayload = proto::parse_json(body)?;
@@ -3864,7 +3890,8 @@ async fn encrypt_and_send(
         }
         Err(other) => return Err(other),
     };
-    persist(store, mls, sink);
+    // Never expose ciphertext whose ratchet state was not saved.
+    store.save_mls(&mls.signer_public(), &mls.snapshot())?;
 
     let mut client_ref = [0u8; ID_LEN];
     client_ref.copy_from_slice(&random_bytes(ID_LEN));
@@ -3875,25 +3902,31 @@ async fn encrypt_and_send(
         store.insert_message(&client_ref, &thread, true, now_millis(), body.as_bytes())?;
     }
 
-    // Sealed sender: билет и Tor-вход есть — пробуем анонимно, отдельным
-    // соединением, которое к этой сессии не привязать. Не удастся — узнаем
-    // об этом каналом исхода, а не отсюда: пока пишем этот кадр, ответа с
-    // другого соединения ещё нет и быть не может.
-    if let Some(ctx) = sealed {
+    // Persist before starting any network task. A retry uses the same MLS
+    // ciphertext and client ref, including across a process restart.
+    if let Some(ctx) = sealed.filter(|ctx| ctx.required) {
+        crate::anon_queue::enqueue(store, crate::anon_queue::Envelope {
+            client_ref, device: *device, ciphertext: ciphertext.clone(),
+            conversation: store.thread_of(group_id)?,
+            logical_id: serde_json::from_str::<serde_json::Value>(body).ok()
+                .and_then(|value| value.get("id").and_then(|id| id.as_str()).map(str::to_owned)),
+        })?;
         if ctx.available {
             if ctx.tickets.len() < TICKET_LOW_WATERMARK {
-                // Не ждём ответа — пачка доедет по этому же соединению позже,
-                // а сообщение не должно стоять из-за пополнения запаса.
-                let _ = send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await;
+                send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
             }
-            if let (Some(route), Some(ticket)) = (pick_onion_route(store), ctx.tickets.pop_front()) {
-                spawn_anon_send(
-                    route, client_ref, ticket, *device, ciphertext, waiting.body,
-                    sink.clone(), ctx.outcomes.clone(),
-                );
-                return Ok(());
+            if ctx.inflight.len() < 4 {
+                if let (Some(route), Some(ticket)) = (pick_onion_route(store), ctx.tickets.pop_front()) {
+                    let task = spawn_anon_send(route, client_ref, ticket, *device, ciphertext, ctx.outcomes.clone());
+                    ctx.inflight.insert(client_ref, task);
+                }
             }
         }
+        if !ctx.inflight.contains_key(&client_ref) {
+            fail(sink, "anonymous_delivery_waiting",
+                "Сообщение сохранено и ждёт анонимной доставки. Перехода на обычный канал не будет.");
+        }
+        return Ok(());
     }
 
     if let Err(err) =
@@ -3934,8 +3967,7 @@ fn pick_onion_route(store: &Store) -> Option<String> {
 ///
 /// Не различает исход отказа: просроченный билет, неверная подпись, отказ
 /// сервера, оборвавшийся Tor-circuit — для вызывающего все они означают одно
-/// и то же, «анонимно не вышло», и ведут к одному и тому же лечению — письмо
-/// уходит обычным путём через уже открытую, аутентифицированную сессию. Разбор
+/// и то же: письмо остаётся в очереди для следующей onion-попытки. Разбор
 /// причины не добавляет здесь ничего: подделывающему билет не должно быть
 /// виднее, что именно он не угадал (это же верно и на сервере, см.
 /// `valanium-server/src/auth/tickets.ts`), а настоящему отказу — что билет,
@@ -3947,6 +3979,12 @@ async fn send_anon_once(
     device: [u8; KEY_LEN],
     ciphertext: Vec<u8>,
 ) -> Result<[u8; ID_LEN]> {
+    // A sealed-sender task may only open an onion destination, even if a
+    // future caller accidentally passes a normal WebSocket address.
+    let request = crate::edge::ws_request(&route)?;
+    if !request.uri().host().is_some_and(valid_onion_host) {
+        return Err(CoreError::Transport("анонимная доставка требует onion-маршрут".into()));
+    }
     let mut socket = open_socket(&route).await?;
 
     loop {
@@ -3999,8 +4037,7 @@ async fn send_anon_once(
 /// должен стоять всё это время, особенно если путь идёт через Tor.
 ///
 /// Успех сообщает о себе сам — `sink` можно звать из любой задачи. Неудача
-/// возвращается каналом: только у `pump` есть открытый, аутентифицированный
-/// сокет, через который есть чем попробовать снова.
+/// возвращается каналом: pump обновляет очередь только после результата.
 #[allow(clippy::too_many_arguments)]
 fn spawn_anon_send(
     route: String,
@@ -4008,28 +4045,55 @@ fn spawn_anon_send(
     ticket: [u8; proto::TICKET_LEN],
     device: [u8; KEY_LEN],
     ciphertext: Vec<u8>,
-    body: String,
-    sink: EventSink,
-    fallback: mpsc::UnboundedSender<AnonFallback>,
-) {
+    outcomes: mpsc::UnboundedSender<AnonOutcome>,
+) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
-        let attempt = tokio::time::timeout(
+        let result = match tokio::time::timeout(
             ANON_SEND_TIMEOUT,
             send_anon_once(route, client_ref, ticket, device, ciphertext),
-        )
-        .await;
-        match attempt {
-            Ok(Ok(envelope_id)) => sink(Event::Accepted {
-                client_ref: hex::encode(client_ref),
-                envelope_id: hex::encode(envelope_id),
-            }),
-            // Таймаут и ошибка отправки лечатся одинаково: сообщить pump,
-            // что нужен обычный путь.
-            _ => {
-                let _ = fallback.send(AnonFallback { device, body });
-            }
-        }
+        ).await {
+            Ok(Ok(envelope_id)) => Ok(envelope_id),
+            _ => Err(()),
+        };
+        let _ = outcomes.send(AnonOutcome { client_ref, result });
+    }).abort_handle()
+}
+
+fn cancel_removed_anonymous(store: &Store, live: &mut Live) -> Result<()> {
+    if live.anon_inflight.is_empty() { return Ok(()); }
+    let queued: HashSet<_> = crate::anon_queue::load(store)?.iter().map(|item| item.client_ref).collect();
+    live.anon_inflight.retain(|id, task| {
+        if queued.contains(id) { true } else { task.abort(); false }
     });
+    Ok(())
+}
+
+/// Retry only through anonymous onion connections; keep storage until ACK.
+async fn flush_anonymous(
+    socket: &mut Socket,
+    store: &Store,
+    live: &mut Live,
+    available: bool,
+    outcomes: &mpsc::UnboundedSender<AnonOutcome>,
+) -> Result<()> {
+    if !available || live.anon_retry_at.is_some_and(|at| at > tokio::time::Instant::now()) {
+        return Ok(());
+    }
+    let queue = crate::anon_queue::load(store)?;
+    if queue.is_empty() { return Ok(()); }
+    if live.tickets.len() < TICKET_LOW_WATERMARK {
+        send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
+    }
+    for envelope in queue {
+        if live.anon_inflight.len() >= 4 { break; }
+        if live.anon_inflight.contains_key(&envelope.client_ref) { continue; }
+        if let (Some(route), Some(ticket)) = (pick_onion_route(store), live.tickets.pop_front()) {
+            let task = spawn_anon_send(route, envelope.client_ref, ticket, envelope.device,
+                envelope.ciphertext, outcomes.clone());
+            live.anon_inflight.insert(envelope.client_ref, task);
+        } else { break; }
+    }
+    Ok(())
 }
 
 /// Служебный кадр MLS (Welcome, коммит) едет тем же конвертом, что и сообщения.
@@ -4060,6 +4124,76 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn private_message_waits_for_tickets_without_authenticated_send() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store = TempStore::new("anonymous-wait");
+        let alice_key = crate::keys::SecretKey::generate();
+        let bob_key = crate::keys::SecretKey::generate();
+        let mut alice = Mls::create(&alice_key).unwrap();
+        let bob = Mls::create(&bob_key).unwrap();
+        let package = bob.key_packages(1).unwrap().remove(0);
+        let (group, _) = alice.start_conversation(&package, &bob_key.public()).unwrap();
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let transport: Box<dyn NetworkStream> = Box::new(pipe);
+        let mut socket = WebSocketStream::from_raw_socket(
+            MaybeTlsStream::Plain(transport), Role::Client, None).await;
+        let mut observer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+        let sink: EventSink = Arc::new(|_| {});
+        let mut outbox = Vec::new();
+        let mut tickets = VecDeque::new();
+        let mut inflight = HashMap::new();
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut ctx = SealedSenderCtx { tickets: &mut tickets, inflight: &mut inflight,
+            available: true, required: true, outcomes: tx };
+        encrypt_and_send(&mut socket, &store.0, &mut alice, &sink, &group,
+            PendingSend { device: bob_key.public(), body: "hello".into(), stored: false },
+            &mut outbox, Some(&mut ctx)).await.unwrap();
+        let frame = observer.next().await.unwrap().unwrap().into_data();
+        assert_eq!(proto::split(&frame).unwrap().0, op::TICKET_REQUEST);
+        assert!(tokio::time::timeout(Duration::from_millis(30), observer.next()).await.is_err(),
+            "authenticated socket must not receive SEND without tickets");
+        let queued = crate::anon_queue::load(&store.0).unwrap();
+        assert_eq!(queued.len(), 1);
+        assert!(!queued[0].ciphertext.windows(5).any(|part| part == b"hello"));
+        assert!(outbox.is_empty());
+    }
+
+    #[tokio::test]
+    async fn anonymous_failure_preserves_durable_envelope() {
+        let store = TempStore::new("anonymous-failure");
+        let envelope = crate::anon_queue::Envelope {
+            client_ref: [1; ID_LEN], device: [2; KEY_LEN], ciphertext: vec![3; 256],
+            conversation: vec![4], logical_id: None,
+        };
+        crate::anon_queue::enqueue(&store.0, envelope.clone()).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        spawn_anon_send("not-a-url".into(), envelope.client_ref, [0; proto::TICKET_LEN],
+            envelope.device, envelope.ciphertext.clone(), tx);
+        let outcome = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
+        assert!(outcome.result.is_err());
+        assert_eq!(outcome.client_ref, envelope.client_ref);
+        assert_eq!(crate::anon_queue::load(&store.0).unwrap(), vec![envelope]);
+    }
+
+    #[tokio::test]
+    async fn anonymous_delivery_rejects_a_direct_route_before_network_io() {
+        let result = send_anon_once("wss://example.com/ws".into(), [1; ID_LEN],
+            [0; proto::TICKET_LEN], [2; KEY_LEN], vec![3]).await;
+        assert!(matches!(result, Err(CoreError::Transport(reason)) if reason.contains("onion")));
+    }
+
+    #[tokio::test]
+    async fn clearing_a_queue_aborts_its_active_task() {
+        let store = TempStore::new("anonymous-cancel");
+        let task = tokio::spawn(std::future::pending::<()>());
+        let mut live = Live::default();
+        live.anon_inflight.insert([1; ID_LEN], task.abort_handle());
+        cancel_removed_anonymous(&store.0, &mut live).unwrap();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(live.anon_inflight.is_empty());
+    }
 
     /// Отдельная база на каждый тест: настройки маршрутов лежат именно в ней.
     struct TempStore(Store, String);
