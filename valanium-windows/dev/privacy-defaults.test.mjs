@@ -4,6 +4,31 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 
 const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+
+test('delivery labels distinguish local save, queue, server ACK and peer receipt', () => {
+  const context = vm.createContext({});
+  const start = source.indexOf('function deliveryLabel(');
+  const end = source.indexOf('\nfunction buildMessage(', start);
+  vm.runInContext(source.slice(start, end), context);
+  assert.equal(vm.runInContext('deliveryLabel(undefined)', context), 'сохраняется…');
+  assert.equal(vm.runInContext('deliveryLabel("queued")', context), 'в очереди · ожидает Tor');
+  assert.equal(vm.runInContext('deliveryLabel("accepted")', context), '✓ принято сервером');
+  assert.equal(vm.runInContext('deliveryLabel("delivered")', context), '✓✓ доставлено');
+  assert.equal(vm.runInContext('deliveryLabel("unknown")', context), 'статус неизвестен');
+});
+
+test('late key verification results cannot confirm a different open conversation', () => {
+  const start = source.indexOf('  verification_checked(event) {');
+  const end = source.indexOf('\n  },', start);
+  const method = 'function ' + source.slice(start, end + 4).trim().replace(/,$/, '');
+  const sent = [];
+  const context = vm.createContext({ state: { current: 'bob' }, toast() {}, submit: event => sent.push(event) });
+  vm.runInContext(method, context);
+  vm.runInContext('verification_checked({peer_device:"mallory",verified:true})', context);
+  assert.equal(sent.length, 0);
+  vm.runInContext('verification_checked({peer_device:"bob",verified:true})', context);
+  assert.equal(sent[0].peer_device, 'bob');
+});
 function functionText(name, next) {
   return source.slice(source.indexOf(`function ${name}(`), source.indexOf(next, source.indexOf(`function ${name}(`)));
 }

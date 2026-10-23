@@ -48,6 +48,7 @@ pub enum Command {
     /// Что сверить с собеседником по другому каналу, чтобы убедиться, что
     /// между вами никого нет. Работает и без подключения.
     Verify { peer_device: String },
+    VerificationConfirm { peer_device: String, proof: String },
     /// Получить публичный профиль по OBS-коду или 64-символьному device key.
     ProfileGet { query: String },
     /// Показать код восстановления. Работает без подключения.
@@ -313,6 +314,8 @@ pub enum Event {
     InvoicePaid { reference: String },
     /// Сообщение принято сервером: `client_ref` — тот, что был в Send.
     Accepted { client_ref: String, envelope_id: String },
+    /// Evidence for one logical message; accepted != delivered to a peer.
+    Delivery { conversation: String, id: String, state: String },
     /// Диалог заведён: собеседник принял приглашение либо позвал нас сам.
     /// `peer_device` уже проверен — за ним стоит именно этот ключ устройства.
     ConversationStarted { peer_device: String, conversation: String },
@@ -451,10 +454,13 @@ pub enum Event {
     Verification {
         peer_device: String,
         safety_number: String,
+        qr_payload: String,
+        verified: bool,
         epoch: u64,
         epoch_code: String,
         members: Vec<String>,
     },
+    VerificationChecked { peer_device: String, verified: bool },
     /// Криптография сошлась, но состояние выглядит подозрительно. Это не сбой,
     /// а возможная атака: показывать заметно и не прятать в общий лог ошибок.
     Anomaly { kind: String, detail: String },
@@ -503,6 +509,7 @@ pub struct HistoryItem {
     pub outgoing: bool,
     pub created_at: i64,
     pub body: String,
+    pub delivery: Option<String>,
 }
 
 #[cfg(test)]

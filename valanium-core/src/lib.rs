@@ -13,6 +13,7 @@ pub mod channels;
 pub mod client;
 pub mod command;
 pub mod crypto;
+mod delivery;
 pub mod directory;
 pub mod edge;
 pub mod error;

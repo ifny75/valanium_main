@@ -321,6 +321,11 @@
           <button id="verification-close" class="icon-button" type="button" aria-label="Закрыть"><span class="ui-icon icon-cross"></span></button>
           <div><span>Код пары устройств</span><code id="safety-number">—</code></div>
           <div><span>Код текущей эпохи</span><code id="epoch-code">—</code></div>
+          <div><b id="verification-state">Устройство ещё не проверено</b><p>Сверьте код лично или по другому доверенному каналу. При смене ключа нужна новая проверка.</p>
+            <label for="verification-proof">Код с устройства собеседника или содержимое QR</label>
+            <input id="verification-proof" type="text" autocomplete="off" spellcheck="false" placeholder="Код для сверки" />
+            <button id="verification-confirm" type="button">Сверить код</button>
+          </div>
           <p>Сверьте числа с собеседником по другому каналу.</p>
         </section>
 

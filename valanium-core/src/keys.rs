@@ -162,6 +162,14 @@ pub fn safety_number(a: &[u8], b: &[u8]) -> String {
         .join(" ")
 }
 
+/// Public, pair-bound QR payload. No keys, identity, server or URL to fetch.
+pub fn verification_payload(a: &[u8], b: &[u8]) -> String {
+    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+    let mut hash = Sha256::new();
+    hash.update(b"valanium-verification-qr-v1"); hash.update(a); hash.update(b);
+    format!("valanium-verify:v1:{}", hex::encode(hash.finalize()))
+}
+
 /// Отпечаток для ручной сверки контактов. Без неё сервер способен на MITM.
 pub fn fingerprint(identity_pub: &[u8]) -> String {
     let digest = Sha256::digest(identity_pub);

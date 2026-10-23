@@ -261,6 +261,7 @@ fn clean_title(raw: &str) -> String {
 /// Что было в служебном сообщении.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Control {
+    Delivered(Vec<String>),
     Pass(String),
     /// Ключ от аватара собеседника.
     ProfileKey(String),
@@ -330,6 +331,15 @@ impl Announcement {
 pub fn parse_signal(body: &str) -> Option<Control> {
     let payload = body.strip_prefix(CONTROL_PREFIX)?;
     let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+
+    if let Some(ids) = value.get("delivered").and_then(|v| v.as_array()) {
+        if ids.len() > 64 { return None; }
+        let ids: Option<Vec<String>> = ids.iter().map(|id| {
+            let id = id.as_str()?;
+            if id.is_empty() || id.len() > 128 { None } else { Some(id.to_owned()) }
+        }).collect();
+        return Some(Control::Delivered(ids?));
+    }
 
     if let Some(pass) = value.get("pass").and_then(|v| v.as_str()) {
         // Длину проверяем здесь: мусор в этом поле стоил бы отказа при каждом

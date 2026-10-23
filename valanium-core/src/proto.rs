@@ -168,6 +168,8 @@ pub struct Features {
     /// работать на любом сервере вне зависимости от этого флага.
     #[serde(default, rename = "sealedSender")]
     pub sealed_sender: bool,
+    #[serde(default, rename = "sealedSenderPasses")]
+    pub sealed_sender_passes: bool,
 }
 
 #[derive(Debug, Deserialize)]

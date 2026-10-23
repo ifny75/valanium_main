@@ -311,6 +311,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final int AVATAR_PICK_REQUEST = 1002;
     private static final int PHOTO_PICK_REQUEST = 1003;
     private static final int MICROPHONE_PERMISSION_REQUEST = 1004;
+    private static final int VERIFICATION_IMAGE_REQUEST = 1005;
+    private String verificationImagePeer;
+    private AlertDialog verificationDialog;
     /** Дольше не пишем: сообщение обязано пролезть в один кадр сервера. */
     private static final int MAX_VOICE_SEC = 120;
     private static final String CONTENT_PREFIX = "\u2063OBS1:";
@@ -392,6 +395,11 @@ public final class MainActivity extends Activity implements Events.Listener {
     private MediaPlayer voicePlayer;
     private SharedPreferences appearancePreferences;
     private final Set<String> readIds = new HashSet<>();
+    private final Map<String, String> deliveryStates = new LinkedHashMap<>();
+    private boolean deliveryOnline;
+    private String deliveryKey(String conversation, String id) {
+        return (conversation == null ? "" : conversation) + ":" + id;
+    }
     private final Set<String> sentReadIds = new HashSet<>();
     /** Ограниченный кэш превью; полноразмерные расшифрованные Bitmap не удерживаем. */
     private final android.util.LruCache<String, Bitmap> messageThumbnails =
@@ -1908,6 +1916,14 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == VERIFICATION_IMAGE_REQUEST) {
+            String peer = verificationImagePeer;
+            verificationImagePeer = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && peer != null) {
+                readVerificationImage(peer, data.getData());
+            }
+            return;
+        }
         if (requestCode == UNLOCK_REQUEST) {
             Integer wanted = pendingLock;
             pendingLock = null;
@@ -2714,6 +2730,89 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (messageListAdapter != null) messageListAdapter.notifyDataSetChanged();
     }
 
+    private void confirmVerification(String peer, String proof) {
+        if (peer == null || !peer.equals(currentPeer)) return;
+        try { submit(new JSONObject().put("type", "verification_confirm")
+                .put("peer_device", peer).put("proof", proof).toString()); }
+        catch (Exception ignored) { toast("Не удалось сверить код"); }
+    }
+
+    private void showVerification(JSONObject event) {
+        String peer = event.optString("peer_device");
+        if (!peer.equals(currentPeer)) return;
+        if (verificationDialog != null) verificationDialog.dismiss();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(8), dp(20), dp(8));
+        TextView explanation = new TextView(this);
+        explanation.setText((event.optBoolean("verified") ? "✓ Устройство проверено" : "Устройство ещё не проверено")
+                + "\n\nСверьте QR или код лично либо по другому доверенному каналу. Смена ключа потребует новой проверки.");
+        content.addView(explanation);
+        try {
+            com.google.zxing.common.BitMatrix matrix = VerificationQr.encode(event.optString("qr_payload"));
+            int size = matrix.getWidth();
+            int[] pixels = new int[size * size];
+            for (int y = 0; y < size; y++) for (int x = 0; x < size; x++) pixels[y * size + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
+            Bitmap bitmap = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888);
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(bitmap);
+            image.setContentDescription("QR для проверки пары устройств");
+            image.setAdjustViewBounds(true);
+            content.addView(image, new LinearLayout.LayoutParams(-1, dp(250)));
+        } catch (Exception ignored) { /* Numeric verification remains available. */ }
+        TextView code = new TextView(this);
+        code.setText(event.optString("safety_number"));
+        code.setTextIsSelectable(true);
+        code.setTextSize(18);
+        code.setPadding(0, dp(12), 0, dp(12));
+        content.addView(code);
+        TextView epoch = new TextView(this);
+        epoch.setText("Код текущей эпохи " + event.optLong("epoch") + ":\n" + event.optString("epoch_code"));
+        epoch.setTextIsSelectable(true);
+        content.addView(epoch);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+        verificationDialog = new AlertDialog.Builder(this).setTitle("Проверка ключей").setView(scroll)
+                .setPositiveButton("Ввести код", (dialog, which) -> {
+                    EditText input = new EditText(this);
+                    input.setHint("Код с устройства собеседника");
+                    input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+                    new AlertDialog.Builder(this).setTitle("Сверка кода").setView(input)
+                            .setPositiveButton("Сверить", (d, w) -> confirmVerification(peer, input.getText().toString()))
+                            .setNegativeButton("Отмена", null).show();
+                })
+                .setNeutralButton("QR из изображения", (dialog, which) -> {
+                    verificationImagePeer = peer;
+                    Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*")
+                            .addCategory(Intent.CATEGORY_OPENABLE);
+                    startActivityForResult(pick, VERIFICATION_IMAGE_REQUEST);
+                }).setNegativeButton("Закрыть", null).create();
+        verificationDialog.show();
+    }
+
+    private void readVerificationImage(String peer, android.net.Uri uri) {
+        new Thread(() -> {
+            try {
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inJustDecodeBounds = true;
+                try (InputStream input = getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(input, null, options); }
+                if (options.outWidth <= 0 || options.outHeight <= 0) throw new IOException("Invalid image");
+                options.inSampleSize = 1;
+                while (options.outWidth / options.inSampleSize > 2048 || options.outHeight / options.inSampleSize > 2048) options.inSampleSize *= 2;
+                options.inJustDecodeBounds = false;
+                Bitmap bitmap;
+                try (InputStream input = getContentResolver().openInputStream(uri)) { bitmap = BitmapFactory.decodeStream(input, null, options); }
+                if (bitmap == null) throw new IOException("Invalid image");
+                int width = bitmap.getWidth(), height = bitmap.getHeight();
+                int[] pixels = new int[width * height];
+                bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+                bitmap.recycle();
+                String proof = VerificationQr.decode(pixels, width, height);
+                runOnUiThread(() -> confirmVerification(peer, proof));
+            } catch (Exception error) { runOnUiThread(() -> toast("Не найден QR проверки Valanium. Можно сверить числовой код.")); }
+        }, "valanium-verify-image").start();
+    }
+
     private void submit(String command) {
         if (!foregroundAuthorized || ValaniumService.isSigningOut()) return;
         if (!ValaniumService.core().submit(command)) {
@@ -2738,6 +2837,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 invite.setText("");
                 break;
             case "authenticated":
+                deliveryOnline = true;
+                if (messageListAdapter != null) messageListAdapter.notifyDataSetChanged();
                 admin = event.optBoolean("admin");
                 findViewById(R.id.open_admin).setVisibility(admin ? View.VISIBLE : View.GONE);
                 if (currentScreen == screenBoot || currentScreen == screenEntry || currentScreen == screenRecover) {
@@ -2755,6 +2856,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 setStatus(getString(R.string.status_connecting));
                 break;
             case "disconnected":
+                deliveryOnline = false;
+                if (messageListAdapter != null) messageListAdapter.notifyDataSetChanged();
                 setStatus(getString(R.string.status_reconnecting));
                 break;
             case "service_unavailable":
@@ -2850,12 +2953,20 @@ public final class MainActivity extends Activity implements Events.Listener {
             case "channel_post":
                 onChannelPost(event);
                 break;
+            case "delivery":
+                deliveryStates.put(deliveryKey(event.optString("conversation"), event.optString("id")), event.optString("state"));
+                if ("failed".equals(event.optString("state")) && event.optString("conversation").isEmpty()) {
+                    deliveryStates.put(deliveryKey(conversations.get(currentPeer), event.optString("id")), "failed");
+                }
+                if (messageListAdapter != null) messageListAdapter.notifyDataSetChanged();
+                break;
             case "verification":
-                new AlertDialog.Builder(this).setTitle("Проверка защищённого чата")
-                        .setMessage("Код пары устройств:\n" + event.optString("safety_number")
-                                + "\n\nКод эпохи " + event.optLong("epoch") + ":\n" + event.optString("epoch_code")
-                                + "\n\nСверьте эти числа с собеседником по другому каналу.")
-                        .setPositiveButton("Готово", null).show();
+                showVerification(event);
+                break;
+            case "verification_checked":
+                if (!event.optString("peer_device").equals(currentPeer)) break;
+                toast(event.optBoolean("verified") ? "Ключи совпали. Устройство проверено." : "Коды не совпадают. Проверка не пройдена.");
+                submit(Commands.verify(currentPeer));
                 break;
             case "recovery_code":
                 // Ядро отдаёт обе записи одного ключа. Показываем слова: их
@@ -2997,6 +3108,12 @@ public final class MainActivity extends Activity implements Events.Listener {
         String conversation = event.optString("conversation");
         if (TextUtils.isEmpty(conversation)) return;
         JSONArray items = event.optJSONArray("messages");
+        if (items != null) for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null || !item.optBoolean("outgoing")) continue;
+            String id = parseContent(item.optString("body")).optString("id");
+            if (!id.isEmpty()) deliveryStates.put(deliveryKey(conversation, id), item.optString("delivery", "unknown"));
+        }
 
         if (previewRequests.remove(conversation)) {
             String peer = peerOf(conversation);
@@ -4213,8 +4330,10 @@ public final class MainActivity extends Activity implements Events.Listener {
             TextView delivery = new TextView(this);
             delivery.setTag("delivery");
             boolean read = readIds.contains(id);
-            delivery.setText(read ? "✓✓" : "✓");
-            delivery.setContentDescription(read ? "Прочитано" : "Отправлено");
+            String state = deliveryStates.get(deliveryKey(conversations.get(peer), id));
+            String label = DeliveryStatus.label(state, deliveryOnline, read);
+            delivery.setText(label);
+            delivery.setContentDescription(label);
             delivery.setTextColor(outgoing && Color.luminance(accentColor()) > .55 ? Color.DKGRAY : Color.LTGRAY);
             delivery.setTextSize(9);
             delivery.setTag(R.id.base_text_size_tag, 9f);

@@ -57,14 +57,32 @@ pub(crate) fn enqueue_batch(store: &Store, envelopes: Vec<Envelope>) -> Result<(
             .saturating_add(envelopes.iter().map(|item| item.ciphertext.len()).sum::<usize>()) > MAX_BYTES {
         return Err(CoreError::Rejected("anonymous_queue_full".into()));
     }
-    queue.extend(envelopes);
-    save(store, &queue)
+    store.atomic(|| {
+        for item in &envelopes {
+            if item.kind == Kind::Message {
+                if let Some(id) = &item.logical_id {
+                    crate::delivery::track(store, &item.conversation, id, &item.device, item.expires_at)?;
+                }
+            }
+        }
+        queue.extend(envelopes);
+        save(store, &queue)
+    })
 }
 
 pub(crate) fn acknowledge(store: &Store, client_ref: &[u8; 16]) -> Result<()> {
     let mut queue = load(store)?;
-    queue.retain(|item| &item.client_ref != client_ref);
-    save(store, &queue)
+    store.atomic(|| {
+        for item in queue.iter().filter(|item| &item.client_ref == client_ref) {
+            if item.kind == Kind::Message {
+                if let Some(id) = &item.logical_id {
+                    crate::delivery::accepted(store, &item.conversation, id, &item.device)?;
+                }
+            }
+        }
+        queue.retain(|item| &item.client_ref != client_ref);
+        save(store, &queue)
+    })
 }
 
 pub(crate) fn contains_message(store: &Store, conversation: &[u8], id: &str) -> Result<bool> {
@@ -104,6 +122,24 @@ pub(crate) fn prune_expired(store: &Store, now: i64) -> Result<Vec<Envelope>> {
     queue.retain(|item| item.expires_at.map_or(true, |expires| expires > now));
     if before != queue.len() { save(store, &queue)?; }
     Ok(queue)
+}
+
+/// Bound legacy envelopes once on upgrade rather than retrying beyond the
+/// server's deduplication retention window indefinitely.
+pub(crate) fn bound_legacy_lifetimes(store: &Store, now: i64, ttl: i64) -> Result<()> {
+    let mut queue = load(store)?;
+    if !queue.iter().any(|item| item.expires_at.is_none()) { return Ok(()); }
+    store.atomic(|| {
+        for item in &mut queue {
+            if item.expires_at.is_none() { item.expires_at = Some(now + ttl); }
+            if item.kind == Kind::Message {
+                if let Some(id) = &item.logical_id {
+                    crate::delivery::track(store, &item.conversation, id, &item.device, item.expires_at)?;
+                }
+            }
+        }
+        save(store, &queue)
+    })
 }
 
 /// At most one envelope per device may be active. This keeps Welcome and

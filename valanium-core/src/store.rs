@@ -275,7 +275,7 @@ impl Store {
     /// же чтении запечатанной записи, а не молчаливо.
     pub fn open(path: &str, password: &[u8]) -> Result<Self> {
         let connection = Connection::open(path)?;
-        connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;")?;
         connection.execute_batch(SCHEMA)?;
 
         let salt = match Self::read_meta(&connection, "salt")? {
@@ -438,6 +438,19 @@ impl Store {
             params![key, sealed],
         )?;
         Ok(())
+    }
+
+    /// Savepoints allow queue, delivery evidence and MLS/history to commit
+    /// together, including when queue helpers are called inside another write.
+    pub(crate) fn atomic<T>(&self, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.connection.execute_batch("SAVEPOINT delivery_write")?;
+        match operation() {
+            Ok(value) => { self.connection.execute_batch("RELEASE delivery_write")?; Ok(value) }
+            Err(error) => {
+                self.connection.execute_batch("ROLLBACK TO delivery_write; RELEASE delivery_write")?;
+                Err(error)
+            }
+        }
     }
 
     /// `None` — настройки ещё нет. Отличать от «пусто» обязательно: первая

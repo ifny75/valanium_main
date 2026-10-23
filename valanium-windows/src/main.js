@@ -62,6 +62,7 @@ const state = {
   pendingPinAction: null,
   pendingPeer: null,
   readIds: new Set(),
+  deliveryStates: new Map(),
   sentReadIds: new Set(),
   recoveryCode: "",
   recoveryWords: "",
@@ -1384,6 +1385,10 @@ $("verify").addEventListener("click", () => {
   if (state.current) submit({ type: "verify", peer_device: state.current });
 });
 $("verification-close").addEventListener("click", () => $("verification").classList.add("hidden"));
+$("verification-confirm").addEventListener("click", () => {
+  if (!state.current || isGroupKey(state.current)) return;
+  submit({ type: "verification_confirm", peer_device: state.current, proof: $("verification-proof").value });
+});
 
 $("form-send").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1461,12 +1466,20 @@ $("composer").addEventListener("keydown", (event) => {
  * Узел хранится вместе с сообщением в кэше и переиспользуется при возврате в
  * чат: заново разбирать base64 фотографии на каждое переключение незачем.
  */
-function buildMessage({ outgoing, body, created_at }, peer) {
+function deliveryLabel(value, read = false) {
+  if (read) return "✓✓ прочитано";
+  return ({ queued: "в очереди · ожидает Tor", sending: "анонимная отправка…",
+    accepted: "✓ принято сервером", delivered: "✓✓ доставлено", expired: "срок доставки истёк",
+    failed: "не сохранено · повторите отправку", unknown: "статус неизвестен" })[value] ?? "сохраняется…";
+}
+
+function buildMessage({ outgoing, body, created_at, delivery: evidence }, peer, deliveryConversation = conversationOf(peer)) {
   const content = parseContent(body);
   if (content.type === "read") { applyRead(content.ids); return null; }
   const item = document.createElement("li");
   item.className = outgoing ? "out" : "in";
   if (content.id) item.dataset.messageId = content.id;
+  item.dataset.deliveryConversation = deliveryConversation ?? "";
   const avatar = document.createElement("span");
   avatar.className = "message-avatar";
   applyAvatar(avatar, outgoing ? state.device : peer);
@@ -1518,7 +1531,10 @@ function buildMessage({ outgoing, body, created_at }, peer) {
   if (outgoing && content.id) {
     const delivery = document.createElement("span");
     delivery.className = "delivery";
-    delivery.textContent = state.readIds.has(content.id) ? "✓✓ прочитано" : "✓ отправлено";
+    const saved = evidence;
+    const key = `${deliveryConversation ?? ""}:${content.id}`;
+    if (saved !== undefined) state.deliveryStates.set(key, saved ?? "unknown");
+    delivery.textContent = deliveryLabel(state.deliveryStates.get(key), state.readIds.has(content.id));
     meta.appendChild(delivery);
   }
   item.appendChild(meta);
@@ -1643,7 +1659,7 @@ function appendMessage({ outgoing, body, created_at, from }, conversation, { cac
 
   const group = state.groups.get(conversation);
   const author = from ?? peerOf(conversation) ?? state.current;
-  const built = buildMessage({ outgoing, body, created_at }, author);
+  const built = buildMessage({ outgoing, body, created_at }, author, conversation);
   if (built && group && !outgoing && from) {
     const who = document.createElement("b");
     who.className = "from";
@@ -2235,8 +2251,27 @@ const handlers = {
     // диалог B, иначе правильный код получает неправильную подпись.
     if (event.peer_device !== state.current) return;
     $("safety-number").textContent = event.safety_number;
+    $("verification-state").textContent = event.verified ? "✓ Устройство проверено" : "Устройство ещё не проверено";
+    $("verification-proof").value = "";
     $("epoch-code").textContent = `${event.epoch_code} · эпоха ${event.epoch}`;
     $("verification").classList.remove("hidden");
+  },
+
+  verification_checked(event) {
+    if (event.peer_device !== state.current) return;
+    toast(event.verified ? "Ключи совпали. Устройство проверено." : "Коды не совпадают. Проверка не пройдена.");
+    submit({ type: "verify", peer_device: event.peer_device });
+  },
+
+  delivery(event) {
+    state.deliveryStates.set(`${event.conversation}:${event.id}`, event.state);
+    const nodes = new Set([...document.querySelectorAll("[data-message-id]"),
+      ...chat(event.conversation).items.map(item => item.node)]);
+    for (const node of nodes) {
+      if (node.dataset.messageId !== event.id || node.dataset.deliveryConversation !== event.conversation) continue;
+      const label = node.querySelector(".delivery");
+      if (label) label.textContent = deliveryLabel(event.state, state.readIds.has(event.id));
+    }
   },
 
   anomaly(event) {
@@ -2274,7 +2309,7 @@ const handlers = {
     const visibleIncoming = [];
     const peer = peerOf(event.conversation);
     for (const item of ordered) {
-      const built = buildMessage(item, peer);
+      const built = buildMessage(item, peer, event.conversation);
       if (!built) continue;
       page.push({ created_at: item.created_at, node: built.node });
       if (built.content?.id && !item.outgoing) visibleIncoming.push(built.content.id);
