@@ -200,6 +200,33 @@ test("fresh anonymous ticket retries the same envelope after recipient ACK witho
   store.close();
 });
 
+test("onion access pass admits anonymous delivery without AUTH and remains recipient-bound", () => {
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const alice = register(deps, store, makeIdentity(), "alice");
+  const bob = makeIdentity();
+  const b = register(deps, store, bob, "bob");
+  const other = makeIdentity();
+  register(deps, store, other, "other");
+  store.setDmPolicy(bob.idPub, "passes", deps.now());
+  const pass = random(32);
+  store.addPass(sha256(concat(ascii("valanium-pass-v1"), pass)), bob.idPub, false, deps.now(), deps.now() + 3600000);
+  const anon = anonConnect(deps);
+  anon.conn.onion = true;
+  handleMessage(deps, anon.sock, anon.conn, jsonFrame(OP.PASS_PRESENT, { recipient: toHex(bob.devPub), pass: toHex(pass) }));
+  assert.equal(anon.sock.json(OP.ACCESS_OK).admitted, true);
+  handleMessage(deps, anon.sock, anon.conn, sendAnonFrame(requestTicket(deps, alice), bob.devPub, ascii("private")));
+  assert.ok(anon.sock.has(OP.SEND_OK));
+  assert.ok(b.sock.has(OP.ENVELOPE));
+  assert.equal(anon.conn.identity, null);
+  assert.equal(anon.conn.devicePub, null);
+  const wrong = anonConnect(deps);
+  wrong.conn.onion = true;
+  handleMessage(deps, wrong.sock, wrong.conn, jsonFrame(OP.PASS_PRESENT, { recipient: toHex(other.devPub), pass: toHex(pass) }));
+  assert.equal(wrong.sock.json(OP.ACCESS_OK).admitted, false);
+  store.close();
+});
+
 test("билет тратится один раз", () => {
   const store = new Store(":memory:");
   const deps = makeDeps(store);

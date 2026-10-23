@@ -88,12 +88,14 @@ export interface ConnData {
   anonymous: boolean;
   /** Пришло ли соединение через onion-вход: у него свои потолки. */
   onion: boolean;
+  passAttempts: number;
 }
 
 export function newConnData(ip: string, onion = false): ConnData {
   return {
     ip,
     onion,
+    passAttempts: 0,
     authAttempts: 0,
     nonce: null,
     identity: null,
@@ -168,6 +170,7 @@ export function handleOpen(deps: Deps, sock: Socket, conn: ConnData): void {
          * опкод, а он закрывает соединение.
          */
         sealedSender: true,
+        sealedSenderPasses: true,
       },
       // Входы, о которых клиент иначе не узнает. Пустой список — просто нет
       // onion-входа: старый клиент поля не заметит, новый останется на своём
@@ -265,7 +268,10 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
         onPassRevoke(deps, sock, conn, body);
         return;
       case OP.PASS_PRESENT:
-        requireAuth(conn);
+        if (!conn.identity) {
+          if (!conn.onion) { requireAuth(conn); }
+          if (++conn.passAttempts > 1) throw new BadInput("one anonymous pass presentation per connection");
+        }
         onPassPresent(deps, sock, conn, body);
         return;
       case OP.USERNAME_SET:
@@ -359,7 +365,7 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
         // билет, а не сессия. Соединение, посылающее его, никогда не
         // проходит AUTH — свяжутся ли когда-нибудь эти два факта, зависит
         // только от того, открыл ли клиент для этого отдельное соединение.
-        onSendAnon(deps, sock, body);
+        onSendAnon(deps, sock, conn, body);
         return;
       default:
         sock.end(CLOSE.PROTOCOL, "unknown opcode");
@@ -1845,7 +1851,7 @@ function onSend(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): voi
  * `AUTH` — вместо подписи сессии предъявлен билет (`tickets.ts`). Личности
  * здесь взять неоткуда, и это не упущение, а вся суть механизма.
  */
-function onSendAnon(deps: Deps, sock: Socket, body: Uint8Array): void {
+function onSendAnon(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): void {
   const now = deps.now();
   const parsed = parseSendAnon(body);
 
@@ -1862,16 +1868,11 @@ function onSendAnon(deps: Deps, sock: Socket, body: Uint8Array): void {
     return;
   }
 
-  /*
-    Пропуска этому соединению предъявить нечем: `admitted` живёт только на
-    аутентифицированном сокете, а это — по определению не такой. Получателю
-    с политикой «только по пропускам» билет ничем не поможет: отправитель
-    падает назад на обычный SEND, где пропуск уже предъявлен. Это не потеря
-    сквозного шифрования — просто конкретно эта отправка себя не прячет.
-  */
-  if (deps.store.dmPolicy(recipient.identity) === "passes") {
+  // An onion connection may present a recipient-bound bearer pass without
+  // AUTH. Admission belongs only to this connection, never to an identity.
+  if (deps.store.dmPolicy(recipient.identity) === "passes" && !conn.admitted.has(toHex(parsed.recipientDevice))) {
     sock.send(
-      errorFrame("dm_not_allowed", "recipient requires a pass; retry over an authenticated connection"),
+      errorFrame("dm_not_allowed", "recipient requires a valid anonymous pass"),
       true,
     );
     return;
