@@ -576,7 +576,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.avatar_upload).setOnClickListener(v -> chooseAvatar());
         findViewById(R.id.profile_avatar).setOnClickListener(v -> showOwnAvatarOrChoose());
         findViewById(R.id.attach_photo).setOnClickListener(v -> choosePhoto());
-        findViewById(R.id.open_calculator).setOnClickListener(this::showCalculator);
+
         findViewById(R.id.verify_peer).setOnClickListener(v -> { if (currentPeer != null) submit(Commands.verify(currentPeer)); });
         configureRecovery();
         findViewById(R.id.revoke_other_devices).setOnClickListener(v ->
@@ -775,6 +775,18 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void layoutTopBars(View view, View root, int windowWidth) {
+        // The header may extend sideways beyond the screen's content inset,
+        // but a sibling scrolling viewport must never extend over that header.
+        if (view instanceof ScrollView && findTopBar(view) == null) {
+            ScrollView viewport = (ScrollView) view;
+            viewport.setClipChildren(true);
+            viewport.setClipToPadding(true);
+            if (viewport.getWidth() > 0 && viewport.getHeight() > 0) {
+                android.graphics.Rect bounds = new android.graphics.Rect(
+                        0, 0, viewport.getWidth(), viewport.getHeight());
+                if (!bounds.equals(viewport.getClipBounds())) viewport.setClipBounds(bounds);
+            }
+        }
         if ("valanium_top_bar".equals(view.getTag())) {
             ViewGroup.LayoutParams params = view.getLayoutParams();
             if (params.width != windowWidth) {
@@ -806,7 +818,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         float radius = dp(22);
         background.setCornerRadii(new float[]{0, 0, 0, 0, radius, radius, radius, radius});
         view.setBackground(background);
-        view.setElevation(0f);
+        view.setElevation(dp(4));
     }
 
     /** Один оттенок у системной области и самой панели — без горизонтального шва. */
@@ -1015,11 +1027,16 @@ public final class MainActivity extends Activity implements Events.Listener {
                     @Override public void onScrollStateChanged(android.widget.AbsListView view, int state) {}
                     @Override public void onScroll(android.widget.AbsListView view, int first,
                             int visible, int total) {
-                        if (tabBar != null) tabBar.invalidate();
+                        if (tabBar != null) tabBar.onSourceScrolled();
                     }
                 };
         contactList.setOnScrollListener(blurInvalidator);
         requestList.setOnScrollListener(blurInvalidator);
+        // Settings/profile use nested ScrollViews rather than ListViews.
+        // Refresh the glass backdrop when any of them moves as well.
+        findViewById(R.id.app_root).getViewTreeObserver().addOnScrollChangedListener(() -> {
+            if (tabBar != null && tabBar.getVisibility() == View.VISIBLE) tabBar.onSourceScrolled();
+        });
 
         // Догрузка старого — по приближении к верху, а не по достижению.
         messagesList.setOnScrollListener(new android.widget.AbsListView.OnScrollListener() {
@@ -2618,6 +2635,10 @@ public final class MainActivity extends Activity implements Events.Listener {
 
             @Override
             public void afterTextChanged(android.text.Editable s) {
+                TextView calculation = findViewById(R.id.composer_calculation);
+                String suggestion = Calculator.suggestion(s.toString());
+                calculation.setText(suggestion);
+                calculation.setVisibility(suggestion.isEmpty() ? View.GONE : View.VISIBLE);
                 boolean hasText = s.toString().trim().length() > 0;
                 findViewById(R.id.send).setVisibility(hasText ? View.VISIBLE : View.GONE);
                 recordVoice.setVisibility(hasText ? View.GONE : View.VISIBLE);
@@ -4369,82 +4390,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         actions.addView(button);
     }
 
-    private void showCalculator(View anchor) {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(12), dp(12), dp(12));
-        panel.setBackgroundResource(R.drawable.card_flat);
-        EditText expression = new EditText(this);
-        expression.setSingleLine(true);
-        expression.setHint("2 × (3 + 4)");
-        expression.setTextColor(themeText());
-        expression.setTextSize(16);
-        panel.addView(expression);
-        TextView result = new TextView(this);
-        result.setTextSize(18);
-        result.setTextColor(themeText());
-        result.setGravity(Gravity.END);
-        result.setPadding(0, dp(8), 0, dp(8));
-        panel.addView(result);
-        android.widget.GridLayout keys = new android.widget.GridLayout(this);
-        keys.setColumnCount(4);
-        panel.addView(keys);
-        Button insert = new Button(this);
-        insert.setText("Вставить результат");
-        insert.setAllCaps(false);
-        panel.addView(insert);
-        Runnable update = () -> {
-            try {
-                result.setText(Calculator.evaluate(expression.getText().toString()));
-                insert.setEnabled(true);
-            } catch (IllegalArgumentException error) {
-                result.setText(error.getMessage());
-                insert.setEnabled(false);
-            }
-        };
-        expression.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { update.run(); }
-            @Override public void afterTextChanged(android.text.Editable s) {}
-        });
-        for (String symbol : new String[]{"7","8","9","/","4","5","6","*",
-                "1","2","3","-","0",".","(",")","C","⌫","+","="}) {
-            Button key = new Button(this);
-            key.setText(symbol);
-            key.setAllCaps(false);
-            key.setTextSize(15);
-            android.widget.GridLayout.LayoutParams params = new android.widget.GridLayout.LayoutParams();
-            params.width = dp(56); params.height = dp(42);
-            key.setLayoutParams(params);
-            key.setOnClickListener(v -> {
-                if ("C".equals(symbol)) expression.setText("");
-                else if ("⌫".equals(symbol)) {
-                    String value = expression.getText().toString();
-                    if (!value.isEmpty()) expression.setText(value.substring(0, value.length() - 1));
-                } else if (!"=".equals(symbol)) expression.append(symbol);
-                update.run();
-            });
-            keys.addView(key);
-        }
-        PopupWindow popup = new PopupWindow(panel, dp(260), ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-        popup.setOutsideTouchable(true);
-        popup.setElevation(dp(12));
-        insert.setOnClickListener(v -> {
-            int at = composer.getSelectionStart();
-            int to = composer.getSelectionEnd();
-            if (at < 0) at = composer.length();
-            if (to < at) to = at;
-            composer.getText().replace(at, to, result.getText());
-            popup.dismiss();
-            composer.requestFocus();
-        });
-        update.run();
-        int[] position = new int[2];
-        anchor.getLocationOnScreen(position);
-        popup.showAtLocation(getWindow().getDecorView(), Gravity.BOTTOM | Gravity.START,
-                Math.max(dp(8), position[0] - dp(8)), dp(90));
-    }
 
     /**
      * Спрашивает перед удалением, если так велено в настройках.
