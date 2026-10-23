@@ -184,7 +184,9 @@ const cleanup = setInterval(() => {
   postLimiter.sweep(ts);
   ticketLimiter.sweep(ts);
   tickets.sweep(ts);
-  log.info("sweep", { ...swept, online: registry.onlineDevices, addresses: connections.addresses });
+  // Avoid a durable minute-by-minute activity trace. Counts remain available
+  // through the authenticated admin endpoint instead of routine journal logs.
+  void swept;
 }, config.cleanupIntervalSec * 1000);
 cleanup.unref();
 

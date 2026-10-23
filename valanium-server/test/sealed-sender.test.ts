@@ -174,6 +174,32 @@ test("билет доставляет конверт по соединению, 
   store.close();
 });
 
+test("fresh anonymous ticket retries the same envelope after recipient ACK without redelivery", () => {
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const alice = register(deps, store, makeIdentity(), "alice");
+  const bob = makeIdentity();
+  const b = register(deps, store, bob, "bob");
+  const ref = random(ID_LEN);
+  const payload = ascii("same-ciphertext");
+  const send = () => {
+    const ticket = requestTicket(deps, alice);
+    alice.sock.sent.length = 0;
+    const anon = anonConnect(deps);
+    handleMessage(deps, anon.sock, anon.conn, frame(OP.SEND_ANON,
+      concat(ref, ticket, bob.devPub, new Uint8Array([0, 0, 0x0e, 0x10]), payload)));
+    assert.equal(anon.conn.identity, null);
+    return anon.sock.take(OP.SEND_OK).subarray(ID_LEN);
+  };
+  const id = send();
+  assert.equal(store.ack(id, bob.devPub), true);
+  b.sock.sent.length = 0;
+  assert.deepEqual(send(), id);
+  assert.equal(b.sock.has(OP.ENVELOPE), false);
+  assert.equal(store.countQueued(bob.devPub, deps.now()), 0);
+  store.close();
+});
+
 test("билет тратится один раз", () => {
   const store = new Store(":memory:");
   const deps = makeDeps(store);

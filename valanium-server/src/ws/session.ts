@@ -1897,6 +1897,12 @@ function enqueueAndRespond(
   // Потолок очереди получателя. Ведро отправителя его не заменяет: десять
   // аккаунтов в пределах своих вёдер сложатся и всё равно зальют одного
   // человека, а разгребать очередь ему.
+  const digest = deps.store.retryDigest(recipientDevice, clientRef, ciphertext);
+  const accepted = deps.store.acceptedRetry(digest, now);
+  if (accepted) {
+    sock.send(sendOkFrame(clientRef, accepted), true);
+    return;
+  }
   if (deps.store.countQueued(recipientDevice, now) >= config.maxQueuedPerDevice) {
     sock.send(errorFrame("recipient_queue_full", "recipient has too much undelivered mail"), true);
     return;
@@ -1913,7 +1919,7 @@ function enqueueAndRespond(
   const ttlSec = Math.min(ttlSecRequested, config.envelopeTtlSec);
   // Копия обязательна: ciphertext — это view в буфер uWS.
   const payload = ciphertext.slice();
-  const envelopeId = deps.store.enqueue(recipientDevice, payload, now, now + ttlSec * 1000);
+  const envelopeId = deps.store.enqueueOnce(digest, recipientDevice, payload, now, now + ttlSec * 1000);
 
   sock.send(sendOkFrame(clientRef, envelopeId), true);
   deps.registry.deliver(toHex(recipientDevice), envelopeFrame(envelopeId, now, payload));

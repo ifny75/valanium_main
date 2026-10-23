@@ -5,6 +5,15 @@
  * IP-адресов, любого plaintext. Добавление такого поля — блокер, а не фича.
  */
 export const SCHEMA = `
+-- Retry tombstones contain no sender, recipient or ciphertext. They survive
+-- recipient ACK so a lost SEND_OK cannot create a second MLS envelope.
+CREATE TABLE IF NOT EXISTS envelope_retries (
+  digest BLOB PRIMARY KEY,
+  envelope_id BLOB NOT NULL,
+  expires_at INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS envelope_retries_expiry ON envelope_retries(expires_at);
+
 -- handle — мёртвое поле, и заполнять его нельзя.
 --
 -- Это было человекочитаемое имя, которое клиент присылал при регистрации, и
