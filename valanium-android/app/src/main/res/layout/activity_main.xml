@@ -118,6 +118,12 @@
     <ScrollView android:id="@+id/screen_privacy" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:scrollbars="none" android:visibility="gone"><LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="28dp">
         <LinearLayout style="@style/Valanium.TopBar"><Button android:id="@+id/privacy_back" style="@style/Valanium.Button.IconDark" android:text="@string/back" /><TextView style="@style/Valanium.HeaderTitle" android:layout_width="0dp" android:layout_weight="1" android:text="@string/privacy" /><View android:layout_width="44dp" android:layout_height="44dp" /></LinearLayout>
         <TextView style="@style/Valanium.Muted" android:layout_marginTop="14dp" android:text="@string/privacy_intro" />
+        <LinearLayout style="@style/Valanium.Card" android:layout_marginTop="14dp" android:orientation="vertical">
+            <TextView style="@style/Valanium.SettingTitle" android:text="Максимальная приватность" />
+            <TextView style="@style/Valanium.Micro" android:layout_marginTop="8dp" android:text="Onion, скрытый поиск по имени, сообщения от одобренных. Без статуса в сети, прочтения, набора текста и превью ссылок. Разрешающие исключения сбрасываются, запреты сохраняются. Ранее раскрытые сведения отозвать невозможно." />
+            <Button android:id="@+id/privacy_maximize" style="@style/Valanium.Button.Primary" android:layout_marginTop="12dp" android:text="Применить к этому аккаунту" />
+            <TextView style="@style/Valanium.Micro" android:layout_marginTop="8dp" android:text="Правила сохраняются без сети. Поиск и доступ на сервере обновятся после подключения. Затем каждое правило можно изменить отдельно." />
+        </LinearLayout>
         <LinearLayout android:id="@+id/privacy_sections" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/card_flat" android:clipToOutline="true" android:orientation="vertical" />
         <TextView style="@style/Valanium.Micro" android:layout_marginTop="12dp" android:text="@string/privacy_sections_hint" />
     </LinearLayout></ScrollView>

@@ -322,15 +322,8 @@ struct AnonOutcome {
 /// этот — не про одно сообщение, а про всю сессию: пул билетов и канал исхода
 /// общие на всю связь и передаются по цепочке `on_send → deliver_to_person →
 /// deliver → encrypt_and_send` реborrow'ом, без клонирования состояния.
-struct SealedSenderCtx<'a> {
-    tickets: &'a mut VecDeque<[u8; proto::TICKET_LEN]>,
-    inflight: &'a mut HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
+struct SealedSenderCtx {
     required: bool,
-    /// Сказал ли сервер в HELLO, что умеет TICKET_REQUEST/SEND_ANON. Кадр,
-    /// которого сервер не знает, — это для него битый кадр и разрыв связи, а
-    /// не отказ, поэтому спрашивать наугад нельзя (см. `Greeting`).
-    available: bool,
-    outcomes: mpsc::UnboundedSender<AnonOutcome>,
 }
 
 /// Обрыв связи, а не отказ сервера. Такую ошибку лечит переподключение, и
@@ -505,7 +498,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
         },
 
         Command::DeleteConversation { conversation } => match hex::decode(conversation) {
-            Ok(id) => match crate::anon_queue::cancel_thread(store, &id).and_then(|_| store.forget_conversation(&id)) {
+            Ok(id) => match crate::anon_queue::forget_thread(store, &id).and_then(|_| store.forget_conversation(&id)) {
                 Ok(()) => sink(Event::ConversationCleared {
                     conversation: conversation.clone(),
                     forgotten: true,
@@ -565,6 +558,21 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             match save_directory(store, &directory) {
                 Ok(()) => sink(directory_event(store)),
                 Err(err) => fail(sink, "storage", &err.to_string()),
+            }
+        }
+
+        Command::PrivacyMaximize => {
+            let result = (|| -> Result<crate::privacy::Privacy> {
+                let mut privacy = load_privacy_checked(store)?;
+                privacy.maximize();
+                store.save_setting(PRIVACY_KEY, &serde_json::to_vec(&privacy)?)?;
+                store.save_setting(DELIVERY_POLICY_KEY, b"onion")?;
+                crate::anon_queue::drop_ephemeral(store)?;
+                Ok(privacy)
+            })();
+            match result {
+                Ok(privacy) => sink(Event::PrivacyMaximized { privacy }),
+                Err(error) => fail(sink, "privacy_preset", &error.to_string()),
             }
         }
 
@@ -1482,7 +1490,7 @@ async fn rekey_stale(
         match mls.rekey(&group_id) {
             Ok(commit) => {
                 persist(store, mls, sink);
-                fan_out(socket, mls, &group_id, &commit, None).await?;
+                fan_out(socket, store, mls, &group_id, &commit, None, None).await?;
                 done.insert(key, now);
                 changed = true;
             }
@@ -1504,33 +1512,6 @@ async fn rekey_stale(
 /// Перезанимает своё имя, добавляя к нему дорогой хеш.
 ///
 /// Ничего не делает, если имени нет или это уже сделано.
-async fn upgrade_username_hash(
-    socket: &mut Socket,
-    store: &Store,
-    sink: &EventSink,
-) -> Result<()> {
-    let mut own = load_username(store);
-    let Some(name) = own.name.clone() else { return Ok(()) };
-    if own.strong_hash {
-        return Ok(());
-    }
-
-    let normalized = match crate::directory::normalize_username(&name) {
-        Ok(normalized) => normalized,
-        // Имя, которое больше не проходит проверку, перезанимать нечем.
-        // Это не повод рвать соединение — человек сменит его сам.
-        Err(_) => return Ok(()),
-    };
-    let hash = crate::directory::username_hash(&normalized);
-    let hash2 = crate::directory::username_hash_v2(&normalized)?;
-    send(socket, proto::username_set_frame(&hash, &hash2, own.discoverable)?).await?;
-
-    own.strong_hash = true;
-    if let Err(err) = store.save_setting(USERNAME_KEY, &serde_json::to_vec(&own)?) {
-        fail(sink, "storage", &err.to_string());
-    }
-    Ok(())
-}
 
 /// Свой ключ профиля, заводится при первом обращении.
 fn own_profile_key(store: &Store) -> Result<[u8; 32]> {
@@ -1846,6 +1827,74 @@ fn privacy_event(store: &Store) -> Event {
     Event::Privacy { privacy }
 }
 
+const DELIVERY_POLICY_KEY: &str = "delivery_policy_v1";
+
+fn anonymous_required(store: &Store) -> Result<bool> {
+    // Missing/unknown policy is private; only a recorded explicit route opts out.
+    Ok(store.load_setting(DELIVERY_POLICY_KEY)?.as_deref() != Some(b"explicit_relay"))
+}
+
+fn load_privacy_checked(store: &Store) -> Result<crate::privacy::Privacy> {
+    match store.load_setting(PRIVACY_KEY)? {
+        Some(raw) => Ok(serde_json::from_slice(&raw)?),
+        None => Ok(crate::privacy::Privacy::default()),
+    }
+}
+
+fn content_json(body: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(body.strip_prefix("\u{2063}OBS1:").unwrap_or(body)).ok()
+}
+
+fn activity_rule(body: &str) -> Option<&'static str> {
+    match crate::access::parse_signal(body) {
+        Some(crate::access::Control::Typing(_)) => return Some("typing"),
+        Some(crate::access::Control::Online) => return Some("presence"),
+        _ => {}
+    }
+    match content_json(body)?.get("type")?.as_str()? {
+        "read" => Some("read_receipts"),
+        _ => None,
+    }
+}
+
+fn permits_activity(store: &Store, body: &str, device: &[u8; KEY_LEN]) -> Result<bool> {
+    let Some(name) = activity_rule(body) else { return Ok(true) };
+    let privacy = load_privacy_checked(store)?;
+    let peer = hex::encode(device);
+    let directory = load_directory(store);
+    let relation = directory.standing(&peer).map(|standing| standing.relation())
+        .unwrap_or(crate::privacy::Relation::Unknown);
+    Ok(privacy.rule(name).is_some_and(|rule| rule.permits(&peer, relation)))
+}
+
+/// Restore server-side restrictions after reconnect, including changes made offline.
+async fn sync_server_privacy(socket: &mut Socket, store: &Store,
+    pending_username: &mut Option<(String, bool)>) -> Result<()> {
+    let privacy = match store.load_setting(PRIVACY_KEY)? {
+        Some(raw) => Some(serde_json::from_slice::<crate::privacy::Privacy>(&raw)?),
+        None => None,
+    };
+    if let Some(privacy) = &privacy {
+        let restricted = privacy.direct_messages.scope != crate::privacy::Scope::Everyone;
+        send(socket, proto::access_set_frame(if restricted { "passes" } else { "everyone" })?).await?;
+        let mut access = load_access(store);
+        access.policy = if restricted { crate::access::Policy::Passes } else { crate::access::Policy::Everyone };
+        save_access(store, &access)?;
+    }
+    let own = load_username(store);
+    let discoverable = privacy.as_ref().map(|p| p.discoverable.scope != crate::privacy::Scope::Nobody)
+        .unwrap_or(own.discoverable);
+    if pending_username.is_none() {
+        if let Some(name) = own.name.filter(|_| !own.strong_hash || own.discoverable != discoverable) {
+            let hash = crate::directory::username_hash(&name);
+            let hash2 = crate::directory::username_hash_v2(&name)?;
+            *pending_username = Some((name, discoverable));
+            send(socket, proto::username_set_frame(&hash, &hash2, discoverable)?).await?;
+        }
+    }
+    Ok(())
+}
+
 /// Свой адрес нужен интерфейсу до всякого подключения: его показывают
 /// собеседнику, чтобы тот мог написать первым.
 fn status(store: &Store) -> Event {
@@ -1867,6 +1916,11 @@ async fn session(
     sink: &EventSink,
     commands: &mut mpsc::UnboundedReceiver<Command>,
 ) {
+    let policy = if url == ONION_ROUTE_URL || url.contains(".onion") { b"onion".as_slice() }
+        else { b"explicit_relay".as_slice() };
+    if let Err(error) = store.save_setting(DELIVERY_POLICY_KEY, policy) {
+        return fail(sink, "storage", &error.to_string());
+    }
     let credentials = match load_or_create(store, &entry) {
         Ok(credentials) => credentials,
         Err(err) => return fail(sink, "keys", &err.to_string()),
@@ -2315,6 +2369,8 @@ async fn pump(
             fail(sink, "pass_grant", &err.to_string());
         }
 
+        sync_server_privacy(&mut socket, store, &mut pending_username).await?;
+
         // Меняем свой ключ в беседах, где он давно не менялся.
         //
         // Здесь же, при подключении, а не по таймеру в фоне: коммит всё равно
@@ -2334,12 +2390,6 @@ async fn pump(
         // должен. Значит, обновить строку способен только тот, у кого имя
         // есть, то есть клиент, и делает он это молча при первом же заходе
         // после обновления. Один раз: отметка лежит рядом с самим именем.
-        if let Err(err) = upgrade_username_hash(&mut socket, store, sink).await {
-            if is_transport(&err) {
-                return Ok(Outcome::Retry);
-            }
-            fail(sink, "username_upgrade", &err.to_string());
-        }
 
         // Объявляемся тем, кому это разрешено правилом «сейчас в сети».
         if let Err(err) = announce_presence(&mut socket, store, mls, sink, &mut live.outbox).await {
@@ -2349,13 +2399,7 @@ async fn pump(
         // То, что не ушло из-за обрыва. Досылаем до всего остального: порядок
         // сообщений для человека важнее, чем свежесть.
         for waiting in std::mem::take(&mut live.outbox) {
-            let mut sealed = Some(SealedSenderCtx {
-                tickets: &mut live.tickets,
-                inflight: &mut live.anon_inflight,
-                required: live.require_anonymous,
-                available: greeting.sealed_sender,
-                outcomes: anon_tx.clone(),
-            });
+            let mut sealed = Some(SealedSenderCtx { required: live.require_anonymous });
             if let Err(err) = deliver(
                 &mut socket, store, mls, sink, &mut pending, waiting, &mut live.outbox,
                 sealed.as_mut(),
@@ -2369,6 +2413,8 @@ async fn pump(
             }
         }
     }
+
+    if authenticated { flush_anonymous(&mut socket, store, live, greeting.sealed_sender, &anon_tx).await?; }
 
     let mut ticker = tokio::time::interval(Duration::from_secs(greeting.heartbeat_sec));
     ticker.tick().await; // первый тик срабатывает сразу — пропускаем
@@ -2421,6 +2467,7 @@ async fn pump(
                             }),
                             Err(err) => fail(sink, "storage", &err.to_string()),
                         }
+                        sync_server_privacy(&mut socket, store, &mut pending_username).await?;
                         continue;
                     }
                     if matches!(proto::split(&data), Ok((op::USERNAME_FOUND, _))) {
@@ -2532,6 +2579,17 @@ async fn pump(
 
                 // Локальные команды отвечают одинаково, подключены мы или нет.
                 if handle_local(&command, store, sink) {
+                    if matches!(command, Command::PrivacyMaximize) {
+                        cancel_removed_anonymous(store, live)?;
+                        let _ = socket.close(None).await;
+                        sink(Event::Disconnected { reason: "Профиль сохранён; подключаемся через Onion".into() });
+                        return Ok(Outcome::Closed);
+                    }
+                    if authenticated && matches!(command, Command::PrivacySet { .. }) {
+                        grant_missing(&mut socket, store, mls, sink, live).await?;
+                        sync_server_privacy(&mut socket, store, &mut pending_username).await?;
+                        flush_anonymous(&mut socket, store, live, greeting.sealed_sender, &anon_tx).await?;
+                    }
                     if matches!(command, Command::ClearConversation { .. } | Command::DeleteConversation { .. }) {
                         cancel_removed_anonymous(store, live)?;
                     }
@@ -2800,7 +2858,7 @@ async fn pump(
                         match mls.remove_member(&group_id, &target) {
                             Ok(commit) => {
                                 persist(store, mls, sink);
-                                fan_out(&mut socket, mls, &group_id, &commit, None).await?;
+                                fan_out(&mut socket, store, mls, &group_id, &commit, None, None).await?;
                                 if let Some((_, meta)) = load_meta(store, &group_id) {
                                     sink(group_event(mls, store, &group_id, &meta));
                                 }
@@ -2827,7 +2885,10 @@ async fn pump(
                                 let mut id = [0u8; ID_LEN];
                                 id.copy_from_slice(&random_bytes(ID_LEN));
                                 store.insert_message(&id, &group_id, true, now_millis(), body.as_bytes())?;
-                                fan_out(&mut socket, mls, &group_id, &ciphertext, None).await?;
+                                let logical_id = content_json(&body)
+                                    .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_owned))
+                                    .unwrap_or_else(|| hex::encode(id));
+                                fan_out(&mut socket, store, mls, &group_id, &ciphertext, None, Some(&logical_id)).await?;
                             }
                             Err(CoreError::Anomaly(detail)) => {
                                 sink(Event::Anomaly { kind: "send_blocked".into(), detail });
@@ -2837,6 +2898,8 @@ async fn pump(
                     }
                     Command::GroupForget { group } => {
                         if let Ok(group_id) = hex::decode(&group) {
+                            crate::anon_queue::forget_thread(store, &group_id)?;
+                            cancel_removed_anonymous(store, live)?;
                             store.forget_group(&group_id)?;
                             sink(Event::GroupForgotten { group });
                         }
@@ -3032,13 +3095,7 @@ async fn pump(
                         } else if let Err(err) = on_send(
                             &mut socket, store, mls, sink, &mut pending, &recipient_device, body,
                             &mut live.outbox,
-                            Some(SealedSenderCtx {
-                                tickets: &mut live.tickets,
-                inflight: &mut live.anon_inflight,
-                required: live.require_anonymous,
-                                available: greeting.sealed_sender,
-                                outcomes: anon_tx.clone(),
-                            }),
+                            Some(SealedSenderCtx { required: live.require_anonymous }),
                         )
                         .await
                         {
@@ -3084,6 +3141,7 @@ async fn pump(
                         fail(sink, "busy", &format!("already connected: {other:?}"));
                     }
                 }
+                if authenticated { flush_anonymous(&mut socket, store, live, greeting.sealed_sender, &anon_tx).await?; }
             }
             _ = ticker.tick() => {
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
@@ -3132,14 +3190,9 @@ async fn on_frame(
         op::QUEUE_DONE => sink(Event::QueueDone),
         op::ENVELOPE => on_envelope(socket, body, store, mls, sink).await?,
         op::KEYPKG => {
-            let sealed = Some(SealedSenderCtx {
-                tickets: &mut live.tickets,
-                inflight: &mut live.anon_inflight,
-                required: live.require_anonymous,
-                available: sealed_sender_available,
-                outcomes: anon_tx.clone(),
-            });
-            on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox, sealed).await?
+            let sealed = Some(SealedSenderCtx { required: live.require_anonymous });
+            on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox, sealed).await?;
+            flush_anonymous(socket, store, live, sealed_sender_available, anon_tx).await?
         }
         // Sealed sender: пачка билетов, заказанная encrypt_and_send. Спрятать
         // их негде, кроме как здесь — TICKET_REQUEST не привязан к конкретной
@@ -3563,13 +3616,27 @@ fn group_event(mls: &Mls, store: &Store, group_id: &[u8], meta: &GroupMeta) -> E
 /// группы здесь про десятки участников, а не про тысячи.
 async fn fan_out(
     socket: &mut Socket,
+    store: &Store,
     mls: &Mls,
     group_id: &[u8],
     payload: &[u8],
     skip: Option<[u8; KEY_LEN]>,
+    message_id: Option<&str>,
 ) -> Result<()> {
     let me = mls.device_pub();
-    for member in mls.members(group_id)? {
+    let members: Vec<_> = mls.members(group_id)?.into_iter()
+        .filter(|member| *member != me && Some(*member) != skip).collect();
+    store.save_mls(&mls.signer_public(), &mls.snapshot())?;
+    if anonymous_required(store)? {
+        let envelopes = members.into_iter().map(|device| crate::anon_queue::Envelope {
+            client_ref: random_bytes(ID_LEN).try_into().expect("random id length"),
+            device, conversation: group_id.to_vec(), logical_id: message_id.map(str::to_owned),
+            ciphertext: payload.to_vec(), expires_at: None,
+            kind: if message_id.is_some() { crate::anon_queue::Kind::Message } else { crate::anon_queue::Kind::Essential },
+        }).collect();
+        return crate::anon_queue::enqueue_batch(store, envelopes);
+    }
+    for member in members {
         if member == me || Some(member) == skip {
             continue;
         }
@@ -3591,6 +3658,7 @@ async fn fan_out(
 /// такой же непрозрачный конверт, как и у любого другого.
 async fn announce_group(
     socket: &mut Socket,
+    store: &Store,
     mls: &mut Mls,
     group_id: &[u8],
     meta: &GroupMeta,
@@ -3599,7 +3667,7 @@ async fn announce_group(
     // Добивается только то, что уходит в шифр: в базе остаётся чистое тело,
     // иначе ступени раздували бы хранилище на обоих устройствах.
     let ciphertext = mls.encrypt_group(group_id, &crate::padding::pad(body.as_bytes()))?;
-    fan_out(socket, mls, group_id, &ciphertext, None).await
+    fan_out(socket, store, mls, group_id, &ciphertext, None, None).await
 }
 
 /// Досылает приглашение, когда приехал KeyPackage приглашённого.
@@ -3626,11 +3694,11 @@ async fn finish_invite(
 
     // Коммит — тем, кто уже был в группе; приглашение — новичку. Порядок важен:
     // без Welcome ему нечем разобрать даже следующий коммит.
-    fan_out(socket, mls, group_id, &commit, Some(device)).await?;
-    send_envelope(socket, &device, &welcome).await?;
+    fan_out(socket, store, mls, group_id, &commit, Some(device), None).await?;
+    send_envelope(socket, store, &device, &welcome, group_id).await?;
 
     if let Some((_, meta)) = load_meta(store, group_id) {
-        announce_group(socket, mls, group_id, &meta).await?;
+        announce_group(socket, store, mls, group_id, &meta).await?;
         sink(group_event(mls, store, group_id, &meta));
     }
     Ok(())
@@ -3669,7 +3737,7 @@ async fn on_key_package(
     sink: &EventSink,
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     outbox: &mut Outbox,
-    mut sealed: Option<SealedSenderCtx<'_>>,
+    mut sealed: Option<SealedSenderCtx>,
 ) -> Result<()> {
     let (client_ref, package) = proto::parse_keypkg(body)?;
     let Some(claim) = pending.remove(&client_ref) else {
@@ -3715,7 +3783,7 @@ async fn on_key_package(
 
     // Сначала приглашение, потом само сообщение — порядок важен: без Welcome
     // получателю нечем расшифровать.
-    if let Err(err) = send_envelope(socket, &waiting.device, &welcome).await {
+    if let Err(err) = send_envelope(socket, store, &waiting.device, &welcome, &thread).await {
         outbox.push(waiting);
         return Err(err);
     }
@@ -3789,7 +3857,7 @@ async fn deliver_to_person(
     body: String,
     stored: bool,
     outbox: &mut Outbox,
-    mut sealed: Option<SealedSenderCtx<'_>>,
+    mut sealed: Option<SealedSenderCtx>,
 ) -> Result<()> {
     let devices = recipients(store, &device);
     let mut saved = stored;
@@ -3813,7 +3881,7 @@ async fn on_send(
     recipient_device: &str,
     body: String,
     outbox: &mut Outbox,
-    sealed: Option<SealedSenderCtx<'_>>,
+    sealed: Option<SealedSenderCtx>,
 ) -> Result<()> {
     let device = hex::decode(recipient_device).map_err(|_| CoreError::BadFrame)?;
     let device: [u8; KEY_LEN] = device.try_into().map_err(|_| CoreError::BadKeyLength)?;
@@ -3835,7 +3903,7 @@ async fn deliver(
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     waiting: PendingSend,
     outbox: &mut Outbox,
-    sealed: Option<&mut SealedSenderCtx<'_>>,
+    sealed: Option<&mut SealedSenderCtx>,
 ) -> Result<()> {
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
@@ -3872,8 +3940,9 @@ async fn encrypt_and_send(
     group_id: &[u8],
     waiting: PendingSend,
     outbox: &mut Outbox,
-    sealed: Option<&mut SealedSenderCtx<'_>>,
+    sealed: Option<&mut SealedSenderCtx>,
 ) -> Result<()> {
+    if !permits_activity(store, &waiting.body, &waiting.device)? { return Ok(()) }
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
     }
@@ -3904,25 +3973,19 @@ async fn encrypt_and_send(
 
     // Persist before starting any network task. A retry uses the same MLS
     // ciphertext and client ref, including across a process restart.
-    if let Some(ctx) = sealed.filter(|ctx| ctx.required) {
+    if sealed.as_ref().is_some_and(|ctx| ctx.required) || anonymous_required(store)? {
+        let ephemeral = activity_rule(body).is_some();
+        let kind = if ephemeral { crate::anon_queue::Kind::Ephemeral }
+            else if crate::access::is_control(body) { crate::anon_queue::Kind::Essential }
+            else { crate::anon_queue::Kind::Message };
         crate::anon_queue::enqueue(store, crate::anon_queue::Envelope {
-            client_ref, device: *device, ciphertext: ciphertext.clone(),
+            client_ref, device: *device, ciphertext,
             conversation: store.thread_of(group_id)?,
-            logical_id: serde_json::from_str::<serde_json::Value>(body).ok()
+            logical_id: content_json(body)
                 .and_then(|value| value.get("id").and_then(|id| id.as_str()).map(str::to_owned)),
+            kind, expires_at: if ephemeral { Some(now_millis() + 15_000) } else { None },
         })?;
-        if ctx.available {
-            if ctx.tickets.len() < TICKET_LOW_WATERMARK {
-                send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
-            }
-            if ctx.inflight.len() < 4 {
-                if let (Some(route), Some(ticket)) = (pick_onion_route(store), ctx.tickets.pop_front()) {
-                    let task = spawn_anon_send(route, client_ref, ticket, *device, ciphertext, ctx.outcomes.clone());
-                    ctx.inflight.insert(client_ref, task);
-                }
-            }
-        }
-        if !ctx.inflight.contains_key(&client_ref) {
+        if !waiting.stored {
             fail(sink, "anonymous_delivery_waiting",
                 "Сообщение сохранено и ждёт анонимной доставки. Перехода на обычный канал не будет.");
         }
@@ -4046,10 +4109,11 @@ fn spawn_anon_send(
     device: [u8; KEY_LEN],
     ciphertext: Vec<u8>,
     outcomes: mpsc::UnboundedSender<AnonOutcome>,
+    expires_at: Option<i64>,
 ) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         let result = match tokio::time::timeout(
-            ANON_SEND_TIMEOUT,
+            expires_at.map(|at| Duration::from_millis(at.saturating_sub(now_millis()).max(0) as u64).min(ANON_SEND_TIMEOUT)).unwrap_or(ANON_SEND_TIMEOUT),
             send_anon_once(route, client_ref, ticket, device, ciphertext),
         ).await {
             Ok(Ok(envelope_id)) => Ok(envelope_id),
@@ -4079,17 +4143,16 @@ async fn flush_anonymous(
     if !available || live.anon_retry_at.is_some_and(|at| at > tokio::time::Instant::now()) {
         return Ok(());
     }
-    let queue = crate::anon_queue::load(store)?;
+    let queue = crate::anon_queue::prune_expired(store, now_millis())?;
     if queue.is_empty() { return Ok(()); }
     if live.tickets.len() < TICKET_LOW_WATERMARK {
         send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
     }
-    for envelope in queue {
-        if live.anon_inflight.len() >= 4 { break; }
-        if live.anon_inflight.contains_key(&envelope.client_ref) { continue; }
+    let inflight = live.anon_inflight.keys().copied().collect();
+    for envelope in crate::anon_queue::ready(&queue, &inflight, 4usize.saturating_sub(live.anon_inflight.len())) {
         if let (Some(route), Some(ticket)) = (pick_onion_route(store), live.tickets.pop_front()) {
             let task = spawn_anon_send(route, envelope.client_ref, ticket, envelope.device,
-                envelope.ciphertext, outcomes.clone());
+                envelope.ciphertext, outcomes.clone(), envelope.expires_at);
             live.anon_inflight.insert(envelope.client_ref, task);
         } else { break; }
     }
@@ -4097,9 +4160,15 @@ async fn flush_anonymous(
 }
 
 /// Служебный кадр MLS (Welcome, коммит) едет тем же конвертом, что и сообщения.
-async fn send_envelope(socket: &mut Socket, device: &[u8; KEY_LEN], payload: &[u8]) -> Result<()> {
+async fn send_envelope(socket: &mut Socket, store: &Store, device: &[u8; KEY_LEN], payload: &[u8], conversation: &[u8]) -> Result<()> {
     let mut client_ref = [0u8; ID_LEN];
     client_ref.copy_from_slice(&random_bytes(ID_LEN));
+    if anonymous_required(store)? {
+        return crate::anon_queue::enqueue(store, crate::anon_queue::Envelope {
+            client_ref, device: *device, ciphertext: payload.to_vec(), conversation: conversation.to_vec(),
+            logical_id: None, kind: crate::anon_queue::Kind::Essential, expires_at: None,
+        });
+    }
     send(socket, proto::send_frame(&client_ref, device, DEFAULT_TTL_SEC, payload)).await
 }
 
@@ -4125,6 +4194,66 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn maximum_profile_is_durable_offline_and_blocks_receipts_in_core() {
+        let store = TempStore::new("maximum-profile");
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received = events.clone();
+        let sink: EventSink = Arc::new(move |event| received.lock().unwrap().push(event));
+        let mut previous = crate::privacy::Privacy::default();
+        previous.typing.scope = crate::privacy::Scope::Everyone;
+        previous.typing.allow.push(hex::encode([2; KEY_LEN]));
+        store.0.save_setting(PRIVACY_KEY, &serde_json::to_vec(&previous).unwrap()).unwrap();
+        assert!(handle_local(&Command::PrivacyMaximize, &store.0, &sink));
+        assert!(matches!(events.lock().unwrap().last(), Some(Event::PrivacyMaximized { .. })));
+        let saved = load_privacy_checked(&store.0).unwrap();
+        assert_eq!(saved.discoverable.scope, crate::privacy::Scope::Nobody);
+        assert!(anonymous_required(&store.0).unwrap());
+        assert!(!permits_activity(&store.0, &crate::access::typing_signal(true), &[2; KEY_LEN]).unwrap());
+        assert!(!permits_activity(&store.0, "\u{2063}OBS1:{\"v\":1,\"type\":\"read\",\"ids\":[\"m1\"]}", &[2; KEY_LEN]).unwrap());
+        assert_eq!(content_json("\u{2063}OBS1:{\"type\":\"text\",\"id\":\"m1\"}").unwrap()["id"], "m1");
+        store.0.save_setting(PRIVACY_KEY, b"broken").unwrap();
+        assert!(handle_local(&Command::PrivacyMaximize, &store.0, &sink));
+        assert_eq!(store.0.load_setting(PRIVACY_KEY).unwrap().unwrap(), b"broken");
+        assert!(matches!(events.lock().unwrap().last(), Some(Event::Failed { code, .. }) if code == "privacy_preset"));
+    }
+
+    #[tokio::test]
+    async fn group_welcome_and_payload_use_queue_without_authenticated_send() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store = TempStore::new("private-group");
+        let alice_key = keys::SecretKey::generate();
+        let bob_key = keys::SecretKey::generate();
+        let carol_key = keys::SecretKey::generate();
+        let mut alice = Mls::create(&alice_key).unwrap();
+        let mut bob = Mls::create(&bob_key).unwrap();
+        let mut carol = Mls::create(&carol_key).unwrap();
+        let group = alice.create_group().unwrap();
+        let (_, welcome) = alice.add_members(&group, &[
+            (bob.key_packages(1).unwrap().remove(0), bob_key.public()),
+            (carol.key_packages(1).unwrap().remove(0), carol_key.public()),
+        ]).unwrap();
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let transport: Box<dyn NetworkStream> = Box::new(pipe);
+        let mut socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport), Role::Client, None).await;
+        let mut observer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+        send_envelope(&mut socket, &store.0, &bob_key.public(), &welcome, &group).await.unwrap();
+        send_envelope(&mut socket, &store.0, &carol_key.public(), &welcome, &group).await.unwrap();
+        let payload = alice.encrypt_group(&group, b"private group hello").unwrap();
+        fan_out(&mut socket, &store.0, &alice, &group, &payload, None, Some("m1")).await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(30), observer.next()).await.is_err());
+        let queued = crate::anon_queue::load(&store.0).unwrap();
+        assert_eq!(queued.len(), 4);
+        for (recipient, key) in [(&mut bob, bob_key.public()), (&mut carol, carol_key.public())] {
+            let packets: Vec<_> = queued.iter().filter(|item| item.device == key).collect();
+            assert!(matches!(recipient.process(&packets[0].ciphertext).unwrap(), Incoming::Joined { .. }));
+            match recipient.process(&packets[1].ciphertext).unwrap() {
+                Incoming::Message { plaintext, .. } => assert_eq!(plaintext, b"private group hello"),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn private_message_waits_for_tickets_without_authenticated_send() {
         use tokio_tungstenite::tungstenite::protocol::Role;
@@ -4142,14 +4271,13 @@ mod tests {
         let mut observer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
         let sink: EventSink = Arc::new(|_| {});
         let mut outbox = Vec::new();
-        let mut tickets = VecDeque::new();
-        let mut inflight = HashMap::new();
         let (tx, _) = mpsc::unbounded_channel();
-        let mut ctx = SealedSenderCtx { tickets: &mut tickets, inflight: &mut inflight,
-            available: true, required: true, outcomes: tx };
+        let mut ctx = SealedSenderCtx { required: true };
         encrypt_and_send(&mut socket, &store.0, &mut alice, &sink, &group,
             PendingSend { device: bob_key.public(), body: "hello".into(), stored: false },
             &mut outbox, Some(&mut ctx)).await.unwrap();
+        let mut live = Live::default();
+        flush_anonymous(&mut socket, &store.0, &mut live, true, &tx).await.unwrap();
         let frame = observer.next().await.unwrap().unwrap().into_data();
         assert_eq!(proto::split(&frame).unwrap().0, op::TICKET_REQUEST);
         assert!(tokio::time::timeout(Duration::from_millis(30), observer.next()).await.is_err(),
@@ -4165,12 +4293,12 @@ mod tests {
         let store = TempStore::new("anonymous-failure");
         let envelope = crate::anon_queue::Envelope {
             client_ref: [1; ID_LEN], device: [2; KEY_LEN], ciphertext: vec![3; 256],
-            conversation: vec![4], logical_id: None,
+            conversation: vec![4], logical_id: None, kind: crate::anon_queue::Kind::Message, expires_at: None,
         };
         crate::anon_queue::enqueue(&store.0, envelope.clone()).unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
         spawn_anon_send("not-a-url".into(), envelope.client_ref, [0; proto::TICKET_LEN],
-            envelope.device, envelope.ciphertext.clone(), tx);
+            envelope.device, envelope.ciphertext.clone(), tx, None);
         let outcome = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
         assert!(outcome.result.is_err());
         assert_eq!(outcome.client_ref, envelope.client_ref);

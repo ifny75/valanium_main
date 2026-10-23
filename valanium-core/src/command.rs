@@ -143,6 +143,8 @@ pub enum Command {
     DirectoryForget { device: String },
     /// Прочитать правила приватности. Работает без подключения.
     PrivacyGet,
+    /// Apply the maximum privacy profile to the saved document, also offline.
+    PrivacyMaximize,
     /// Заменить правила приватности целиком.
     ///
     /// Целиком, а не по одному полю, намеренно: экран настроек всё равно держит
@@ -425,6 +427,7 @@ pub enum Event {
     Directory { entries: Vec<DirectoryItem> },
     /// Текущие правила приватности.
     Privacy { privacy: crate::privacy::Privacy },
+    PrivacyMaximized { privacy: crate::privacy::Privacy },
     /// Запись для восстановления. Показывать один раз и просить записать: она
     /// равносильна личности, и в логи или скриншоты ей нельзя.
     ///

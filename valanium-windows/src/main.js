@@ -2432,8 +2432,20 @@ const handlers = {
     renderInvites();
   },
 
+  privacy_maximized(event) { ownEcho = false; handlers.privacy(event); },
+
   privacy(event) {
     privacy = event.privacy;
+    if (maximumPrivacyPending && event.type === "privacy_maximized") {
+      maximumPrivacyPending = false;
+      $("privacy-maximize").disabled = false;
+      preferences.transport = "onion";
+      savePreferences();
+      applyPreferences();
+      ensureOnionize().then(() => submit({ type: "connect", url: SERVER_URLS.onion }))
+        .catch(error => toast(`Профиль сохранён. Tor не готов: ${error.message ?? error}`));
+      toast("Профиль сохранён. Серверные ограничения обновятся при подключении через Onion.");
+    }
     if (ownEcho) {
       // Подтверждение собственной записи: на экране всё уже так и есть,
       // обновить надо только счётчики исключений.
@@ -2502,6 +2514,7 @@ const handlers = {
   },
 
   failed(event) {
+    if (event.code === "privacy_preset") { maximumPrivacyPending = false; $("privacy-maximize").disabled = false; }
     if (event.code === "anonymous_delivery_waiting") { toast(event.message); return; }
     if (event.code === "pin_not_pending" || (event.code === "storage" && state.pendingPinAction)) {
       state.pendingPinAction = null;
@@ -4030,6 +4043,16 @@ const CLIENT_ONLY_NOTE = "Проверяется на этом устройст�
 
 /** Текущий документ правил. Приходит из ядра, туда же и уезжает. */
 let privacy = null;
+let maximumPrivacyPending = false;
+$("privacy-maximize").addEventListener("click", async () => {
+  if (maximumPrivacyPending) return;
+  maximumPrivacyPending = true;
+  $("privacy-maximize").disabled = true;
+  if (!await submit({ type: "privacy_maximize" })) {
+    maximumPrivacyPending = false;
+    $("privacy-maximize").disabled = false;
+  }
+});
 
 /** Какая группа правил открыта. Пятнадцать правил одним списком не читаются. */
 let privacyTab = 0;
@@ -4100,15 +4123,7 @@ function privacyRow(spec) {
     button.addEventListener("click", () => {
       privacy[spec.key].scope = scope;
       savePrivacy();
-      // Видимость в поиске хранится и на сервере — иначе настройка осталась бы
-      // записью в локальной базе и ничего не меняла.
-      if (spec.key === "discoverable" && state.username) {
-        submit({ type: "username_set", name: state.username, discoverable: scope !== "nobody" });
-      }
-      // «Все» — дверь открыта; любой другой круг сервер проверяет пропусками.
-      if (spec.key === "direct_messages") {
-        submit({ type: "access_set", policy: scope === "everyone" ? "everyone" : "passes" });
-      }
+      // Core synchronizes the persisted document with the server.
       // Обновляем только этот переключатель. Полная перерисовка списка
       // сбрасывала бы фокус в его начало, и пройти настройки с клавиатуры было
       // бы нельзя: каждый выбор возвращал бы к первому правилу.

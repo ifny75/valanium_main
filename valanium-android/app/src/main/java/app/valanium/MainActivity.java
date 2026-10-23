@@ -2788,9 +2788,19 @@ public final class MainActivity extends Activity implements Events.Listener {
             case "history":
                 onHistory(event);
                 break;
+            case "privacy_maximized":
             case "privacy":
                 privacy = event.optJSONObject("privacy");
                 if (screenPrivacySection.getVisibility() == View.VISIBLE) renderPrivacy();
+                if (maximumPrivacyPending && "privacy_maximized".equals(event.optString("type"))) {
+                    maximumPrivacyPending = false;
+                    findViewById(R.id.privacy_maximize).setEnabled(true);
+                    appearancePreferences.edit().putString(TRANSPORT_KEY, "onion")
+                            .putBoolean("onion_default_v1", true).apply();
+                    ((RoutingView) findViewById(R.id.transport_mode)).setMode("onion");
+                    connectSelectedRoute();
+                    toast("Профиль сохранён. Подключаемся через Onion; серверные ограничения обновятся при подключении.");
+                }
                 break;
             case "directory":
                 directory.clear();
@@ -2889,6 +2899,10 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void onFailed(JSONObject event) {
         String code = event.optString("code");
+        if ("privacy_preset".equals(code)) {
+            maximumPrivacyPending = false;
+            findViewById(R.id.privacy_maximize).setEnabled(true);
+        }
         if ("anonymous_delivery_waiting".equals(code)) {
             toast(event.optString("message"));
             return;
@@ -5532,6 +5546,18 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Какая группа правил открыта: пятнадцать правил одним списком не читаются. */
     private int privacyTab;
+    private boolean maximumPrivacyPending;
+
+    private void applyMaximumPrivacy() {
+        if (!foregroundAuthorized || maximumPrivacyPending) return;
+        maximumPrivacyPending = true;
+        findViewById(R.id.privacy_maximize).setEnabled(false);
+        if (!ValaniumService.core().submit(Commands.privacyMaximize())) {
+            maximumPrivacyPending = false;
+            findViewById(R.id.privacy_maximize).setEnabled(true);
+            toast(getString(R.string.core_busy));
+        }
+    }
 
     /**
      * Помечает выбранное состояние заливкой акцентом.
@@ -5595,6 +5621,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      * что и в настройках, попадает под палец и подписывается целиком.
      */
     private void renderPrivacySections() {
+        findViewById(R.id.privacy_maximize).setOnClickListener(v -> applyMaximumPrivacy());
         LinearLayout host = findViewById(R.id.privacy_sections);
         host.removeAllViews();
         int index = 0;
@@ -5784,14 +5811,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             return;
         }
         savePrivacy();
-        // Видимость в поиске и политика доступа живут ещё и на сервере: без
-        // этого настройка осталась бы записью в локальной базе.
-        if ("discoverable".equals(key) && username != null) {
-            submit(Commands.usernameSet(username, !"nobody".equals(scope)));
-        }
-        if ("direct_messages".equals(key)) {
-            submit(Commands.accessSet("everyone".equals(scope) ? "everyone" : "passes"));
-        }
+        // Core owns both durable settings and server synchronization.
         renderPrivacy();
     }
 

@@ -178,6 +178,10 @@ public final class Commands {
      * Java и проверяется без эмулятора. Поэтому вызывающий передаёт уже
      * сериализованный документ — тот самый, что пришёл из ядра.
      */
+    public static String privacyMaximize() {
+        return "{\"type\":\"privacy_maximize\"}";
+    }
+
     public static String privacySet(String privacyJson) {
         return "{\"type\":\"privacy_set\",\"privacy\":" + privacyJson + "}";
     }

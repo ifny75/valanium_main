@@ -156,6 +156,26 @@ impl Default for Privacy {
 }
 
 impl Privacy {
+    /// Harden an existing document without discarding explicit deny lists.
+    /// Allow exceptions must be cleared or they would bypass the new scopes.
+    pub fn maximize(&mut self) {
+        for rule in [&mut self.presence, &mut self.last_seen, &mut self.read_receipts,
+            &mut self.typing, &mut self.voice_recording_hint, &mut self.link_previews,
+            &mut self.discoverable, &mut self.profile_username, &mut self.calls] {
+            rule.scope = Scope::Nobody;
+            rule.allow.clear();
+        }
+        for rule in [&mut self.direct_messages, &mut self.media, &mut self.voice, &mut self.files] {
+            rule.scope = Scope::Approved;
+            rule.allow.clear();
+        }
+        for rule in [&mut self.profile_avatar, &mut self.profile_name] {
+            rule.scope = Scope::Contacts;
+            rule.allow.clear();
+        }
+        self.invite_requests = false;
+    }
+
     /// Правило по имени. Интерфейсу удобнее обращаться строкой: тогда экран
     /// настроек — это список, а не пятнадцать отдельных обработчиков.
     pub fn rule(&self, name: &str) -> Option<&Rule> {
@@ -195,6 +215,23 @@ mod tests {
 
     const ALICE: &str = "aa";
     const BOB: &str = "bb";
+
+    #[test]
+    fn maximize_removes_bypasses_but_preserves_blocks_and_is_idempotent() {
+        let mut privacy = Privacy::default();
+        privacy.typing.allow.push(ALICE.into());
+        privacy.typing.deny.push(BOB.into());
+        privacy.maximize();
+        assert!(!privacy.typing.permits(ALICE, Relation::Contact));
+        assert_eq!(privacy.typing.deny, vec![BOB]);
+        assert_eq!(privacy.discoverable.scope, Scope::Nobody);
+        assert!(!privacy.direct_messages.permits(ALICE, Relation::Unknown));
+        assert!(privacy.direct_messages.permits(ALICE, Relation::Approved));
+        assert!(!privacy.invite_requests);
+        let once = privacy.clone();
+        privacy.maximize();
+        assert_eq!(privacy, once);
+    }
 
     #[test]
     fn scope_decides_when_there_are_no_exceptions() {

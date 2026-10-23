@@ -7,6 +7,14 @@ const KEY: &str = "anonymous_outbox_v1";
 const MAX_ITEMS: usize = 128;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) enum Kind {
+    #[default]
+    Message,
+    Essential,
+    Ephemeral,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Envelope {
     pub client_ref: [u8; 16],
@@ -14,6 +22,10 @@ pub(crate) struct Envelope {
     pub conversation: Vec<u8>,
     pub logical_id: Option<String>,
     pub ciphertext: Vec<u8>,
+    #[serde(default)]
+    pub kind: Kind,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
 }
 
 pub(crate) fn load(store: &Store) -> Result<Vec<Envelope>> {
@@ -28,16 +40,24 @@ fn save(store: &Store, queue: &[Envelope]) -> Result<()> {
 }
 
 pub(crate) fn enqueue(store: &Store, envelope: Envelope) -> Result<()> {
+    enqueue_batch(store, vec![envelope])
+}
+
+/// A group fan-out either fits in full or does not change the queue at all.
+pub(crate) fn enqueue_batch(store: &Store, envelopes: Vec<Envelope>) -> Result<()> {
     let mut queue = load(store)?;
-    if queue.iter().any(|item| item.client_ref == envelope.client_ref) {
-        return Err(CoreError::Rejected("anonymous_queue_duplicate".into()));
+    let mut ids: std::collections::HashSet<_> = queue.iter().map(|item| item.client_ref).collect();
+    for item in &envelopes {
+        if !ids.insert(item.client_ref) {
+            return Err(CoreError::Rejected("anonymous_queue_duplicate".into()));
+        }
     }
-    if queue.len() >= MAX_ITEMS
+    if queue.len().saturating_add(envelopes.len()) > MAX_ITEMS
         || queue.iter().map(|item| item.ciphertext.len()).sum::<usize>()
-            .saturating_add(envelope.ciphertext.len()) > MAX_BYTES {
+            .saturating_add(envelopes.iter().map(|item| item.ciphertext.len()).sum::<usize>()) > MAX_BYTES {
         return Err(CoreError::Rejected("anonymous_queue_full".into()));
     }
-    queue.push(envelope);
+    queue.extend(envelopes);
     save(store, &queue)
 }
 
@@ -61,8 +81,42 @@ pub(crate) fn cancel_message(store: &Store, conversation: &[u8], id: &str) -> Re
 
 pub(crate) fn cancel_thread(store: &Store, conversation: &[u8]) -> Result<()> {
     let mut queue = load(store)?;
+    // Clearing local history must not discard an undelivered Welcome/commit.
+    queue.retain(|item| item.conversation != conversation || item.kind == Kind::Essential);
+    save(store, &queue)
+}
+
+pub(crate) fn forget_thread(store: &Store, conversation: &[u8]) -> Result<()> {
+    let mut queue = load(store)?;
     queue.retain(|item| item.conversation != conversation);
     save(store, &queue)
+}
+
+pub(crate) fn drop_ephemeral(store: &Store) -> Result<()> {
+    let mut queue = load(store)?;
+    queue.retain(|item| item.kind != Kind::Ephemeral);
+    save(store, &queue)
+}
+
+pub(crate) fn prune_expired(store: &Store, now: i64) -> Result<Vec<Envelope>> {
+    let mut queue = load(store)?;
+    let before = queue.len();
+    queue.retain(|item| item.expires_at.map_or(true, |expires| expires > now));
+    if before != queue.len() { save(store, &queue)?; }
+    Ok(queue)
+}
+
+/// At most one envelope per device may be active. This keeps Welcome and
+/// commits ahead of their dependent application messages, including retries.
+pub(crate) fn ready(queue: &[Envelope], inflight: &std::collections::HashSet<[u8; 16]>, limit: usize) -> Vec<Envelope> {
+    let mut busy: std::collections::HashSet<_> = queue.iter()
+        .filter(|item| inflight.contains(&item.client_ref)).map(|item| item.device).collect();
+    let mut ready = Vec::new();
+    for item in queue {
+        if ready.len() >= limit { break; }
+        if busy.insert(item.device) { ready.push(item.clone()); }
+    }
+    ready
 }
 
 #[cfg(test)]
@@ -70,7 +124,8 @@ mod tests {
     use super::*;
     fn sample(id: u8) -> Envelope {
         Envelope { client_ref: [id; 16], device: [2; 32], conversation: vec![4],
-            logical_id: Some(format!("message-{id}")), ciphertext: vec![3; 256] }
+            logical_id: Some(format!("message-{id}")), ciphertext: vec![3; 256],
+            kind: Kind::Message, expires_at: None }
     }
     #[test]
     fn reopen_preserves_exact_ciphertext_and_ack_removes_only_one() {
@@ -115,5 +170,48 @@ mod tests {
         assert_eq!(load(&store).unwrap(), vec![sample(2)]);
         cancel_thread(&store, &[4]).unwrap();
         assert!(load(&store).unwrap().is_empty());
+    }
+
+    #[test]
+    fn scheduler_keeps_welcome_commit_and_message_order_per_recipient() {
+        let welcome = sample(1);
+        let commit = sample(2);
+        let message = sample(3);
+        let mut other = sample(4);
+        other.device = [5; 32];
+        let queue = vec![welcome.clone(), commit.clone(), message.clone(), other.clone()];
+        assert_eq!(ready(&queue, &Default::default(), 4), vec![welcome.clone(), other.clone()]);
+        let inflight = [welcome.client_ref].into_iter().collect();
+        assert_eq!(ready(&queue, &inflight, 4), vec![other.clone()]);
+        assert_eq!(ready(&queue[1..], &Default::default(), 4), vec![commit, other]);
+    }
+
+    #[test]
+    fn batch_overflow_is_atomic_and_expiry_keeps_required_commits() {
+        let store = Store::open(":memory:", b"test").unwrap();
+        enqueue_batch(&store, (0..127).map(sample).collect()).unwrap();
+        assert!(enqueue_batch(&store, vec![sample(127), sample(128)]).is_err());
+        assert_eq!(load(&store).unwrap().len(), 127);
+        forget_thread(&store, &[4]).unwrap();
+        let mut commit = sample(1);
+        commit.kind = Kind::Essential;
+        let mut typing = sample(2);
+        typing.kind = Kind::Ephemeral;
+        typing.expires_at = Some(100);
+        enqueue_batch(&store, vec![commit.clone(), typing]).unwrap();
+        assert_eq!(prune_expired(&store, 100).unwrap(), vec![commit.clone()]);
+        enqueue(&store, sample(3)).unwrap();
+        cancel_thread(&store, &[4]).unwrap();
+        assert_eq!(load(&store).unwrap(), vec![commit]);
+        forget_thread(&store, &[4]).unwrap();
+        assert!(load(&store).unwrap().is_empty());
+    }
+
+    #[test]
+    fn old_queue_records_remain_readable() {
+        let mut old = serde_json::to_value(sample(1)).unwrap();
+        old.as_object_mut().unwrap().remove("kind");
+        old.as_object_mut().unwrap().remove("expires_at");
+        assert_eq!(serde_json::from_value::<Envelope>(old).unwrap(), sample(1));
     }
 }

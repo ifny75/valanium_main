@@ -38,3 +38,29 @@ test('activity signals stay disabled while privacy settings are still loading', 
     assert.equal(vm.runInContext(`permits('${rule}', 'peer')`, context), false);
   }
 });
+
+test('only the dedicated preset acknowledgement activates onion and reconnects', async () => {
+  const start = source.indexOf('  privacy(event) {');
+  const end = source.indexOf('\n  },', start);
+  const method = 'function ' + source.slice(start, end + 4).trim().replace(/,$/, '').replace('privacy(event)', 'receivePrivacy(event)');
+  const button = { disabled: true };
+  const calls = [];
+  const context = vm.createContext({ privacy: null, maximumPrivacyPending: true,
+    preferences: { transport: 'basic' }, ownEcho: false, exceptionsFor: null,
+    $: () => button, savePreferences() {}, applyPreferences() {}, toast() {},
+    renderPrivacy() {}, updatePrivacyCounts() {}, renderExceptions() {},
+    ensureOnionize: async () => { calls.push('tor'); },
+    submit: event => calls.push(event), SERVER_URLS: { onion: 'valanium://onion' },
+  });
+  vm.runInContext(method, context);
+  vm.runInContext('receivePrivacy({type:"privacy",privacy:{}})', context);
+  assert.equal(vm.runInContext('maximumPrivacyPending', context), true);
+  assert.equal(vm.runInContext('preferences.transport', context), 'basic');
+  vm.runInContext('receivePrivacy({type:"privacy_maximized",privacy:{}})', context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(vm.runInContext('maximumPrivacyPending', context), false);
+  assert.equal(vm.runInContext('preferences.transport', context), 'onion');
+  assert.equal(button.disabled, false);
+  assert.equal(calls[0], 'tor');
+  assert.equal(calls[1].url, 'valanium://onion');
+});
