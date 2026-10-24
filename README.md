@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="valanium_main.png" alt="Valanium core" width="100%" />
+  
+
 # valanium-core
 
 Граница доверия клиента. Всё выше этой библиотеки — UI, ему можно отдавать открытый текст. Всё ниже — враждебная среда: сервер, Cloudflare, сеть.
