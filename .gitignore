@@ -1,6 +1,64 @@
+node_modules/
+data/
+.env
+*.log
+dist/
+build/
 target/
+
+# Tauri: сгенерированные шаблоны платформ и артефакты сборки
+src-tauri/gen/
+
+# Собранные архивы для сервера — артефакт, а не исходник
+deploy/dist/
+
+# Инструменты и артефакты, которым в исходниках не место
+.tooling/
+release/
+test-data/
+.claude/
+valanium-site-release.tar.gz
+
+# Нативная библиотека ядра: её собирает cargo-ndk из valanium-core
+valanium-android/app/src/main/jniLibs/
+
+# Сайт: исходники в репозитории, сборка и зависимости — нет.
+# .git-sitebuilder — прежний вложенный репозиторий сборщика лендинга.
+# Отодвинут, чтобы главный репозиторий видел файлы; вернуть можно
+# переименованием обратно в .git.
+valanium-site/node_modules/
+valanium-site/dist/
+valanium-site/tsconfig.tsbuildinfo
+valanium-site/.git-sitebuilder/
+valanium-site/app.backup-*/
+valanium-site/dist.backup-*/
+
+# Каталоги сборки Tauri: cargo кладёт их рядом с исходниками
+valanium-windows/build-release-*/
+
+# Сборочные каталоги фронтенда
+.next/
+.vinext/
+.wrangler/
+.openai/*
+!.openai/hosting.json
+
+# Слепки базы и архивы: в открытом репозитории им не место —
+# в них живые аккаунты, коды чатов и запечатанные посылки восстановления.
 *.db
 *.db-wal
 *.db-shm
-.env
-*.log
+*.tar.gz
+deploy/migration-backup/
+
+# Снимки экрана из ручных проверок: отладочный мусор, а не исходники.
+artifacts-*.png
+deploy/qa-current/
+
+# Local device QA captures and install artifacts can contain account data.
+deploy/*.png
+deploy/*.xml
+deploy/*.mp4
+deploy/*.apk
+deploy/*.idsig
+prototype/svg/.png

@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Пользователи - ObsyxGen VPN{% endblock %}
+{% block title_heading %}Пользователи{% endblock %}
+
+{% block content %}
+<div class="mb-3 text-end">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+        <i class="bi bi-plus-lg"></i> Добавить пользователя
+    </button>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Имя</th>
+                        <th>Email</th>
+                        <th style="min-width: 180px;">Трафик</th>
+                        <th>Статус</th>
+                        <th>Дата регистрации</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in users_data %}
+                    {% set user = item.user %}
+                    {% set sub = item.sub %}
+                    {% set percent = (item.used_gb / item.limit_gb * 100)|round(0) if item.limit_gb > 0 else 0 %}
+                    <tr>
+                        <td>{{ user.id }}</td>
+                        <td><strong>{{ user.username }}</strong></td>
+                        <td>{{ user.email or '-' }}</td>
+                        <td>
+                            {% if sub %}
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>{{ item.used_gb }} ГБ</span>
+                                <span>{{ item.limit_gb ~ ' ГБ' if item.limit_gb > 0 else 'Безлимит' }}</span>
+                            </div>
+                            {% if item.limit_gb > 0 %}
+                            <div class="progress" style="height: 6px;">
+                                <div class="progress-bar {% if percent > 90 %}bg-danger{% elif percent > 75 %}bg-warning{% else %}bg-success{% endif %}"
+                                     role="progressbar" style="width: {{ percent }}%;"></div>
+                            </div>
+                            {% endif %}
+                            {% if sub.bonus_gb and sub.bonus_gb > 0 %}
+                            <div class="small text-success"><i class="bi bi-gift"></i> +{{ sub.bonus_gb }} ГБ бонус</div>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted small">Нет активной подписки</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.is_active %}
+                            <span class="badge bg-success">Активен</span>
+                            {% else %}
+                            <span class="badge bg-danger">Заблокирован</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '-' }}</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-primary me-1 assign-sub-btn" data-user-id="{{ user.id }}" data-username="{{ user.username }}" title="Выдать подписку">
+                                <i class="bi bi-card-checklist"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-success me-1 bonus-btn" data-sub-id="{{ sub.id if sub else '' }}" title="Начислить бонусный трафик" {% if not sub %}disabled{% endif %}>
+                                <i class="bi bi-gift"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary me-1 toggle-user-btn" data-id="{{ user.id }}">
+                                {% if user.is_active %}
+                                <i class="bi bi-lock"></i>
+                                {% else %}
+                                <i class="bi bi-unlock"></i>
+                                {% endif %}
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger delete-user-btn" data-id="{{ user.id }}">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center py-4 text-muted">Нет пользователей</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add user -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Новый пользователь</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addUserForm">
+                    <div class="mb-3">
+                        <label class="form-label">Имя пользователя *</label>
+                        <input type="text" class="form-control" name="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control" name="email">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="saveUserBtn">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Assign subscription -->
+<div class="modal fade" id="assignSubModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Выдать подписку: <span id="assignSubUsername"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="assignSubForm">
+                    <input type="hidden" name="user_id">
+                    <div class="mb-3">
+                        <label class="form-label">Тариф *</label>
+                        <select class="form-select" name="plan_id" required>
+                            <option value="">Выберите тариф...</option>
+                            {% for p in plans %}
+                            <option value="{{ p.id }}">{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Сервер *</label>
+                        <select class="form-select" name="server_id" required>
+                            <option value="">Выберите сервер...</option>
+                            {% for s in servers %}
+                            <option value="{{ s.id }}">{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="saveAssignSubBtn">Выдать</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Grant bonus traffic -->
+<div class="modal fade" id="bonusModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Начислить бонусный трафик</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="bonusForm">
+                    <input type="hidden" name="sub_id">
+                    <div class="mb-3">
+                        <label class="form-label">Гигабайт сверх лимита тарифа *</label>
+                        <input type="number" step="0.1" min="0.1" class="form-control" name="gb" value="1" required>
+                        <div class="form-text">Если подписка была заблокирована за превышение лимита, она автоматически разблокируется (если срок ещё не истёк).</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-success" id="saveBonusBtn">Начислить</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Add User
+    document.getElementById('saveUserBtn').addEventListener('click', async () => {
+        const form = document.getElementById('addUserForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+
+        const data = {
+            username: form.username.value,
+            email: form.email.value || null
+        };
+
+        try {
+            const res = await fetch('{{ url_prefix }}/api/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                location.reload();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + (err.detail || 'Неизвестная ошибка'));
+            }
+        } catch (e) {
+            alert('Ошибка сети');
+        }
+    });
+
+    // Toggle Active
+    document.querySelectorAll('.toggle-user-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            try {
+                const res = await fetch(`{{ url_prefix }}/api/users/${id}/toggle`, { method: 'PUT' });
+                if (res.ok) location.reload();
+                else alert('Ошибка при изменении статуса');
+            } catch (e) { alert('Ошибка сети'); }
+        });
+    });
+
+    // Delete User
+    document.querySelectorAll('.delete-user-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            if (confirm('Точно удалить пользователя?')) {
+                try {
+                    const res = await fetch(`{{ url_prefix }}/api/users/${id}`, { method: 'DELETE' });
+                    if (res.ok) location.reload();
+                    else alert('Ошибка при удалении');
+                } catch (e) { alert('Ошибка сети'); }
+            }
+        });
+    });
+
+    // Assign subscription
+    const assignModal = new bootstrap.Modal(document.getElementById('assignSubModal'));
+    document.querySelectorAll('.assign-sub-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const d = e.currentTarget.dataset;
+            const form = document.getElementById('assignSubForm');
+            form.user_id.value = d.userId;
+            document.getElementById('assignSubUsername').textContent = d.username;
+            assignModal.show();
+        });
+    });
+
+    document.getElementById('saveAssignSubBtn').addEventListener('click', async () => {
+        const form = document.getElementById('assignSubForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        const data = {
+            user_id: parseInt(form.user_id.value),
+            plan_id: parseInt(form.plan_id.value),
+            server_id: parseInt(form.server_id.value)
+        };
+        try {
+            const res = await fetch('{{ url_prefix }}/api/subscriptions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                location.reload();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + (err.detail || 'Неизвестная ошибка'));
+            }
+        } catch (e) { alert('Ошибка сети'); }
+    });
+
+    // Grant bonus traffic
+    const bonusModal = new bootstrap.Modal(document.getElementById('bonusModal'));
+    document.querySelectorAll('.bonus-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const subId = e.currentTarget.dataset.subId;
+            if (!subId) return;
+            document.getElementById('bonusForm').sub_id.value = subId;
+            bonusModal.show();
+        });
+    });
+
+    document.getElementById('saveBonusBtn').addEventListener('click', async () => {
+        const form = document.getElementById('bonusForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        const subId = form.sub_id.value;
+        try {
+            const res = await fetch(`{{ url_prefix }}/api/subscriptions/${subId}/bonus`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gb: parseFloat(form.gb.value) })
+            });
+            if (res.ok) {
+                location.reload();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + (err.detail || 'Неизвестная ошибка'));
+            }
+        } catch (e) { alert('Ошибка сети'); }
+    });
+});
+</script>
+{% endblock %}

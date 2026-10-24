@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Valanium.Card" android:layout_marginTop="12dp" android:orientation="vertical">
+    <TextView style="@style/Valanium.SettingTitle" android:text="Действия" />
+    <TextView style="@style/Valanium.Micro" android:layout_marginTop="4dp"
+        android:text="Профиль, соединение и управление сеансом" />
+    <Button android:id="@+id/account_share" style="@style/Valanium.Button.Dark"
+        android:layout_width="match_parent" android:layout_marginTop="12dp" android:text="Поделиться профилем" />
+    <Button android:id="@+id/account_reconnect" style="@style/Valanium.Button.Dark"
+        android:layout_width="match_parent" android:layout_marginTop="8dp" android:text="Переподключиться" />
+    <Button android:id="@+id/account_updates" style="@style/Valanium.Button.Dark"
+        android:layout_width="match_parent" android:layout_marginTop="8dp" android:text="Проверить обновления" />
+    <Button android:id="@+id/account_logout" style="@style/Valanium.Button.Dark"
+        android:layout_width="match_parent" android:layout_marginTop="8dp"
+        android:textColor="#ED8674" android:text="Выйти из аккаунта" />
+</LinearLayout>

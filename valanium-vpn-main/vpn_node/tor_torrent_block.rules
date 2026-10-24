@@ -1,0 +1,15 @@
+
+# --- Tor blocking for VPN clients (wg0) ---
+# BitTorrent signature/connlimit throttling was tried and removed: modern
+# torrent clients use encryption + randomized ports + UDP (uTP), so neither
+# ever matched real traffic — they only cost CPU per-packet (string search
+# scans every forwarded packet's payload) and broke normal multi-connection
+# browsing (connlimit dropped legitimate NEW connections once a client had
+# many tabs/background services open — confirmed in production: it dropped
+# hundreds of a real client's packets within minutes).
+# Classic unencrypted BT on default ports is still blocked below (cheap,
+# header-only match); Tor relay IPs are still blocked via ipset (see
+# block_tor.py / tor-block-refresh.timer).
+-A ufw-before-forward -i wg0 -p tcp --dport 6881:6889 -j DROP
+-A ufw-before-forward -i wg0 -p udp --dport 6881:6889 -j DROP
+-A ufw-before-forward -i wg0 -m set --match-set tor_nodes dst -j DROP

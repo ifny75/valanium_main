@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Серверы - ObsyxGen VPN{% endblock %}
+{% block title_heading %}Серверы{% endblock %}
+
+{% block content %}
+<div class="mb-3 text-end">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addServerModal">
+        <i class="bi bi-plus-lg"></i> Добавить сервер
+    </button>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Название</th>
+                        <th>Хост</th>
+                        <th>Домен</th>
+                        <th>Локация</th>
+                        <th>Макс. юзеров</th>
+                        <th>Статус</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for server in servers %}
+                    <tr>
+                        <td>{{ server.id }}</td>
+                        <td><strong>{{ server.name }}</strong></td>
+                        <td>{{ server.host }}:{{ server.api_port }}</td>
+                        <td>{{ server.domain or '-' }}</td>
+                        <td>{{ server.location or '-' }}</td>
+                        <td>{{ server.max_users }}</td>
+                        <td>
+                            {% if server.is_active %}
+                            <span class="badge bg-success">Активен</span>
+                            {% else %}
+                            <span class="badge bg-danger">Неактивен</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-info health-btn" data-id="{{ server.id }}" title="Проверка связи">
+                                <i class="bi bi-heart-pulse"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary toggle-server-btn" data-id="{{ server.id }}">
+                                <i class="bi bi-power"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger delete-server-btn" data-id="{{ server.id }}">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">Нет серверов</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal fade" id="addServerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Новый сервер</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addServerForm">
+                    <div class="mb-3">
+                        <label class="form-label">Название *</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-8 mb-3">
+                            <label class="form-label">Хост (IP) *</label>
+                            <input type="text" class="form-control" name="host" required>
+                        </div>
+                        <div class="col-4 mb-3">
+                            <label class="form-label">Порт API</label>
+                            <input type="number" class="form-control" name="api_port" value="8000" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">API Ключ *</label>
+                        <input type="text" class="form-control" name="api_key" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Домен</label>
+                        <input type="text" class="form-control" name="domain">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Локация</label>
+                        <input type="text" class="form-control" name="location">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Макс. пользователей</label>
+                        <input type="number" class="form-control" name="max_users" value="100" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="saveServerBtn">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('saveServerBtn').addEventListener('click', async () => {
+        const form = document.getElementById('addServerForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        
+        const data = {
+            name: form.name.value,
+            host: form.host.value,
+            api_port: parseInt(form.api_port.value),
+            api_key: form.api_key.value,
+            domain: form.domain.value || null,
+            location: form.location.value || null,
+            max_users: parseInt(form.max_users.value)
+        };
+
+        try {
+            const res = await fetch('{{ url_prefix }}/api/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                location.reload();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + (err.detail || 'Неизвестная ошибка'));
+            }
+        } catch (e) { alert('Ошибка сети'); }
+    });
+
+    document.querySelectorAll('.health-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            try {
+                const res = await fetch(`{{ url_prefix }}/api/servers/${id}/health`);
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(JSON.stringify(data, null, 2));
+                } else alert('Сервер недоступен');
+            } catch (e) { alert('Ошибка сети'); }
+        });
+    });
+
+    document.querySelectorAll('.toggle-server-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            try {
+                const res = await fetch(`{{ url_prefix }}/api/servers/${id}/toggle`, { method: 'PUT' });
+                if (res.ok) location.reload();
+                else alert('Ошибка изменения статуса');
+            } catch (e) { alert('Ошибка сети'); }
+        });
+    });
+
+    document.querySelectorAll('.delete-server-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            if (confirm('Удалить сервер?')) {
+                try {
+                    const res = await fetch(`{{ url_prefix }}/api/servers/${id}`, { method: 'DELETE' });
+                    if (res.ok) location.reload();
+                    else alert('Ошибка удаления');
+                } catch (e) { alert('Ошибка сети'); }
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

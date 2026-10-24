@@ -1,0 +1,4 @@
+{
+  "manifest": "{\"v\":1,\"channel\":\"public-beta\",\"publishedAt\":\"2026-10-08T15:18:57.352Z\",\"windows\":{\"version\":\"0.13.4\",\"url\":\"https://valanium.com/downloads/Valanium-0.13.4.exe\",\"sha256\":\"fb22c8ebe29c92e64baca7e58dbe07bc5f7e3b7ae34753b29164538c1812f7e5\",\"bytes\":16446976},\"android\":{\"version\":\"0.7.3\",\"url\":\"https://valanium.com/downloads/Valanium-0.7.3.apk\",\"sha256\":\"46a1666d7667564ace2973278cc976d27f2ab7f9a7b5678e956d33165d8165cf\",\"bytes\":8373330}}",
+  "signature": "4749d5815878421991100cb1a7eb743ce867ac73beeb478dfb1dc544b264e3147cc18e57de281cb13c09e329d52929a58945db3bc6df8c3924d82a6dd4741f0c"
+}

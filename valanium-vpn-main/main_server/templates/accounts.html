@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+
+{% block title %}Коды доступа - ObsyxGen VPN{% endblock %}
+{% block title_heading %}Коды доступа{% endblock %}
+
+{% block content %}
+<div class="mb-3 text-end">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createAccountModal">
+        <i class="bi bi-plus-lg"></i> Выпустить код
+    </button>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Тариф</th>
+                        <th>Заметка</th>
+                        <th>Устройства</th>
+                        <th>Трафик</th>
+                        <th>Выпущен</th>
+                        <th>Истекает</th>
+                        <th>Статус</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in accounts_data %}
+                    {% set account = item.account %}
+                    <tr>
+                        <td>{{ account.id }}</td>
+                        <td>{{ account.plan.name if account.plan else '-' }}</td>
+                        <td class="text-muted small">{{ account.note or '-' }}</td>
+                        <td>{{ item.devices_used }}</td>
+                        <td>{{ item.traffic_used_gb }} ГБ</td>
+                        <td>{{ account.created_at.strftime('%Y-%m-%d %H:%M') if account.created_at else '-' }}</td>
+                        <td>{{ account.expires_at.strftime('%Y-%m-%d %H:%M') if account.expires_at else '-' }}</td>
+                        <td>
+                            {% if account.is_active %}
+                            <span class="badge bg-success">Активен</span>
+                            {% else %}
+                            <span class="badge bg-danger">Отозван</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-secondary me-1 toggle-account-btn" data-id="{{ account.id }}">
+                                {% if account.is_active %}
+                                <i class="bi bi-lock"></i>
+                                {% else %}
+                                <i class="bi bi-unlock"></i>
+                                {% endif %}
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger delete-account-btn" data-id="{{ account.id }}">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-muted">Кодов пока не выпускали</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Create account / issue code -->
+<div class="modal fade" id="createAccountModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Новый код доступа</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="createAccountForm">
+                    <div class="mb-3">
+                        <label class="form-label">Тариф *</label>
+                        <select class="form-select" name="plan_id" required>
+                            <option value="">Выберите тариф...</option>
+                            {% for p in plans %}
+                            <option value="{{ p.id }}" data-duration="{{ p.duration_days }}">{{ p.name }} ({{ p.duration_days }} дн.)</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Срок действия, дней</label>
+                        <input type="number" min="1" class="form-control" name="days" placeholder="По умолчанию из тарифа">
+                        <div class="form-text">Оставь пустым, чтобы взять длительность тарифа.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Заметка</label>
+                        <input type="text" class="form-control" name="note" maxlength="200" placeholder="Например: выдан на встрече 3 сентября">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="saveAccountBtn">Выпустить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Show the issued code once -->
+<div class="modal fade" id="codeRevealModal" data-bs-backdrop="static" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-key-fill text-warning"></i> Код доступа</h5>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    Показывается один раз. Сервер хранит только хеш — если код потеряется,
+                    его нельзя будет посмотреть заново, только выпустить новый и отозвать этот.
+                </div>
+                <div class="input-group">
+                    <input type="text" class="form-control font-monospace text-center fs-5" id="revealedCode" readonly>
+                    <button class="btn btn-outline-secondary" type="button" id="copyCodeBtn" title="Скопировать">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="codeRevealDoneBtn">Код сохранён, закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const createModal = new bootstrap.Modal(document.getElementById('createAccountModal'));
+    const revealModal = new bootstrap.Modal(document.getElementById('codeRevealModal'));
+
+    document.getElementById('saveAccountBtn').addEventListener('click', async () => {
+        const form = document.getElementById('createAccountForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+
+        const data = {
+            plan_id: parseInt(form.plan_id.value),
+            note: form.note.value || null,
+        };
+        if (form.days.value) {
+            data.days = parseInt(form.days.value);
+        }
+
+        try {
+            const res = await fetch('{{ url_prefix }}/api/accounts/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                const account = await res.json();
+                createModal.hide();
+                form.reset();
+                document.getElementById('revealedCode').value = account.code;
+                revealModal.show();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + (err.detail || 'Неизвестная ошибка'));
+            }
+        } catch (e) {
+            alert('Ошибка сети');
+        }
+    });
+
+    document.getElementById('copyCodeBtn').addEventListener('click', () => {
+        const input = document.getElementById('revealedCode');
+        input.select();
+        navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
+    });
+
+    // Reloading only happens once the admin has dismissed the reveal modal —
+    // reloading earlier would be fine functionally (the code isn't stored
+    // anywhere to lose), but closing the create modal first avoids a jarring
+    // page refresh happening behind the still-open reveal dialog.
+    document.getElementById('codeRevealDoneBtn').addEventListener('click', () => {
+        location.reload();
+    });
+
+    document.querySelectorAll('.toggle-account-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            try {
+                const res = await fetch(`{{ url_prefix }}/api/accounts/${id}/toggle`, { method: 'PUT' });
+                if (res.ok) location.reload();
+                else alert('Ошибка при изменении статуса');
+            } catch (e) { alert('Ошибка сети'); }
+        });
+    });
+
+    document.querySelectorAll('.delete-account-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            if (confirm('Точно удалить аккаунт? Все его устройства и подписки будут отозваны.')) {
+                try {
+                    const res = await fetch(`{{ url_prefix }}/api/accounts/${id}`, { method: 'DELETE' });
+                    if (res.ok) location.reload();
+                    else alert('Ошибка при удалении');
+                } catch (e) { alert('Ошибка сети'); }
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

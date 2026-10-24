@@ -1,0 +1,15 @@
+[Unit]
+Description=Valanium VPN control plane (panel + /v1)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/main_server
+# Рабочий каталог важен: рядом с базой лежит перец для хешей кодов доступа
+# (access_code_pepper), и путь к нему в .env задан относительным.
+ExecStart=/opt/main_server/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 62740
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

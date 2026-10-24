@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ObsyxGen VPN Admin{% endblock %}</title>
+    <!-- Bootstrap 5 CSS (vendored locally — see main_server/scripts/vendor_assets.py -->
+    <!-- so the admin panel doesn't depend on cdn.jsdelivr.net at every page load) -->
+    <link href="/static/vendor/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="/static/vendor/css/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .sidebar {
+            height: 100vh;
+            background-color: #1a1d29;
+            color: #fff;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 250px;
+            padding-top: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar .nav-link {
+            color: rgba(255, 255, 255, .75);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+        }
+        .sidebar .nav-link:hover, .sidebar .nav-link.active {
+            color: #fff;
+            background-color: rgba(255, 255, 255, .1);
+        }
+        .sidebar .nav-link i {
+            margin-right: 10px;
+            width: 20px;
+            text-align: center;
+        }
+        .main-content {
+            margin-left: 250px;
+            padding: 20px;
+        }
+        .sidebar-header {
+            padding: 0 20px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, .1);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        .sidebar-header i {
+            margin-right: 10px;
+            font-size: 1.5rem;
+            color: #0d6efd;
+        }
+        .logout-container {
+            margin-top: auto;
+            padding: 20px;
+            border-top: 1px solid rgba(255, 255, 255, .1);
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <i class="bi bi-shield-lock-fill"></i>
+            ObsyxGen VPN
+        </div>
+        <ul class="nav flex-column">
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_prefix }}/admin/dashboard">
+                    <i class="bi bi-speedometer2"></i> Дашборд
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_prefix }}/admin/users">
+                    <i class="bi bi-people-fill"></i> Пользователи
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_prefix }}/admin/subscriptions">
+                    <i class="bi bi-card-checklist"></i> Подписки
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_prefix }}/admin/servers">
+                    <i class="bi bi-hdd-network-fill"></i> Серверы
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_prefix }}/admin/plans">
+                    <i class="bi bi-tags-fill"></i> Тарифы
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="{{ url_prefix }}/admin/accounts">
+                    <i class="bi bi-key-fill"></i> Коды доступа
+                </a>
+            </li>
+        </ul>
+        <div class="logout-container">
+            <a href="{{ url_prefix }}/logout" class="btn btn-outline-light w-100">
+                <i class="bi bi-box-arrow-right"></i> Выйти
+            </a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <h1 class="h2">{% block title_heading %}{% endblock %}</h1>
+        </div>
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="/static/vendor/js/bootstrap.bundle.min.js"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

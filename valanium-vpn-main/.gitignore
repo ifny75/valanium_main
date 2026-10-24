@@ -1,0 +1,42 @@
+# Rust build output
+/vpn_client/src-tauri/target/
+/vpn_client/src-tauri/gen/
+
+# Node (if ever added)
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+/main_server/venv/
+/main_server/.venv/
+/vpn_node/venv/
+.pytest_cache/
+
+# Runtime state / secrets — never commit
+.env
+.env.*
+*.db
+*.db-journal
+# Перец для хешей кодов доступа: его потеря = потеря всех выданных кодов,
+# а утечка вместе с базой даёт перебор. Лежит рядом с базой, в репозиторий
+# не попадает никогда.
+access_code_pepper
+/server_backups/
+dns_settings.json
+test-wg.log
+enroll.log
+status.log
+tls_mask.log
+# Ключ устройства и его ключи WireGuard: это и есть учётная запись человека.
+device.key
+wg_keys.json
+# Собранный портативный клиент — артефакт сборки, не исходник.
+/release/vpn-client-*/
+
+# Local tooling config (Claude Code dev-server launch config, machine-specific)
+/.claude/
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db

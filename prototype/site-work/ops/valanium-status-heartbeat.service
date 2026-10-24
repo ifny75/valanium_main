@@ -1,0 +1,16 @@
+[Unit]
+Description=Report Valanium relay health
+After=network-online.target nginx.service tor@default.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/valanium-status-heartbeat
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true

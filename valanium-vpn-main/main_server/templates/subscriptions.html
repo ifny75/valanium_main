@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Подписки - ObsyxGen VPN{% endblock %}
+{% block title_heading %}Подписки{% endblock %}
+
+{% block content %}
+<div class="mb-3 text-end">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addSubModal">
+        <i class="bi bi-plus-lg"></i> Создать подписку
+    </button>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Пользователь</th>
+                        <th>Тариф</th>
+                        <th>Сервер</th>
+                        <th>WireGuard</th>
+                        <th style="min-width: 200px;">Трафик</th>
+                        <th>Истекает</th>
+                        <th>Статус</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sub in subscriptions %}
+                    {% set used_gb = (sub.traffic_used_bytes / 1073741824)|round(2) if sub.traffic_used_bytes else 0 %}
+                    {% set limit_gb = (sub.plan.traffic_limit_gb + (sub.bonus_gb or 0)) if sub.plan.traffic_limit_gb > 0 else 0 %}
+                    {% set percent = (used_gb / limit_gb * 100)|round(0) if limit_gb > 0 else 0 %}
+                    
+                    <tr>
+                        <td>{{ sub.id }}</td>
+                        <td><strong>{{ sub.user.username }}</strong></td>
+                        <td>{{ sub.plan.name }}</td>
+                        <td>{{ sub.server.name }}</td>
+                        <td>
+                            <code class="text-dark bg-light px-2 py-1 rounded" title="{{ sub.wg_public_key }}">{{ sub.wg_public_key[:12] }}…</code>
+                            {% if sub.wg_allowed_ip %}<div class="small text-muted mt-1">{{ sub.wg_allowed_ip }}</div>{% else %}<div class="small text-danger mt-1">не в синхре с узлом</div>{% endif %}
+                        </td>
+                        <td>
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>{{ used_gb }} ГБ</span>
+                                <span>{{ limit_gb ~ ' ГБ' if limit_gb > 0 else 'Безлимит' }}</span>
+                            </div>
+                            {% if limit_gb > 0 %}
+                            <div class="progress" style="height: 6px;">
+                                <div class="progress-bar {% if percent > 90 %}bg-danger{% elif percent > 75 %}bg-warning{% else %}bg-success{% endif %}"
+                                     role="progressbar" style="width: {{ percent }}%;"></div>
+                            </div>
+                            {% endif %}
+                            {% if sub.bonus_gb and sub.bonus_gb > 0 %}
+                            <div class="small text-success"><i class="bi bi-gift"></i> +{{ sub.bonus_gb }} ГБ бонус</div>
+                            {% endif %}
+                        </td>
+                        <td>{{ sub.expires_at.strftime('%Y-%m-%d %H:%M') if sub.expires_at else '-' }}</td>
+                        <td>
+                            {% if not sub.is_active %}
+                            <span class="badge bg-danger">Неактивна</span>
+                            {% elif limit_gb > 0 and used_gb >= limit_gb %}
+                            <span class="badge bg-warning text-dark">Лимит</span>
+                            {% else %}
+                            <span class="badge bg-success">Активна</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-info sync-sub-btn" data-id="{{ sub.id }}" title="Синхронизировать">
+                                <i class="bi bi-arrow-repeat"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-warning deact-sub-btn" data-id="{{ sub.id }}" title="Деактивировать">
+                                <i class="bi bi-power"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-muted">Нет подписок</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal fade" id="addSubModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Новая подписка</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addSubForm">
+                    <div class="mb-3">
+                        <label class="form-label">Пользователь *</label>
+                        <select class="form-select" name="user_id" required>
+                            <option value="">Выберите пользователя...</option>
+                            {% for u in users %}
+                            <option value="{{ u.id }}">{{ u.username }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тариф *</label>
+                        <select class="form-select" name="plan_id" required>
+                            <option value="">Выберите тариф...</option>
+                            {% for p in plans %}
+                            <option value="{{ p.id }}">{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Сервер *</label>
+                        <select class="form-select" name="server_id" required>
+                            <option value="">Выберите сервер...</option>
+                            {% for s in servers %}
+                            <option value="{{ s.id }}">{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="saveSubBtn">Создать</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('saveSubBtn').addEventListener('click', async () => {
+        const form = document.getElementById('addSubForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        
+        const data = {
+            user_id: parseInt(form.user_id.value),
+            plan_id: parseInt(form.plan_id.value),
+            server_id: parseInt(form.server_id.value)
+        };
+
+        try {
+            const res = await fetch('{{ url_prefix }}/api/subscriptions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                location.reload();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + (err.detail || 'Неизвестная ошибка'));
+            }
+        } catch (e) {
+            alert('Ошибка сети');
+        }
+    });
+
+    document.querySelectorAll('.deact-sub-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            if (confirm('Деактивировать подписку?')) {
+                try {
+                    const res = await fetch(`{{ url_prefix }}/api/subscriptions/${id}/deactivate`, { method: 'PUT' });
+                    if (res.ok) location.reload();
+                    else alert('Ошибка');
+                } catch (e) { alert('Ошибка сети'); }
+            }
+        });
+    });
+
+    document.querySelectorAll('.sync-sub-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.id;
+            try {
+                const res = await fetch(`{{ url_prefix }}/api/subscriptions/${id}/sync`, { method: 'PUT' });
+                if (res.ok) location.reload();
+                else alert('Ошибка синхронизации');
+            } catch (e) { alert('Ошибка сети'); }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+systemctl is-active --quiet nginx.service
+systemctl is-active --quiet tor@default.service
+
+started=$(date +%s%3N)
+curl -4 -sS --max-time 5 -o /dev/null http://10.77.0.1:8080/
+finished=$(date +%s%3N)
+latency=$((finished - started))
+token=$(tr -d '\r\n' < /etc/valanium-status-token)
+node=$(tr -d '\r\n' < /etc/valanium-status-node-id)
+
+curl -4 -fsS --max-time 8 \
+  -X POST https://valanium.com/api/status \
+  -H "Authorization: Bearer ${token}" \
+  -H "Content-Type: application/json" \
+  --data "{\"node\":\"${node}\",\"latency\":${latency}}" \
+  -o /dev/null

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Valanium relay health every 30 seconds
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=30s
+AccuracySec=3s
+Unit=valanium-status-heartbeat.service
+
+[Install]
+WantedBy=timers.target
