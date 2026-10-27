@@ -909,6 +909,10 @@ h1, h2, h3 { text-wrap: balance; }
 .application-visual{height:auto;aspect-ratio:3.5;padding:0;background:#080808}
 .application-visual img{width:100%;height:100%;object-fit:cover;border-radius:0;box-shadow:none}
 /* Onion access and public node telemetry */
+.nav { gap:12px; }
+.nav .brand,.nav-actions { flex-shrink:0; }
+.nav-menu { position:static; transform:none; margin-inline:auto; flex-shrink:0; }
+.site-header.is-compact .onion-button-hint { display:none; }
 .onion-button { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:10px 14px; border:1px solid #b46dff70; border-radius:999px; color:#e6c9ff; background:#8a37d52b; cursor:pointer; font:600 12px var(--font-inter),sans-serif; white-space:nowrap; }
 .onion-button:hover { background:#8a37d54a; border-color:#c38cff; }
 .onion-button-prominent { padding:14px 22px; background:#8540c9; color:white; border-color:#bb7df3; font-size:14px; }
@@ -948,6 +952,14 @@ details[open] .node-expand { transform:rotate(180deg); }
 .node-detail-body p { color:#918497; font-size:11px; line-height:1.6; margin:0; }
 .status-service { padding:0; }
 @media(max-width:1050px) { .onion-button-hint { display:none; } .nav-actions { gap:6px; } }
+@media(max-width:820px) {
+  .nav { gap:6px; }
+  .nav .brand b { display:none; }
+  .nav-actions { gap:5px; }
+  .nav-actions .support-trigger-header { font-size:9px; padding-inline:8px; }
+  .nav-actions .status-mobile-link { padding-inline:8px; }
+}
+@media(max-width:360px) { .nav-actions .status-mobile-link { display:none; } }
 @media(max-width:760px) {
   .network-node-details summary { grid-template-columns:28px minmax(0,1fr) 80px 12px; padding:18px 12px; gap:9px; }
   .network-node-details .node-latency { display:none; }
