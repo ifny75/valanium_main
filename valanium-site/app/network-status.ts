@@ -5,6 +5,8 @@ export type PublicNode = {
   id: string; name: string; role: string; status: NodeStatus; latency: number;
   country: Country; checkedAt: string | null; metrics: Metrics;
 };
+export type PublicService = Omit<PublicNode, 'country' | 'metrics'>;
+export type StatusData = { overall: NodeStatus; checkedAt: string; servers: PublicNode[]; services: PublicService[] };
 export type Heartbeat = { checkedAt: string; latency: number; healthy: boolean; metrics: Metrics };
 export const EMPTY_METRICS: Metrics = { cpuPercent: null, memoryPercent: null, uptimeHours: null };
 export const COUNTRIES = {
@@ -38,4 +40,24 @@ export function publicNode(id: string, name: string, role: string, country: Coun
   return { id, name, role, country, status: fresh && heartbeat.healthy ? 'operational' : 'outage',
     latency: fresh && heartbeat.healthy ? heartbeat.latency : 0, checkedAt: fresh ? heartbeat.checkedAt : null,
     metrics: fresh ? sanitizeMetrics(heartbeat.metrics) : { ...EMPTY_METRICS } };
+}
+
+// Several agents run on the same machine. Count the machine once and use its
+// newest fresh report, independently of the health of the service it checks.
+export function physicalServers(metrics: Metrics, alpha: (Heartbeat | null)[], beta: (Heartbeat | null)[], now = Date.now()): PublicNode[] {
+  const server = (id: string, name: string, country: Country, reports: (Heartbeat | null)[]) => {
+    const latest = reports.map(report => sanitizeHeartbeat(report, now)).filter((report): report is Heartbeat => report !== null)
+      .sort((a, b) => Date.parse(b.checkedAt) - Date.parse(a.checkedAt))[0] ?? null;
+    return publicNode(id, name, 'Сетевой сервер', country, latest ? { ...latest, healthy: true, latency: 0 } : null, 90_000, now);
+  };
+  return [
+    { id: 'main', name: 'Главный сервер', role: 'Основной сервер', country: 'NL', status: 'operational',
+      latency: 0, checkedAt: new Date(now).toISOString(), metrics: sanitizeMetrics(metrics) },
+    server('server-alpha', 'Сервер Alpha', 'NL', alpha),
+    server('server-beta', 'Сервер Beta', 'FI', beta),
+  ];
+}
+
+export function serviceFromNode(node: PublicNode): PublicService {
+  return { id: node.id, name: node.name, role: node.role, status: node.status, latency: node.latency, checkedAt: node.checkedAt };
 }

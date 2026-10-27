@@ -909,6 +909,12 @@ h1, h2, h3 { text-wrap: balance; }
 .application-visual{height:auto;aspect-ratio:3.5;padding:0;background:#080808}
 .application-visual img{width:100%;height:100%;object-fit:cover;border-radius:0;box-shadow:none}
 /* Onion access and public node telemetry */
+.network-group-heading { display:flex; align-items:center; justify-content:space-between; margin:28px 16px 8px; color:#e1d4ed; font-size:16px; }
+.network-group-heading span { color:#9e83b5; font-size:12px; font-weight:400; }
+.status-group-description { padding:0 20px 16px; color:#a399ae; font-size:12px; line-height:1.7; }
+.status-board + .status-board { margin-top:28px; }
+.service-symbol { color:#b78ce0; font-size:25px; text-align:center; }
+.network-node-details.network-server-details summary { grid-template-columns:32px minmax(90px,1fr) 110px 14px; }
 .nav { gap:12px; }
 .nav .brand,.nav-actions { flex-shrink:0; }
 .nav-menu { position:static; transform:none; margin-inline:auto; flex-shrink:0; }
@@ -961,6 +967,7 @@ details[open] .node-expand { transform:rotate(180deg); }
 }
 @media(max-width:360px) { .nav-actions .status-mobile-link { display:none; } }
 @media(max-width:760px) {
+  .network-node-details.network-server-details summary { grid-template-columns:28px minmax(0,1fr) 80px 12px; }
   .network-node-details summary { grid-template-columns:28px minmax(0,1fr) 80px 12px; padding:18px 12px; gap:9px; }
   .network-node-details .node-latency { display:none; }
   .network-node-details em { font-size:10px; }

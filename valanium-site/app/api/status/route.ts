@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { EMPTY_METRICS, publicNode, sanitizeHeartbeat, sanitizeMetrics, type Heartbeat } from '../../network-status';
+import { physicalServers, publicNode, sanitizeHeartbeat, sanitizeMetrics, serviceFromNode, type Heartbeat, type PublicService } from '../../network-status';
 import { systemMetrics } from './system-metrics';
 
 const HEARTBEAT_FILES = {
@@ -49,18 +49,20 @@ export async function GET() {
   const now = Date.now(), checkedAt = new Date(now).toISOString();
   const guardAge = now - Date.parse(guard?.checkedAt);
   const safe = guard?.ok === true && guardAge >= 0 && guardAge < 3 * 3_600_000;
-  const nodes = [
-    publicNode('website-1', 'Веб-узел 1', 'HTTP-маршрут · служба туннеля', 'NL', one, 45_000, now),
-    publicNode('website-2', 'Веб-узел 2', 'HTTP-маршрут · служба туннеля', 'FI', two, 45_000, now),
-    { id: 'core', name: 'Messaging Core', role: 'Доставка сообщений', country: 'NL' as const,
-      status: core.online ? 'operational' as const : 'outage' as const, latency: core.latency, checkedAt, metrics },
-    { id: 'data', name: 'Data Safety', role: 'Копии и сохранность базы', country: 'NL' as const,
-      status: safe ? 'operational' as const : 'degraded' as const, latency: 0, checkedAt, metrics: { ...EMPTY_METRICS } },
-    publicNode('alpha', 'Relay Alpha', 'Relay · Onion', 'NL', alpha, 90_000, now),
-    publicNode('beta', 'Relay Beta', 'Relay · Onion', 'FI', beta, 90_000, now),
+  const servers = physicalServers(metrics, [one, alpha], [two, beta], now);
+  const services: PublicService[] = [
+    serviceFromNode(publicNode('website-1', 'Веб-маршрут 1', 'Доступ к сайту · HTTP и туннель', 'NL', one, 45_000, now)),
+    serviceFromNode(publicNode('website-2', 'Веб-маршрут 2', 'Доступ к сайту · HTTP и туннель', 'FI', two, 45_000, now)),
+    { id: 'core', name: 'Messaging Core', role: 'Доставка сообщений',
+      status: core.online ? 'operational' : 'outage', latency: core.latency, checkedAt },
+    { id: 'data', name: 'Data Safety', role: 'Проверка резервных копий и сохранности базы',
+      status: safe ? 'operational' : 'degraded', latency: 0,
+      checkedAt: Number.isFinite(guardAge) && guardAge >= 0 ? new Date(Date.parse(guard.checkedAt)).toISOString() : null },
+    serviceFromNode(publicNode('alpha', 'Relay Alpha', 'Передача трафика · Onion', 'NL', alpha, 90_000, now)),
+    serviceFromNode(publicNode('beta', 'Relay Beta', 'Передача трафика · Onion', 'FI', beta, 90_000, now)),
   ];
-  const online = (id: string) => nodes.find(node => node.id === id)?.status === 'operational';
+  const online = (id: string) => services.find(service => service.id === id)?.status === 'operational';
   const outage = !core.online || (!online('alpha') && !online('beta')) || (!online('website-1') && !online('website-2'));
-  return Response.json({ overall: outage ? 'outage' : nodes.every(node => node.status === 'operational') ? 'operational' : 'degraded',
-    checkedAt, nodes }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ overall: outage ? 'outage' : services.every(service => service.status === 'operational') ? 'operational' : 'degraded',
+    checkedAt, servers, services }, { headers: { 'Cache-Control': 'no-store' } });
 }
