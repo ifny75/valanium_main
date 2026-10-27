@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { GithubIcon } from './icons';
 import { SupportDialog } from './support-dialog';
 import { SERVICES } from '../services';
+import { OnionButton } from './onion-button';
 
 /**
  * Какая это страница — от этого зависит только меню.
@@ -13,7 +14,7 @@ import { SERVICES } from '../services';
  * сервисов несколько, и меню собирается из таблицы, чтобы добавление
  * следующего не превращалось в правку разметки в трёх местах.
  */
-export type HeaderPage = 'hub' | 'messenger' | 'mail' | 'vpn' | 'status';
+export type HeaderPage = 'hub' | 'messenger' | 'mail' | 'vpn' | 'status' | 'apps';
 
 type Link = { href: string; label: string; logo?: string };
 
@@ -60,7 +61,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
 
   // На странице мессенджера логотип возвращает к началу, на остальных — к
   // выбору сервисов: это разные намерения, и вести их в одно место нельзя.
-  const brandHref = page === 'messenger' ? '#top' : '/';
+  const brandHref = '/';
   const links = linksFor(page);
 
   return (
@@ -80,6 +81,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
         </a>
 
         <div className="nav-menu">
+          {page === 'messenger' ? <a href="/">← Главная</a> : null}
           {links.map((link) => (
             <a
               key={link.href}
@@ -90,11 +92,13 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
               {link.label}
             </a>
           ))}
+          <a className={page === 'apps' ? 'is-active' : undefined} href="/apps">Приложения</a>
           <a className={`nav-status-link${page === 'status' ? ' is-active' : ''}`} href="/status">Статус</a>
         </div>
 
         <div className="nav-actions">
-          <a className="status-mobile-link" href="/status">Статус</a>
+          <OnionButton />
+          <a className="status-mobile-link" href={page === 'messenger' ? '/' : '/apps'}>{page === 'messenger' ? '← Назад' : 'Приложения'}</a>
           <SupportDialog variant="header" />
           <a className="github-link" href="https://github.com/ifny75/valanium_main" target="_blank" rel="noreferrer noopener">
             <GithubIcon /><b>GitHub</b>

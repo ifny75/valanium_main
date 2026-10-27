@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { DynamicHeader } from './components/dynamic-header';
 import { SupportDialog } from './components/support-dialog';
 import { SERVICES } from './services';
+import { LiveNetwork } from './components/live-network';
 
 const TITLE = 'Valanium — приватные сервисы: мессенджер, почта, VPN';
 const DESCRIPTION =
@@ -23,14 +24,6 @@ export const metadata: Metadata = {
   },
   twitter: { card: 'summary_large_image', title: TITLE, description: DESCRIPTION, images: ['/og.png'] },
 };
-
-const NETWORK_NODES = [
-  { id: '01', name: 'Главный узел', role: 'Координация сети', flag: '/flags/germany.svg', country: 'Германия' },
-  { id: '02', name: 'VPN сервис', role: 'Защищённый выход', flag: '/flags/netherlands.svg', country: 'Нидерланды' },
-  { id: '03', name: 'Relay One', role: 'Защищённый маршрут', flag: '/flags/finland.svg', country: 'Финляндия' },
-  { id: '04', name: 'Relay Two', role: 'Защищённый маршрут', flag: '/flags/germany.svg', country: 'Германия' },
-  { id: '05', name: 'Relay Four', role: 'Защищённый маршрут', flag: '/flags/sweden.svg', country: 'Швеция' },
-] as const;
 
 /*
   Главная — витрина: заголовок, обещание, три значка.
@@ -101,42 +94,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="network-overview" id="network">
-        <div className="network-overview-inner shell">
-        <div className="network-overview-intro">
-          <span className="section-eyebrow"><i /> Инфраструктура Valanium</span>
-          <h2>Пять узлов.<br />Одна сеть.</h2>
-          <p>Показываем состояние сервисов, но не раскрываем адреса и внутреннюю топологию.</p>
-          <div className="network-metric"><strong>05</strong><span>публичных<br />узлов</span></div>
-          <a className="network-status-link" href="/status">Смотреть live-статус <span>↗</span></a>
-        </div>
-
-        <div className="network-index" aria-label="Публичные узлы сети Valanium">
-          <header><span>VALANIUM / NETWORK</span><b>Доступность · 30 дней</b></header>
-          <ol>
-            {NETWORK_NODES.map((node, nodeIndex) => (
-              <li key={node.id}>
-                <span className="network-node-id">{node.id}</span>
-                <div className="network-node-name">
-                  <span className="network-node-flag"><img src={node.flag} alt={`Флаг: ${node.country}`} /></span>
-                  <span><strong>{node.name}</strong><small>{node.country}</small></span>
-                </div>
-                <p>{node.role}</p>
-                <div className="network-signal" aria-label="Узел стабильно доступен последние 30 дней">
-                  {Array.from({ length: 18 }, (_, barIndex) => (
-                    <i
-                      key={barIndex}
-                      style={{ animationDelay: `${-(nodeIndex * 0.17 + barIndex * 0.055)}s` }}
-                    />
-                  ))}
-                </div>
-                <em>Онлайн</em>
-              </li>
-            ))}
-          </ol>
-        </div>
-        </div>
-      </section>
+      <LiveNetwork />
 
       <section className="manifesto">
         <div className="manifesto-inner shell">
@@ -223,6 +181,9 @@ export default function Home() {
         </div>
         </div>
       </section>
+
+      <section className="apps-home shell" id="apps"><div><span className="section-eyebrow"><i /> Приложения Valanium</span><h2>Для повседневных задач.</h2><p>Gallery и Calculator: чистый интерфейс, открытый код и APK с нашего сервера.</p></div><a className="stage-button stage-button-primary" href="/apps">Все приложения ↗</a></section>
+      <section className="donation-home shell"><div><h2>Помогите поддерживать Valanium</h2><p>На поддержку серверов и развитие приложений можно прислать донат. Любая сумма помогает сохранять проект независимым.</p></div><SupportDialog variant="header" /></section>
 
       <section className="hub-closing shell">
         <div className="closing">

@@ -36,7 +36,7 @@ export function SupportDialog({ variant = 'footer' }: { variant?: 'footer' | 'he
 
   return (
     <>
-      <button className={`support-trigger support-trigger-${variant}`} type="button" onClick={open}>{variant === 'header' ? 'Support' : 'Поддержать'}</button>
+      <button className={`support-trigger support-trigger-${variant}`} type="button" onClick={open}>{variant === 'header' ? 'Поддержать' : 'Поддержать'}</button>
       <dialog className="support-dialog" ref={dialogRef} onClick={(event) => {
         if (event.target === dialogRef.current) dialogRef.current?.close();
       }}>
@@ -46,7 +46,7 @@ export function SupportDialog({ variant = 'footer' }: { variant?: 'footer' | 'he
           </button>
           <div className="support-dialog-hero">
             <div className="support-emblem"><img src="/logos/brand.svg" alt="" /></div>
-            <div><span>Поддержать разработку</span><h2>Помочь Valanium</h2><p>Поддержите независимую инфраструктуру проекта.</p></div>
+            <div><span>Поддержать разработку</span><h2>Помочь Valanium</h2><p>На поддержку серверов и разработку приложений можно прислать донат. Спасибо за помощь Valanium.</p></div>
             <small><i /> On-chain</small>
           </div>
           <div className="support-overview">

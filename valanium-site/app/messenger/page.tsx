@@ -6,6 +6,7 @@ import { RibbonShader } from '../components/ribbon-shader';
 import { RouteSelector } from '../components/route-selector';
 import { SupportDialog } from '../components/support-dialog';
 import { RELEASES } from '../releases';
+import { OnionButton } from '../components/onion-button';
 
 /*
   SEO мессенджера живёт здесь, а не в общем layout.
@@ -101,6 +102,7 @@ export default function Home() {
           <h1>Переписка остаётся <span>на ваших устройствах</span></h1>
           <p>Ваша приватность начинается здесь</p>
           <DownloadButtons />
+          <div className="hero-onion"><OnionButton prominent /><span>Сайт доступен напрямую в сети Tor</span></div>
           <small>MLS (RFC 9420) · AGPL-3.0 · сервер можно поднять свой</small>
         </div>
         <div className="phone-stage" aria-hidden="true">
@@ -111,7 +113,7 @@ export default function Home() {
 
       <section className="facts shell" aria-label="Главные преимущества">
         <RibbonCard title="MLS · RFC 9420" text="Групповой стандарт шифрования, а не самодельный протокол" seed={0.2} />
-        <RibbonCard title="Без телефона" text="Вход по коду чата или юзернейму" seed={1.7} />
+        <RibbonCard title="Без телефона" text="Аккаунт — сид-фраза. Контакты — по коду чата" seed={1.7} />
         <RibbonCard title="Свои узлы" text="Собственные серверы и прозрачная инфраструктура" seed={3.4} />
       </section>
 
@@ -193,6 +195,7 @@ export default function Home() {
       </section>
 
       <section className="download-section shell" id="download">
+        <a className="download-back" href="/">← Вернуться на главную</a>
         <h2>Public Beta</h2>
         <div className="release-grid">
           <article className="release-card release-card-windows">
