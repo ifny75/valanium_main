@@ -64,12 +64,9 @@ const state = {
   readIds: new Set(),
   deliveryStates: new Map(),
   sentReadIds: new Set(),
-  recoveryCode: "",
   recoveryWords: "",
-  username: null,
   recorder: null,
   lastDisconnectReason: "",
-  pendingRecoverySetup: null,
   registrationPending: false,
 };
 /** Локальная адресная книга участвует и в выборе отображаемого имени. */
@@ -313,15 +310,14 @@ const onboardingCopy = {
     ],
     start: "Проведите, чтобы начать", next: "Продолжить", routeText: "Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.",
     relay: "Через hop1 или hop3 к main", multi: "Multi-hop временно выключен", tor: "Максимальная сетевая приватность",
-    entryTitle: "Начните с Valanium", entryLead: "Имя увидят собеседники. Пароль нужен для запасного входа с другого устройства.",
+    entryTitle: "Начните с Valanium", entryLead: "Аккаунт без логина и пароля. Для восстановления сохраните сид-фразу из 24 слов.",
     routeTitle: "сервер Valanium", back: "Назад", relayTitle: "Relay (автоматически)",
-    username: "Имя пользователя", usernamePlaceholder: "username", recoveryPassword: "Пароль восстановления", passwordPlaceholder: "Минимум 10 символов",
-    register: "Зарегистрироваться", signIn: "← Вернуться ко входу", recoverWords: "Восстановить по 24 словам", skip: "Skip — продолжить без логина и пароля",
+    register: "Зарегистрироваться", recoverWords: "Восстановить по 24 словам",
     recoveryTitle: "Recovery phrase", recoveryLead: "Введите 24 слова в том же порядке. За один шаг показываются восемь слов.",
-    login: "Логин", password: "Пароль", loginAction: "Войти", backToRegister: "Назад к регистрации",
+    backToRegister: "Назад к регистрации",
     backupTitle: "Запишите фразу", backupLead: "Двадцать четыре слова — это и есть ваш аккаунт. Перепишите их на бумагу и храните отдельно от компьютера. Не сохраняйте фразу в переписке, скриншотах или облаке.",
-    revealWords: "Показать 24 слова", copy: "Скопировать", showCode: "Показать кодом", enterChats: "Перейти в чаты", previous: "Назад", forward: "Далее", restore: "Восстановить",
-    confirmPhrase: "Я переписал(а) фразу на бумагу и понимаю, что второй раз её не покажут", security: "Фраза и пароль никогда не передаются с устройства в открытом виде.",
+    revealWords: "Показать 24 слова", copy: "Скопировать", enterChats: "Перейти в чаты", previous: "Назад", forward: "Далее", restore: "Восстановить",
+    confirmPhrase: "Я сохранил(а) 24 слова для восстановления аккаунта", security: "Сид-фраза обрабатывается только на устройстве.",
   },
   en: {
     introTitle: "valanium",
@@ -332,15 +328,14 @@ const onboardingCopy = {
     ],
     start: "Slide to start", next: "Continue", routeText: "Choose how the app connects to the network. You can change this later.",
     relay: "Through hop1 or hop3 to main", multi: "Multi-hop temporarily off", tor: "Maximum network privacy",
-    entryTitle: "Get started with Valanium", entryLead: "Your contacts see the username. The password enables recovery on another device.",
+    entryTitle: "Get started with Valanium", entryLead: "No login or password. Save your 24-word seed phrase to recover the account.",
     routeTitle: "Valanium server", back: "Back", relayTitle: "Relay (automatic)",
-    username: "Username", usernamePlaceholder: "username", recoveryPassword: "Recovery password", passwordPlaceholder: "At least 10 characters",
-    register: "Create account", signIn: "← Return to sign in", recoverWords: "Recover with 24 words", skip: "Skip — continue without login and password",
+    register: "Create account", recoverWords: "Recover with 24 words",
     recoveryTitle: "Recovery phrase", recoveryLead: "Enter all 24 words in the original order. Eight words are shown per step.",
-    login: "Login", password: "Password", loginAction: "Sign in", backToRegister: "Back to registration",
+    backToRegister: "Back to registration",
     backupTitle: "Write down the phrase", backupLead: "These twenty-four words are your account. Write them on paper and keep them away from the computer. Do not store them in chats, screenshots or cloud storage.",
-    revealWords: "Show 24 words", copy: "Copy", showCode: "Show as code", enterChats: "Open chats", previous: "Back", forward: "Next", restore: "Restore",
-    confirmPhrase: "I wrote the phrase down on paper and understand it will not be shown a second time", security: "The phrase and password never leave your device unencrypted.",
+    revealWords: "Show 24 words", copy: "Copy", enterChats: "Open chats", previous: "Back", forward: "Next", restore: "Restore",
+    confirmPhrase: "I saved all 24 words needed to recover my account", security: "The seed phrase is processed on this device.",
   },
 };
 
@@ -363,25 +358,15 @@ function applyOnboardingLanguage() {
   $("route-back-label").textContent = copy.back;
   $("entry-back-label").textContent = copy.back;
   $("route-relay-title").textContent = copy.relayTitle;
-  $("handle-label").textContent = copy.username;
-  $("handle").placeholder = copy.usernamePlaceholder;
-  $("entry-password-label").textContent = copy.recoveryPassword;
-  $("entry-password").placeholder = copy.passwordPlaceholder;
   $("entry-submit").textContent = copy.register;
-  $("open-password-recover").textContent = copy.signIn;
   $("open-recover").textContent = copy.recoverWords;
-  $("skip-registration").textContent = copy.skip;
   $("recover-title").textContent = copy.recoveryTitle;
   $("recover-lead").textContent = copy.recoveryLead;
-  document.querySelector('label[for="recover-login"]').textContent = copy.login;
-  document.querySelector('label[for="recover-password"]').textContent = copy.password;
-  $("form-recover-password").querySelector("button").textContent = copy.loginAction;
   $("recover-back").querySelector("span").textContent = copy.backToRegister;
   $("backup-title").textContent = copy.backupTitle;
   $("backup-lead").textContent = copy.backupLead;
   $("backup-words-reveal").textContent = copy.revealWords;
   $("backup-words-copy").textContent = copy.copy;
-  $("backup-words-code").textContent = copy.showCode;
   $("backup-next").textContent = copy.enterChats;
   $("backup-written").nextElementSibling.textContent = copy.confirmPhrase;
   $("screen-backup").querySelector(".security-note span:last-child").textContent = copy.security;
@@ -631,22 +616,7 @@ applyOnboardingLanguage();
 $("form-entry").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("entry-submit");
-  const handle = $("handle").value.trim();
-  const password = $("entry-password").value;
   $("entry-error").textContent = "";
-  if (handle && !/^[a-z0-9_]{3,20}$/i.test(handle)) {
-    $("entry-error").textContent = "Имя: 3–20 символов, латиница, цифры и _";
-    return;
-  }
-  if (password && password.length < 10) {
-    $("entry-error").textContent = "Пароль должен содержать минимум 10 символов";
-    return;
-  }
-  if (password && !handle) {
-    $("entry-error").textContent = "Для запасного входа укажите имя пользователя";
-    return;
-  }
-  state.pendingRecoverySetup = password ? { login: handle, password } : null;
   state.registrationPending = true;
   button.disabled = true;
   button.textContent = "Подключаем…";
@@ -661,26 +631,20 @@ $("form-entry").addEventListener("submit", async (event) => {
       await ensureOnionize();
     } catch (error) {
       $("entry-error").textContent = `Регистрация через Tor не началась: ${error.message ?? error}`;
-      state.pendingRecoverySetup = null;
+
       state.registrationPending = false;
       button.disabled = false;
       button.textContent = "Зарегистрироваться";
       return;
     }
   }
-  const accepted = await submit({ type: "register", url: registrationUrl, handle: handle || null, invite: null });
+  const accepted = await submit({ type: "register", url: registrationUrl, handle: null, invite: null });
   if (!accepted) {
-    state.pendingRecoverySetup = null;
+
     state.registrationPending = false;
     button.disabled = false;
     button.textContent = "Зарегистрироваться";
   }
-});
-
-$("skip-registration").addEventListener("click", () => {
-  $("handle").value = "";
-  $("entry-password").value = "";
-  $("form-entry").requestSubmit();
 });
 
 // --- восстановление доступа ---------------------------------------------------
@@ -719,38 +683,16 @@ function renderRecoveryPage() {
   grid.querySelector("input")?.focus();
 }
 
-function openRecovery(mode = "code") {
+function openRecovery() {
   $("recover-error").textContent = "";
-  const russian = onboardingLanguage === "ru";
-  $("recover-title").textContent = mode === "password"
-    ? (russian ? "Войти в Valanium" : "Sign in to Valanium")
-    : (russian ? "Recovery phrase" : "Recovery phrase");
-  $("recover-lead").textContent = mode === "password"
-    ? (russian ? "Введите логин и пароль восстановления, созданные на другом устройстве." : "Enter the recovery login and password created on another device.")
-    : (russian ? "Введите 24 слова в том же порядке. За один шаг показываются восемь слов." : "Enter all 24 words in the original order. Eight words are shown per step.");
-  const button = document.querySelector(`#recover-segment button[data-mode="${mode}"]`);
-  button?.click();
-  if (mode === "code") renderRecoveryPage();
+  renderRecoveryPage();
   showScreen("screen-recover");
 }
 
-$("open-recover").addEventListener("click", () => openRecovery("code"));
-$("open-password-recover").addEventListener("click", () => openRecovery("password"));
+$("open-recover").addEventListener("click", openRecovery);
 $("recover-back").addEventListener("click", () => showScreen("screen-entry"));
 
-for (const button of document.querySelectorAll("#recover-segment button")) {
-  button.addEventListener("click", () => {
-    for (const other of document.querySelectorAll("#recover-segment button")) {
-      other.classList.toggle("active", other === button);
-    }
-    const byCode = button.dataset.mode === "code";
-    $("form-recover-code").classList.toggle("hidden", !byCode);
-    $("form-recover-password").classList.toggle("hidden", byCode);
-    $("recover-error").textContent = "";
-  });
-}
-
-/** Обе формы восстановления ведут себя одинаково: блокировка и понятный отказ. */
+/** На время восстановления блокируем отправку и показываем понятный отказ. */
 async function runRecovery(form, command, busyText, idleText) {
   const button = form.querySelector(".primary-button, #recover-submit");
   $("recover-error").textContent = "";
@@ -801,29 +743,10 @@ $("recovery-word-grid").addEventListener("paste", (event) => {
   renderRecoveryPage();
 });
 
-$("form-recover-password").addEventListener("submit", (event) => {
-  event.preventDefault();
-  runRecovery(
-    $("form-recover-password"),
-    {
-      type: "recover_password",
-      url: serverUrl(),
-      login: $("recover-login").value.trim(),
-      password: $("recover-password").value,
-    },
-    // Argon2id на 128 МиБ считается заметное время — молчащая кнопка выглядела
-    // бы как зависание.
-    "Разбираем пароль…",
-    "Восстановить",
-  );
-});
-
 function resetRecoveryButtons() {
-  for (const id of ["form-recover-code", "form-recover-password"]) {
-    const button = $(id).querySelector(".primary-button, #recover-submit");
-    button.disabled = false;
-    button.textContent = id === "form-recover-password" ? "Войти" : "Восстановить →";
-  }
+  const button = $("recover-submit");
+  button.disabled = false;
+  button.textContent = "Восстановить →";
 }
 
 async function boot() {
@@ -871,8 +794,6 @@ async function boot() {
  * и отвечает только на имя целиком. Это же и мешает постороннему выкачать
  * список всех, кто здесь есть.
  */
-let lookupTimer = null;
-let lookupQuery = null;
 
 /**
  * Похоже ли введённое на адресата, а не на слово для поиска.
@@ -892,7 +813,6 @@ const CHANNEL_LINK = /^(?:https?:\/\/)?(?:www\.)?getvalanium\.xyz\/channel\/([a-
 
 function looksLikeAddress(raw) {
   return CHANNEL_LINK.test(raw)
-    || looksLikeUsername(raw)
     || /^OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/i.test(raw)
     || /^[0-9a-f]{64}$/i.test(raw);
 }
@@ -901,18 +821,7 @@ $("omni").addEventListener("input", () => {
   const raw = $("omni").value.trim();
   $("omni-go").classList.toggle("hidden", !looksLikeAddress(raw));
   renderConversations();
-  const name = (raw.startsWith("@") ? raw.slice(1) : raw).toLowerCase();
-  clearTimeout(lookupTimer);
-  if (!/^[a-z][a-z0-9_]{2,19}$/.test(name)) {
-    lookupQuery = null;
-    hideSearchResult();
-    return;
-  }
-  if (name === lookupQuery) return;
-  lookupTimer = setTimeout(() => {
-    lookupQuery = name;
-    submit({ type: "username_lookup", name });
-  }, 450);
+  hideSearchResult();
 });
 
 $("form-omni").addEventListener("submit", (event) => {
@@ -928,12 +837,7 @@ $("form-omni").addEventListener("submit", (event) => {
     submit({ type: "channel_find", handle: link[1].toLowerCase() });
     return;
   }
-  // Юзернейм ищется по каталогу, код и адрес работают как раньше.
-  if (looksLikeUsername(raw)) {
-    hideSearchResult();
-    submit({ type: "username_lookup", name: raw });
-    return;
-  }
+  // Новый контакт открывается по коду чата или адресу устройства.
   const peer = raw.toLowerCase();
   const chatCode = raw.toUpperCase();
   if (/^OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/.test(chatCode)) {
@@ -969,8 +873,7 @@ function profileFor(device) {
 function displayName(device) {
   const profile = profileFor(device);
   const known = directory.get(device);
-  const username = profile?.handle || known?.username;
-  if (username) return `@${username.replace(/^@/, "")}`;
+  if (profile?.chat_code) return profile.chat_code;
   if (known?.display_name) return known.display_name;
   return `Пользователь ${initials(device)}`;
 }
@@ -2139,15 +2042,13 @@ const handlers = {
     // Экран с фразой не смахиваем: AUTH_OK приходит сразу за регистрацией, и
     // без этой проверки человек увидел бы свои 24 слова на долю секунды.
     if (!backupWizardOpen()) showScreen("screen-main");
-    if (state.pendingRecoverySetup) {
-      const recovery = state.pendingRecoverySetup;
-      state.pendingRecoverySetup = null;
-      submit({ type: "recovery_setup", login: recovery.login, password: recovery.password });
-    }
     submit({ type: "conversations" });
   },
 
   registered(event) {
+    recoveryWords.fill("");
+    $("recovery-word-grid").replaceChildren();
+    $("recover-code").value = "";
     // Ядро присылает registered после любого AUTH_OK — в том числе при каждом
     // обычном запуске. Новым считаем аккаунт лишь после register из этой формы.
     const justRegistered = state.registrationPending;
@@ -2378,35 +2279,6 @@ const handlers = {
     renderConversations();
   },
 
-  username(event) {
-    state.username = event.name ?? null;
-    renderUsername();
-    usernameStatus(state.username ? "Занят." : "Не занят.");
-  },
-
-  username_found(event) {
-    const invite = state.pendingGroupInvite;
-    if (invite) {
-      state.pendingGroupInvite = null;
-      if (!event.device) return toast(`@${event.query} — никого не нашли`);
-      if (event.pin === "changed") {
-        event.after_pin = { kind: "group_invite", group: invite.group };
-        return renderSearchHit(event);
-      }
-      submit({ type: "group_invite", group: invite.group, members: [event.device] });
-      return toast(`@${event.query} приглашён`);
-    }
-    if (!event.device) return renderSearchMiss(event.query);
-    state.profiles.set(event.device, {
-      device: event.device,
-      chat_code: event.chat_code,
-      handle: event.query,
-      avatar_mime: event.avatar_mime,
-      avatar_base64: event.avatar_base64,
-    });
-    renderSearchHit(event);
-  },
-
   pin_accepted(event) {
     const pending = state.pendingPinAction;
     if (!pending || pending.query !== event.name || pending.device !== event.device) return;
@@ -2510,7 +2382,6 @@ const handlers = {
   },
 
   recovery_code(event) {
-    state.recoveryCode = event.code;
     state.recoveryWords = event.words;
 
     if (state.freshAccount) {
@@ -2526,28 +2397,6 @@ const handlers = {
     $("show-recovery-code").textContent = "Скрыть";
   },
 
-  recovery_saved(event) {
-    const note = event.totp
-      ? `Запасной вход включён для «${event.login}», код из приложения обязателен`
-      : `Восстановление включено для логина «${event.login}»`;
-    setRecoveryStatus(note, "ok");
-    $("recovery-password").value = "";
-    $("save-recovery-password").disabled = false;
-    $("save-recovery-password").textContent = "Включить";
-
-    // Если это был шаг регистрации — он на этом и заканчивается.
-    if (!$("screen-backup").classList.contains("hidden")) finishBackupWizard();
-  },
-
-  totp_secret(event) {
-    state.totpSecret = event.secret;
-    $("backup-totp-secret").textContent = event.readable;
-  },
-
-  recovery_forgotten() {
-    setRecoveryStatus("Запечатанная копия убрана с сервера. Остался только код.", "ok");
-  },
-
   failed(event) {
     if (event.code === "privacy_preset") { maximumPrivacyPending = false; $("privacy-maximize").disabled = false; }
     if (event.code === "anonymous_delivery_waiting") { toast(event.message); return; }
@@ -2556,36 +2405,18 @@ const handlers = {
       toast("Новый ключ не подтверждён: действие остановлено");
       return;
     }
-    const username = FRIENDLY_ERRORS[event.code];
-    if (username) {
-      // Отказ показываем там, где человек действовал: занятие имени — в
-      // настройках профиля, всё остальное случается по ходу переписки.
-      if (event.code === "username_taken" || event.code === "bad_username") usernameStatus(username);
-      else toast(username);
-      return;
-    }
+    const friendly = FRIENDLY_ERRORS[event.code];
+    if (friendly) { toast(friendly); return; }
     const recovery = recoveryError(event);
     if (recovery && !$("screen-recover").classList.contains("hidden")) {
       $("recover-error").textContent = recovery;
       resetRecoveryButtons();
       return;
     }
-    if (recovery && !settingsPage.classList.contains("hidden")) {
-      setRecoveryStatus(recovery, "bad");
-      $("save-recovery-password").disabled = false;
-      $("save-recovery-password").textContent = "Включить";
-      return;
-    }
-    if (event.code === "login_taken") {
-      setRecoveryStatus("Этот логин уже занят другим аккаунтом — возьмите другой", "bad");
-      $("save-recovery-password").disabled = false;
-      $("save-recovery-password").textContent = "Включить";
-      return;
-    }
     const message = entryError(event);
     if (message) {
       state.registrationPending = false;
-      state.pendingRecoverySetup = null;
+
       showScreen("screen-entry");
       $("entry-error").textContent = message;
       $("entry-submit").disabled = false;
@@ -2600,8 +2431,6 @@ const handlers = {
 function recoveryError(event) {
   const known = {
     bad_recovery_code: "Код набран с ошибкой — проверьте символы",
-    bad_password: "Логин или пароль не подошли",
-    recovery_not_found: "Логин или пароль не подошли",
     recovery_rate_limited: "Слишком много попыток. Попробуйте через час",
     identity_exists: "На этом устройстве уже есть аккаунт",
     recover: "Не удалось восстановить доступ",
@@ -2662,25 +2491,11 @@ $("logout-account").addEventListener("click", async () => {
   }
 });
 
-function setRecoveryStatus(text, kind) {
-  const node = $("recovery-status");
-  node.textContent = text;
-  node.className = `recovery-status ${kind ?? ""}`.trim();
-}
-
 // --- экран «что делать, если устройство пропадёт» ------------------------------
 
-/**
- * Показывается один раз, сразу после регистрации.
- *
- * Порядок шагов не случаен: сначала то, что работает без сервера и без нас
- * (фраза), и только потом запасной вход, который зависит и от сервера, и от
- * стойкости пароля. Если человек уйдёт после первого шага — он уйдёт с самым
- * надёжным способом в кармане.
- */
+/** Сохранение сид-фразы после создания нового аккаунта. */
 function openBackupWizard() {
   showScreen("screen-backup");
-  backupStep(1);
 
   // Фраза не появляется ни на экране, ни в разметке без явного действия.
   $("backup-words").replaceChildren();
@@ -2689,13 +2504,6 @@ function openBackupWizard() {
 
   $("backup-written").checked = false;
   $("backup-next").disabled = true;
-  $("backup-totp").checked = false;
-  $("backup-totp-box").classList.add("hidden");
-  $("backup-totp-code").value = "";
-  $("backup-login").value = "";
-  $("backup-password").value = "";
-  $("backup-status").textContent = "";
-  $("backup-status").className = "recovery-status";
 }
 
 /** Открыт ли мастер: пока он на экране, его нельзя перебивать. */
@@ -2714,18 +2522,11 @@ function backupWizardOpen() {
   return !$("screen-backup").classList.contains("hidden");
 }
 
-function backupStep(step) {
-  if ($("backup-step-now")) $("backup-step-now").textContent = String(step);
-  $("backup-step-words").classList.toggle("hidden", step !== 1);
-  $("backup-step-second").classList.toggle("hidden", step !== 2);
-}
-
 function finishBackupWizard() {
   // Фраза со экрана уходит вместе с ним: держать её в разметке незачем.
   $("backup-words").replaceChildren();
   $("backup-secret").classList.add("hidden");
   state.recoveryWords = "";
-  state.recoveryCode = "";
   showScreen("screen-main");
 }
 
@@ -2748,79 +2549,7 @@ $("backup-written").addEventListener("change", () => {
 $("backup-words-copy").addEventListener("click", () =>
   copyText(state.recoveryWords, "Фраза скопирована — вставьте в надёжное место и очистите буфер"));
 
-$("backup-words-code").addEventListener("click", () => {
-  // Тот же ключ, другая запись: кому-то привычнее строка, а не слова.
-  const button = $("backup-words-code");
-  const list = $("backup-words");
-  const showingCode = list.classList.toggle("as-code");
-  button.textContent = showingCode ? "Показать словами" : "Показать кодом";
-  list.replaceChildren();
-  if (showingCode) {
-    const item = document.createElement("li");
-    item.className = "wide";
-    item.textContent = state.recoveryCode;
-    list.appendChild(item);
-    return;
-  }
-  for (const word of state.recoveryWords.split(/\s+/)) {
-    const item = document.createElement("li");
-    item.textContent = word;
-    list.appendChild(item);
-  }
-});
-
 $("backup-next").addEventListener("click", () => finishBackupWizard());
-
-$("backup-totp").addEventListener("change", () => {
-  const on = $("backup-totp").checked;
-  $("backup-totp-box").classList.toggle("hidden", !on);
-  // Секрет заводится на устройстве и до подтверждения кодом никуда не уходит.
-  if (on && !state.totpSecret) submit({ type: "totp_secret", login: $("backup-login").value.trim() || "valanium" });
-});
-
-$("backup-skip").addEventListener("click", () => {
-  confirmAction(
-    "Пропустить запасной вход?",
-    "Тогда единственный способ вернуть аккаунт — фраза из 24 слов. Потеряете бумагу — "
-    + "вернуть будет нечем: ключей нет ни у нас, ни у того, кто держит сервер.",
-    () => finishBackupWizard(),
-  );
-});
-
-$("backup-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const login = $("backup-login").value.trim();
-  const password = $("backup-password").value;
-  const useTotp = $("backup-totp").checked;
-  const code = $("backup-totp-code").value.trim();
-
-  const bad = (text) => {
-    $("backup-status").textContent = text;
-    $("backup-status").className = "recovery-status bad";
-  };
-  if (login.length < 3) return bad("Логин от 3 символов");
-  if (password.length < 10) return bad("Пароль минимум 10 символов");
-  if (useTotp && !/^\d{6}$/.test(code)) return bad("Введите шесть цифр из приложения");
-
-  const button = $("backup-save");
-  button.disabled = true;
-  button.textContent = "Считаем…";
-  $("backup-status").textContent = "Выводим ключ из пароля, это занимает пару секунд…";
-  $("backup-status").className = "recovery-status";
-
-  const ok = await submit({
-    type: "recovery_setup",
-    login,
-    password,
-    totp: useTotp ? state.totpSecret : null,
-    code: useTotp ? code : null,
-  });
-  if (!ok) {
-    button.disabled = false;
-    button.textContent = "Включить запасной вход";
-    bad("Не вышло — проверьте логин и код");
-  }
-});
 
 $("show-recovery-code").addEventListener("click", () => {
   const box = $("recovery-code-box");
@@ -2829,8 +2558,8 @@ $("show-recovery-code").addEventListener("click", () => {
     box.classList.add("hidden");
     $("copy-recovery-code").classList.add("hidden");
     $("recovery-code-text").textContent = "—";
-    state.recoveryCode = "";
-    $("show-recovery-code").textContent = "Показать фразу";
+    state.recoveryWords = "";
+      $("show-recovery-code").textContent = "Показать фразу";
     return;
   }
   submit({ type: "recovery_code" });
@@ -2839,26 +2568,6 @@ $("show-recovery-code").addEventListener("click", () => {
 $("copy-recovery-code").addEventListener("click", () =>
   copyText(state.recoveryWords, "Фраза скопирована — вставьте в надёжное место и очистите буфер"),
 );
-
-$("save-recovery-password").addEventListener("click", async () => {
-  const login = $("recovery-login").value.trim();
-  const password = $("recovery-password").value;
-  if (login.length < 3) return setRecoveryStatus("Логин от 3 символов", "bad");
-  if (password.length < 10) return setRecoveryStatus("Пароль минимум 10 символов", "bad");
-
-  const button = $("save-recovery-password");
-  button.disabled = true;
-  button.textContent = "Считаем…";
-  setRecoveryStatus("Выводим ключ из пароля, это занимает пару секунд…");
-  if (!(await submit({ type: "recovery_setup", login, password }))) {
-    button.disabled = false;
-    button.textContent = "Включить";
-  }
-});
-
-$("forget-recovery-password").addEventListener("click", () => {
-  submit({ type: "recovery_forget" });
-});
 
 $("avatar-upload").addEventListener("click", () => $("avatar-file").click());
 $("avatar-file").addEventListener("change", () => {
@@ -4040,17 +3749,8 @@ const PRIVACY_GROUPS = [
   {
     title: "Профиль и поиск",
     rules: [
-      {
-        key: "discoverable",
-        label: "Поиск по юзернейму",
-        hint: "«Никто» — сервер не отдаёт вас в поиске совсем: для ищущего вы неотличимы "
-          + "от несуществующего имени. Промежуточного варианта здесь нет: поиск идёт на "
-          + "стороне ищущего, и отличить вашего контакта от постороннего в этот момент нечем.",
-        scopes: ["everyone", "nobody"],
-      },
       { key: "profile_avatar", label: "Аватар", hint: "", scopes: ["everyone", "contacts", "nobody"] },
       { key: "profile_name", label: "Имя профиля", hint: "", scopes: ["everyone", "contacts", "nobody"] },
-      { key: "profile_username", label: "Юзернейм", hint: "", scopes: ["everyone", "contacts", "nobody"] },
     ],
   },
 ];
@@ -4368,33 +4068,6 @@ $("data-path").addEventListener("click", () => {
   toast("База лежит в каталоге данных приложения и открывается только паролем этого устройства");
 });
 
-// --- юзернейм ------------------------------------------------------------------
-
-/**
- * Юзернейм — слой поиска, а не личность.
- *
- * Его можно занять, сменить и освободить; на проверку ключей он не влияет
- * никак. На сервер уезжает только хеш имени: поиск точный, поэтому большего
- * серверу и не нужно.
- */
-$("username-save").addEventListener("click", () => {
-  const name = $("username-input").value.trim().replace(/^@/, "");
-  if (!name) return usernameStatus("Введите имя: латиница, цифры и подчёркивание, от 3 до 20 символов.");
-  usernameStatus("Занимаем…");
-  submit({ type: "username_set", name, discoverable: privacy?.discoverable?.scope !== "nobody" });
-});
-
-$("username-clear").addEventListener("click", () => {
-  if (!state.username) return usernameStatus("Юзернейм не занят.");
-  usernameStatus("Освобождаем…");
-  submit({ type: "username_clear" });
-});
-
-$("username-copy").addEventListener("click", () => {
-  if (!state.username) return usernameStatus("Сначала займите имя.");
-  copyText(`@${state.username}`, "Юзернейм скопирован");
-});
-
 const EMBLEM_LABELS = {
   none: "Без значка", star: "Звезда", moon: "Луна", leaf: "Лист",
   flame: "Пламя", drop: "Капля", bolt: "Молния", heart: "Сердце",
@@ -4431,7 +4104,7 @@ function renderDecor() {
   const preview = $("profile-decor-preview");
   const previewColor = profileColor(state.color) || "var(--muted)";
   preview.style.setProperty("--decor-color", previewColor);
-  preview.querySelector("span").textContent = state.username ? state.username.slice(0, 2).toUpperCase() : "ME";
+  preview.querySelector("span").textContent = "ME";
   preview.querySelector("i").textContent = emblemGlyph(state.emblem);
 }
 
@@ -4834,7 +4507,7 @@ $("new-group").addEventListener("click", () => {
     + `<button type="button" data-kind="chat" class="active"><b>Группа</b><small>пишут все участники</small></button>`
     + `<button type="button" data-kind="channel"><b>Канал</b><small>пишет только владелец</small></button>`
     + `</div>`
-    + `<input data-members type="text" placeholder="Кого позвать: @имя, OBS-код или адрес" />`
+    + `<input data-members type="text" placeholder="Кого позвать: OBS-код или адрес" />`
     + `</div>`
     + `<p class="modal-copy">Состав знает только ваше устройство и устройства участников. Серверу группа не видна: он по-прежнему возит конверты между устройствами.</p>`
     + `<div class="setting-actions peer-actions">`
@@ -4866,7 +4539,7 @@ $("new-group").addEventListener("click", () => {
   modal.querySelector("[data-title]").focus();
 });
 
-/** Зовёт человека в группу по @имени, коду чата или адресу устройства. */
+/** Зовёт человека в группу по коду чата или адресу устройства. */
 function inviteToGroup(group, query) {
   const raw = query.trim();
   if (/^[0-9a-f]{64}$/i.test(raw)) {
@@ -4874,11 +4547,7 @@ function inviteToGroup(group, query) {
     return;
   }
   state.pendingGroupInvite = { group, query: raw };
-  if (raw.startsWith("@")) {
-    submit({ type: "username_lookup", name: raw.slice(1).toLowerCase() });
-  } else {
-    submit({ type: "profile_get", query: raw.toUpperCase() });
-  }
+  submit({ type: "profile_get", query: raw.toUpperCase() });
 }
 
 $("invite-to-group").addEventListener("click", () => {
@@ -4887,7 +4556,7 @@ $("invite-to-group").addEventListener("click", () => {
   const modal = document.createElement("div");
   modal.className = "modal";
   modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2 data-group-title></h2></div>`
-    + `<div class="group-form"><input data-query type="text" placeholder="@имя, OBS-код или адрес устройства" /></div>`
+    + `<div class="group-form"><input data-query type="text" placeholder="OBS-код или адрес устройства" /></div>`
     + `<p class="modal-copy">Приглашённый получит ключи группы и сможет читать то, что будет написано дальше. Прежние сообщения ему не откроются.</p>`
     + `<div class="setting-actions peer-actions"><button class="ghost-button" data-no>Отмена</button>`
     + `<button class="ghost-button" data-yes>Позвать</button></div></div>`;
@@ -4929,41 +4598,9 @@ for (const [id, action] of [["admin-block", "block"], ["admin-unblock", "unblock
   });
 }
 
-function usernameStatus(text) {
-  $("username-status").textContent = text;
-}
-
-/** Личная ссылка. Тот же вид, что у канала: домен, раздел, имя. */
-function usernameLink(name) {
-  return `https://valanium.com/u/${name}`;
-}
-
-function renderUsername() {
-  $("username-input").value = state.username ?? "";
-  $("username-clear").disabled = !state.username;
-  $("username-copy").disabled = !state.username;
-  $("username-save").textContent = state.username ? "Сменить" : "Занять";
-
-  // Ссылка появляется только когда имя занято: показывать адрес, который ещё
-  // никому не принадлежит, значит обещать несуществующее.
-  const link = $("username-link");
-  link.classList.toggle("hidden", !state.username);
-  if (state.username) {
-    $("username-link-text").textContent = usernameLink(state.username).replace(/^https:\/\//, "");
-  }
-}
-
-$("username-link").addEventListener("click", () => {
-  if (state.username) copyText(usernameLink(state.username), "Ссылка скопирована");
-});
-
-// --- поиск по юзернейму ---------------------------------------------------------
+// --- подтверждение контакта по коду --------------------------------------------
 
 /** `@имя` уходит в поиск, всё остальное — прежним путём, по коду или адресу. */
-function looksLikeUsername(raw) {
-  return raw.startsWith("@") || /^[a-z][a-z0-9_]{2,19}$/i.test(raw);
-}
-
 function showSearchResult(node) {
   const host = $("search-result");
   host.replaceChildren(node);
@@ -4973,16 +4610,6 @@ function showSearchResult(node) {
 function hideSearchResult() {
   $("search-result").classList.add("hidden");
   $("search-result").replaceChildren();
-}
-
-function renderSearchMiss(query) {
-  const message = document.createElement("p");
-  message.className = "miss";
-  // Скрытый и несуществующий отвечают одинаково — так задумано на сервере,
-  // и интерфейс не должен додумывать за него.
-  message.textContent = `@${query} — никого не нашли. Либо такого юзернейма нет, `
-    + "либо человек скрыл себя из поиска.";
-  showSearchResult(message);
 }
 
 function completePinnedAction(action) {
@@ -5019,7 +4646,7 @@ function renderSearchHit(event) {
   const name = document.createElement("b");
   name.textContent = displayName(event.device);
   const handle = document.createElement("small");
-  handle.textContent = `@${event.query}`;
+  handle.textContent = event.chat_code || event.query || short(event.device);
   copy.append(name, handle);
   found.append(avatar, copy);
   card.appendChild(found);
@@ -5121,7 +4748,7 @@ function requestCard(device, entry) {
   const name = document.createElement("b");
   name.textContent = entry.display_name || displayName(device);
   const handle = document.createElement("small");
-  handle.textContent = entry.username ? `@${entry.username}` : short(device);
+  handle.textContent = short(device);
   copy.append(name, handle);
   found.append(avatar, copy);
   card.appendChild(found);
@@ -5561,7 +5188,7 @@ $("channel-settings").addEventListener("click", () => {
     + `</div>`
     + `<small class="decor-label">Кто пишет, кроме вас</small>`
     + `<ul class="channel-admins" data-admins></ul>`
-    + `<input data-invite type="text" placeholder="Позвать писать: @имя, OBS-код или адрес" />`
+    + `<input data-invite type="text" placeholder="Позвать писать: OBS-код или адрес" />`
     + `</div>`
     + `<p class="modal-copy">Позванный пишет посты, но не может ни переименовать канал, ни закрыть его, ни позвать других.</p>`
     + `<div class="setting-actions peer-actions">`
@@ -5891,7 +5518,7 @@ function openPeerCard(device) {
 
   paintName($("peer-modal-name"), device);
   applyAvatar($("peer-modal-avatar"), device);
-  $("peer-modal-username").textContent = profile?.handle ? `@${profile.handle}` : "юзернейм не указан";
+  $("peer-modal-username").textContent = profile?.chat_code || short(device);
   $("peer-modal-standing").textContent = STANDING_LABELS[entry?.standing] ?? "не в контактах";
   $("peer-modal-code").textContent = profile?.chat_code ?? "—";
   $("peer-modal-device").textContent = short(device);

@@ -399,6 +399,13 @@ impl Engine {
 /// connected», если про второе место забывали, — на этом и попался
 /// `recovery_code`, который нужен как раз тогда, когда клиент подключён.
 fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
+    // Account entry and discovery are seed-only. Handle legacy commands locally,
+    // before either the disconnected or connected network dispatcher sees them.
+    if matches!(command, Command::UsernameSet { .. } | Command::UsernameLookup { .. }
+        | Command::RecoverySetup { .. } | Command::RecoverPassword { .. } | Command::TotpSecret { .. }) {
+        fail(sink, "seed_only", "Account recovery uses the 24-word seed phrase; usernames and password recovery are retired");
+        return true;
+    }
     match command {
         Command::VerificationConfirm { peer_device, proof } => {
             let result = (|| -> Result<bool> {
@@ -728,8 +735,8 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             Command::RequestInvoice { url } => {
                 session(&url, Entry::Invoice, &store, &sink, &mut commands).await;
             }
-            Command::Register { url, handle, invite, payment_ref } => {
-                session(&url, Entry::Register { handle, invite, payment_ref }, &store, &sink, &mut commands)
+            Command::Register { url, handle: _, invite, payment_ref } => {
+                session(&url, Entry::Register { handle: None, invite, payment_ref }, &store, &sink, &mut commands)
                     .await;
             }
             Command::Connect { url } => {
@@ -1918,8 +1925,8 @@ async fn sync_server_privacy(socket: &mut Socket, store: &Store,
         save_access(store, &access)?;
     }
     let own = load_username(store);
-    let discoverable = privacy.as_ref().map(|p| p.discoverable.scope != crate::privacy::Scope::Nobody)
-        .unwrap_or(own.discoverable);
+    // Hide legacy names on upgrade without releasing ownership or destroying backups.
+    let discoverable = false;
     if pending_username.is_none() {
         if let Some(name) = own.name.filter(|_| !own.strong_hash || own.discoverable != discoverable) {
             let hash = crate::directory::username_hash(&name);
@@ -4396,6 +4403,39 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_account_commands_are_rejected_locally_without_network_or_mutation() {
+        let store = TempStore::new("seed-only-retired");
+        let credentials = Credentials { identity: keys::SecretKey::generate(), device: keys::SecretKey::generate() };
+        store.0.save_credentials(&credentials).unwrap();
+        let before = store.0.load_credentials().unwrap().identity_pub();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received = events.clone();
+        let sink: EventSink = Arc::new(move |event| received.lock().unwrap().push(event));
+        let commands = [
+            Command::UsernameSet { name: "legacy".into(), discoverable: true },
+            Command::UsernameLookup { name: "legacy".into() },
+            Command::RecoverySetup { login: "legacy".into(), password: "unused-password".into(), totp: None, code: None },
+            Command::RecoverPassword { url: "wss://unused.invalid".into(), login: "legacy".into(), password: "unused-password".into(), code: None },
+            Command::TotpSecret { login: "legacy".into() },
+        ];
+        for command in commands {
+            assert!(handle_local(&command, &store.0, &sink));
+            assert!(matches!(events.lock().unwrap().pop(), Some(Event::Failed { code, .. }) if code == "seed_only"));
+            assert_eq!(store.0.load_credentials().unwrap().identity_pub(), before);
+        }
+        assert!(handle_local(&Command::RecoveryCode, &store.0, &sink));
+        let phrase = match events.lock().unwrap().pop().unwrap() {
+            Event::RecoveryCode { words, .. } => words,
+            event => panic!("{event:?}"),
+        };
+        assert_eq!(phrase.split_whitespace().count(), 24);
+        let restored = TempStore::new("seed-only-restored");
+        recover(&restored.0, &phrase).unwrap();
+        assert_eq!(restored.0.load_credentials().unwrap().identity_pub(), before);
+        assert!(recover(&restored.0, &phrase).is_err());
+    }
 
     fn established_pair(store: &Store) -> (Credentials, Mls, Mls, [u8; KEY_LEN], Vec<u8>) {
         let credentials = Credentials { identity: keys::SecretKey::generate(), device: keys::SecretKey::generate() };

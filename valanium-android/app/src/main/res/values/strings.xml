@@ -177,10 +177,10 @@
     <string name="recover_hint">Вернётся личность и возможность писать прежним собеседникам. Переписка не вернётся: старые сообщения защищены так, что их не прочитает даже сервер.</string>
     <string name="recover_by_code">По коду</string>
     <string name="recover_by_password">По паролю</string>
-    <string name="recover_code_mode_hint">Введите сохранённый код восстановления. Он обрабатывается локально и не показывается серверу.</string>
+    <string name="recover_code_mode_hint">Введите все 24 слова сид-фразы в исходном порядке. Фраза обрабатывается локально.</string>
     <string name="recover_password_mode_hint">Используйте логин и пароль восстановления, которые были настроены в профиле.</string>
     <string name="recover_local_note">Восстановится личность и список устройств. История сообщений остаётся в прежней зашифрованной базе.</string>
-    <string name="recover_code_hint">Код восстановления</string>
+    <string name="recover_code_hint">24 слова сид-фразы</string>
     <string name="recover_login_hint">Логин</string>
     <string name="recover_password_hint">Пароль восстановления</string>
     <string name="recover_action">Восстановить</string>
@@ -306,7 +306,7 @@
     <string name="data_section">Данные</string>
     <string name="reset_appearance">Сбросить оформление</string>
     <string name="section_later">Этот раздел появится в следующем обновлении</string>
-    <string name="search_hint">Поиск, @юзернейм или код OBS-…</string>
+    <string name="search_hint">Поиск в чатах или код OBS-…</string>
     <string name="copy_code">Скопировать код для начала чата</string>
     <string name="open_settings_label">Настройки</string>
     <string name="nothing_found">Ничего не найдено</string>
@@ -390,7 +390,7 @@
     <string name="admin_close_hint">Человек перестанет входить на сервер. Переписки это не касается: она у собеседников на устройствах, и прочитать её нельзя.</string>
     <string name="admin_open_hint">Человек снова сможет входить на сервер.</string>
     <string name="tab_chats">Чаты</string>
-    <string name="entry_lead">Один юзернейм — и можно начинать защищённые диалоги.</string>
+    <string name="entry_lead">Аккаунт без логина и пароля. Для восстановления — сид-фраза из 24 слов.</string>
     <string name="entry_eyebrow">ЗАЩИЩЁННАЯ ПЕРЕПИСКА</string>
     <string name="entry_footer">Ключи создаются и остаются на этом устройстве. Сервер не получает доступа к сообщениям.</string>
     <string name="entry_benefit_phone">Без\nтелефона</string>
@@ -436,4 +436,5 @@
     <string name="hop_auto">Авто</string>
     <string name="hop_switched">Второй узел: %1$s</string>
     <string name="hop_switched_auto">Второй узел выбирается сам</string>
+    <string name="profile_account_title">Мой аккаунт</string>
 </resources>

@@ -97,47 +97,9 @@
           <button id="backup-words-reveal" class="primary-button backup-reveal" type="button">Показать 24 слова</button>
         </div>
 
-        <div id="backup-step-second" class="hidden">
-          <h1>Запасной вход</h1>
-          <p class="lead">
-            Если бумага потеряется. Сервер сохранит запечатанную копию ключа — открыть её
-            можно только этим паролем, и стойкость всего способа равна стойкости пароля.
-            Фраза надёжнее: включайте это вторым способом, а не вместо.
-          </p>
-          <form id="backup-form" class="entry-form" autocomplete="off">
-            <label for="backup-login">Логин</label>
-            <input id="backup-login" type="text" autocomplete="off" placeholder="Не ваше имя из переписки" />
-            <label for="backup-password">Пароль</label>
-            <input id="backup-password" type="password" autocomplete="new-password" placeholder="Минимум 10 символов" />
-
-            <label class="backup-confirm">
-              <input id="backup-totp" type="checkbox" />
-              <span>Просить код из приложения-аутентификатора</span>
-            </label>
-
-            <div id="backup-totp-box" class="backup-totp hidden">
-              <p class="backup-hint">
-                Добавьте этот секрет в Google Authenticator или любое такое же приложение
-                и введите код, который оно покажет. Без подтверждения второй фактор не
-                включится — иначе ошибка при переносе обнаружилась бы слишком поздно.
-              </p>
-              <code id="backup-totp-secret">—</code>
-              <button id="backup-totp-copy" class="ghost-button" type="button">Скопировать секрет</button>
-              <input id="backup-totp-code" type="text" inputmode="numeric" maxlength="7"
-                     autocomplete="one-time-code" placeholder="Шесть цифр из приложения" />
-            </div>
-
-            <button class="primary-button" type="submit" id="backup-save">Включить запасной вход</button>
-          </form>
-          <p id="backup-status" class="recovery-status"></p>
-          <button id="backup-skip" class="link-button" type="button">
-            Пропустить — фразы мне достаточно
-          </button>
-        </div>
-
         <div class="security-note">
           <span class="ui-icon icon-shield"></span>
-          <span>Ни фраза, ни пароль не уходят с устройства открытыми.</span>
+          <span>Сид-фраза обрабатывается только на устройстве. Храните её в надёжном месте.</span>
         </div>
       </div>
       </div>
@@ -146,11 +108,11 @@
         <ol id="backup-words" class="backup-words"></ol>
         <div class="setting-actions">
           <button id="backup-words-copy" class="ghost-button" type="button">Скопировать</button>
-          <button id="backup-words-code" class="ghost-button" type="button">Показать кодом</button>
+
         </div>
         <label class="backup-confirm">
           <input id="backup-written" type="checkbox" />
-          <span>Я переписал(а) фразу на бумагу и понимаю, что второй раз её не покажут</span>
+          <span>Я сохранил(а) 24 слова и понимаю, что они нужны для восстановления аккаунта</span>
         </label>
         <button id="backup-next" class="primary-button" type="button" disabled>Перейти в чаты</button>
       </div>
@@ -210,19 +172,16 @@
       <div class="onboarding-copy account-copy">
         <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
         <h1 id="entry-title">Начните с Valanium</h1>
-        <p id="entry-lead">Имя увидят собеседники. Пароль нужен для запасного входа с другого устройства.</p>
+        <p id="entry-lead">Аккаунт без логина и пароля. Для восстановления сохраните сид-фразу из 24 слов.</p>
         <form id="form-entry" class="onboarding-form" autocomplete="off">
-          <label for="handle" id="handle-label">Имя пользователя</label>
-          <input id="handle" type="text" placeholder="username" autocomplete="username" maxlength="20" />
-          <label for="entry-password" id="entry-password-label">Пароль восстановления</label>
-          <input id="entry-password" type="password" placeholder="Минимум 10 символов" autocomplete="new-password" minlength="10" />
+
           <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" checked /> Только Tor — без перехода на Relay</label>
-          <p class="registration-privacy-note">Tor скрывает сетевой адрес от сервера, но не гарантирует абсолютную анонимность. Не используйте знакомый юзернейм, если не хотите связывать аккаунты.</p>
+          <p class="registration-privacy-note">Tor скрывает сетевой адрес от сервера, но не гарантирует абсолютную анонимность. Не передавайте сид-фразу: она даёт доступ к аккаунту.</p>
           <button class="ghost-button" type="button" id="entry-install-tor">Установить Tor (загрузка по HTTPS)</button>
           <button class="onboarding-submit" type="submit" id="entry-submit">Зарегистрироваться</button>
         </form>
-        <div class="entry-actions"><button id="open-password-recover" type="button">← Вернуться ко входу</button><button id="open-recover" type="button">Восстановить по 24 словам</button></div>
-        <button id="skip-registration" class="entry-skip" type="button">Skip — продолжить без логина и пароля</button>
+        <div class="entry-actions"><button id="open-recover" type="button">Восстановить по 24 словам</button></div>
+
         <p id="entry-error" class="form-error" role="alert"></p>
       </div>
       <div class="onboarding-art" aria-hidden="true"><canvas class="onboarding-shader"></canvas><img src="assets/svg/spy.svg" alt="" /></div>
@@ -234,21 +193,14 @@
         <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
         <h1 id="recover-title">Recovery phrase</h1>
         <p id="recover-lead">Введите 24 слова в том же порядке. За один шаг показываются восемь слов.</p>
-        <div class="setting-segment recovery-segment" id="recover-segment">
-          <button data-mode="code" type="button" class="active">24 слова</button>
-          <button data-mode="password" type="button">Логин и пароль</button>
-        </div>
+
         <form id="form-recover-code" class="onboarding-form recovery-form">
           <input id="recover-code" type="hidden" />
           <div id="recovery-word-grid" class="recovery-word-grid"></div>
           <div class="recovery-progress"><span id="recover-page-label">Слова 1–8 из 24</span><i><b id="recover-progress-bar"></b></i></div>
           <div class="recovery-buttons"><button id="recover-prev" type="button">← <span>Назад</span></button><button id="recover-next" type="button"><span>Далее</span> →</button><button id="recover-submit" class="hidden" type="submit">Восстановить →</button></div>
         </form>
-        <form id="form-recover-password" class="onboarding-form hidden">
-          <label for="recover-login">Логин</label><input id="recover-login" type="text" autocomplete="username" required />
-          <label for="recover-password">Пароль</label><input id="recover-password" type="password" autocomplete="current-password" required />
-          <button class="onboarding-submit primary-button" type="submit">Войти</button>
-        </form>
+
         <button id="recover-back" class="onboarding-back" type="button">← <span>Назад к регистрации</span></button>
         <p id="recover-error" class="form-error" role="alert"></p>
       </div>
@@ -436,25 +388,7 @@
             <div><h3>Мой профиль</h3><p>Аватар и публичные данные профиля. Пока доступ к аватару ограничен, ключ получают только выбранные вами люди, а на сервере хранится зашифрованный блок.</p></div>
             <input id="avatar-file" type="file" accept="image/jpeg,image/png,image/webp" hidden />
           </div>
-          <div class="profile-detail username-detail">
-            <span><b>Юзернейм</b><small>Помогает найти вас без адреса устройства. Он не заменяет проверку ключей; имя можно изменить или освободить.</small></span>
-            <div class="username-controls">
-              <div class="username-field"><i>@</i><input id="username-input" type="text" placeholder="не занят" autocomplete="off" maxlength="20" spellcheck="false" /></div>
-              <div class="setting-actions">
-                <button id="username-save" class="ghost-button" type="button">Занять</button>
-                <button id="username-copy" class="ghost-button" type="button">Скопировать</button>
-                <button id="username-clear" class="ghost-button" type="button">Освободить</button>
-              </div>
-              <button id="username-link" class="link-preview hidden" type="button" title="Скопировать ссылку">
-                <span class="link-preview-copy">
-                  <small>Ваша ссылка</small>
-                  <b id="username-link-text">—</b>
-                </span>
-                <span class="ui-icon icon-discussion"></span>
-              </button>
-              <p id="username-status" class="recovery-status"></p>
-            </div>
-          </div>
+
           <div class="profile-detail decor-row">
             <span><b>Значок и цвет</b><small>Выберите значок и цвет, которые будут видны рядом с вашим именем.</small></span>
             <div class="decor-picker">
@@ -467,7 +401,7 @@
           </div>
           <div class="profile-detail"><span>Код для начала чата</span><button id="profile-chat-code" type="button">после обновления сервера</button></div>
           <div class="profile-detail"><span>Адрес этого устройства</span><button id="profile-device" type="button">—</button></div>
-          <div class="profile-detail"><span><b>Ключ личности</b><small>Постоянный идентификатор аккаунта — в отличие от адреса устройства и юзернейма.</small></span><button id="profile-identity" type="button">—</button></div>
+          <div class="profile-detail"><span><b>Ключ личности</b><small>Постоянный идентификатор аккаунта — в отличие от адреса устройства.</small></span><button id="profile-identity" type="button">—</button></div>
           <div class="profile-detail security-detail"><span><b>Криптографический отпечаток личности</b><small>Нужен для проверки, что ключ аккаунта не подменили. Сверяйте его с собеседником по другому каналу.</small></span><button id="copy-fingerprint" type="button"><code id="my-fingerprint">—</code></button></div>
         </section>
 
@@ -481,19 +415,7 @@
               <button id="copy-recovery-code" class="ghost-button hidden" type="button">Скопировать</button>
             </div>
           </div>
-          <div class="setting-block">
-            <b>Восстановление по логину и паролю</b>
-            <small>Запасной путь, если код потерян. Сервер сохранит запечатанную копию ключа: открыть её можно только этим паролем, и стойкость всего способа равна стойкости пароля. Код надёжнее — включайте это как второй способ, а не вместо.</small>
-            <div class="recovery-form" id="recovery-password-form">
-              <input id="recovery-login" type="text" placeholder="Логин" autocomplete="username" />
-              <input id="recovery-password" type="password" placeholder="Пароль, минимум 10 символов" autocomplete="new-password" />
-            </div>
-            <div class="setting-actions">
-              <button id="save-recovery-password" class="ghost-button" type="button">Включить</button>
-              <button id="forget-recovery-password" class="ghost-button" type="button">Убрать с сервера</button>
-            </div>
-            <p id="recovery-status" class="recovery-status"></p>
-          </div>
+
           <div class="setting-block">
             <b>Другие устройства</b>
             <small>Отключает все остальные устройства и навсегда блокирует их старые ключи. Этот компьютер останется подключён.</small>

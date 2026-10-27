@@ -134,10 +134,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     /** Книга отношений: устройство → запись. */
     private final Map<String, JSONObject> directory = new LinkedHashMap<>();
     private JSONObject access;
-    private String username;
     private View screenPrivacy;
     private View screenPrivacySection;
-    private View screenUsername;
     private View screenSecurity;
     private View screenAdmin;
     private View screenChatSettings;
@@ -199,11 +197,6 @@ public final class MainActivity extends Activity implements Events.Listener {
     /** Чем сейчас отфильтрован список переписок. Пусто — показываем всё. */
     private String listFilter = "";
 
-    /** Имя, по которому спросили каталог, и что ответили. */
-    private String lookupQuery;
-    private JSONObject lookupHit;
-    private boolean lookupMissed;
-    private Runnable lookupSoon;
     private LinearLayout privacyGroups;
     private ListView requestList;
 
@@ -329,7 +322,6 @@ public final class MainActivity extends Activity implements Events.Listener {
     private View screenProfile;
     private View screenSettings;
     private EditText migrationPassword;
-    private EditText handle;
     private EditText invite;
     private Button entrySubmit;
     private TextView myDevice;
@@ -366,22 +358,15 @@ public final class MainActivity extends Activity implements Events.Listener {
     private TextView cornerRadiusValue;
     private TextView bubbleRadiusValue;
     private View screenRecover;
-    private View recoverFormCode;
-    private View recoverFormPassword;
     private EditText recoverCode;
-    private EditText recoverLogin;
-    private EditText recoverPassword;
     private Button recoverSubmit;
     private TextView recoverError;
-    private boolean recoverByCode = true;
     private TextView recoveryCodeText;
     private Button recoveryCodeToggle;
     private Button recoveryCodeCopy;
-    private Button recoveryPasswordSave;
-    private EditText recoveryLogin;
-    private EditText recoveryPassword;
-    private TextView recoveryStatus;
     private String recoveryCodeValue = "";
+    private boolean registrationPending;
+    private boolean seedBackupPending;
     private View recordingBar;
     private TextView recordingTime;
     private android.widget.ImageButton recordVoice;
@@ -437,7 +422,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         screenPrivacySection = findViewById(R.id.screen_privacy_section);
         screenChannel = findViewById(R.id.screen_channel);
         tabBar = findViewById(R.id.tab_bar);
-        screenUsername = findViewById(R.id.screen_username);
         screenSecurity = findViewById(R.id.screen_security);
         screenAdmin = findViewById(R.id.screen_admin);
         screenChatSettings = findViewById(R.id.screen_chat_settings);
@@ -448,7 +432,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         privacyGroups = findViewById(R.id.privacy_groups);
         requestList = findViewById(R.id.request_list);
         migrationPassword = findViewById(R.id.migration_password);
-        handle = findViewById(R.id.handle);
         invite = findViewById(R.id.invite);
         invite.setVisibility(View.GONE);
         entrySubmit = findViewById(R.id.entry_submit);
@@ -482,20 +465,12 @@ public final class MainActivity extends Activity implements Events.Listener {
         cornerRadiusValue = findViewById(R.id.corner_radius_value);
         bubbleRadiusValue = findViewById(R.id.bubble_radius_value);
         screenRecover = findViewById(R.id.screen_recover);
-        recoverFormCode = findViewById(R.id.recover_form_code);
-        recoverFormPassword = findViewById(R.id.recover_form_password);
         recoverCode = findViewById(R.id.recover_code);
-        recoverLogin = findViewById(R.id.recover_login);
-        recoverPassword = findViewById(R.id.recover_password);
         recoverSubmit = findViewById(R.id.recover_submit);
         recoverError = findViewById(R.id.recover_error);
         recoveryCodeText = findViewById(R.id.recovery_code_text);
         recoveryCodeToggle = findViewById(R.id.recovery_code_toggle);
         recoveryCodeCopy = findViewById(R.id.recovery_code_copy);
-        recoveryPasswordSave = findViewById(R.id.recovery_password_save);
-        recoveryLogin = findViewById(R.id.recovery_login);
-        recoveryPassword = findViewById(R.id.recovery_password);
-        recoveryStatus = findViewById(R.id.recovery_status);
         recordingBar = findViewById(R.id.recording_bar);
         recordingTime = findViewById(R.id.recording_time);
         recordVoice = findViewById(R.id.record_voice);
@@ -540,12 +515,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.channel_close).setOnClickListener(v -> closeChannel());
         findViewById(R.id.nav_settings).setOnClickListener(v -> switchTab(screenSettings));
         findViewById(R.id.nav_profile).setOnClickListener(v -> switchTab(screenProfile));
-        findViewById(R.id.username_back).setOnClickListener(v -> goBack());
         findViewById(R.id.security_back).setOnClickListener(v -> goBack());
         findViewById(R.id.admin_back).setOnClickListener(v -> goBack());
         findViewById(R.id.chat_settings_back).setOnClickListener(v -> goBack());
         findViewById(R.id.data_back).setOnClickListener(v -> goBack());
-        findViewById(R.id.open_username).setOnClickListener(v -> open(screenUsername));
         findViewById(R.id.open_security).setOnClickListener(v -> open(screenSecurity));
         findViewById(R.id.open_emblem).setOnClickListener(v -> chooseEmblem());
         findViewById(R.id.open_profile_color).setOnClickListener(v -> chooseProfileColor());
@@ -577,7 +550,6 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (currentPeer != null) showPeerAvatarOrCard(currentPeer);
         });
         findViewById(R.id.reply_cancel).setOnClickListener(v -> setReply(null, null));
-        wireUsername();
         wireTyping();
         wireSearch();
         wireListTabs();
@@ -1742,8 +1714,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         cornerRadius.setProgressTintList(ColorStateList.valueOf(accent));
         bubbleRadius.setProgressTintList(ColorStateList.valueOf(accent));
         // Сегменты подсвечены акцентом — их надо перекрасить вместе с ним.
-        highlightSegment(recoverByCode ? R.id.recover_mode_code : R.id.recover_mode_password,
-                R.id.recover_mode_code, R.id.recover_mode_password);
         highlightSegment(themeButtonId(), R.id.theme_dark, R.id.theme_black, R.id.theme_light);
         String dividers = appearancePreferences.getString("dividers", "soft");
         highlightSegment("soft".equals(dividers) ? R.id.dividers_soft
@@ -2406,14 +2376,14 @@ public final class MainActivity extends Activity implements Events.Listener {
     // --- действия --------------------------------------------------------------
 
     private void register() {
+        registrationPending = true;
         entrySubmit.setEnabled(false);
         entrySubmit.setText(R.string.connecting);
-        final String name = handle.getText().toString().trim();
         final boolean torOnly = ((Switch) findViewById(R.id.entry_tor_only)).isChecked();
         if (!torOnly) {
             appearancePreferences.edit().putString(TRANSPORT_KEY, "auto").apply();
             ((RoutingView) findViewById(R.id.transport_mode)).setMode("auto");
-            submit(Commands.register(SERVER_AUTO_URL, name, null));
+            submit(Commands.register(SERVER_AUTO_URL, null, null));
             return;
         }
         appearancePreferences.edit().putString(TRANSPORT_KEY, "onion").apply();
@@ -2426,8 +2396,9 @@ public final class MainActivity extends Activity implements Events.Listener {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 if (ready && foregroundAuthorized) {
-                    submit(Commands.register(SERVER_ONION_URL, name, null));
+                    submit(Commands.register(SERVER_ONION_URL, null, null));
                 } else {
+                    registrationPending = false;
                     entrySubmit.setEnabled(true);
                     entrySubmit.setText(R.string.register);
                     toast("Tor не готов. Регистрация не отправлена; прямого подключения не было.");
@@ -2528,12 +2499,6 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void openNewChat() {
         String raw = newPeer.getText().toString().trim();
-        if (raw.startsWith("@")) {
-            String name = raw.substring(1).toLowerCase(Locale.ROOT);
-            if (name.isEmpty()) return;
-            submit(Commands.usernameLookup(name));
-            return;
-        }
         String chatCode = raw.toUpperCase(Locale.ROOT);
         if (chatCode.matches("OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}")) {
             if (!profilesSupported) {
@@ -2602,7 +2567,6 @@ public final class MainActivity extends Activity implements Events.Listener {
                 String next = s.toString().trim().toLowerCase(Locale.ROOT);
                 if (next.equals(listFilter)) return;
                 listFilter = next;
-                scheduleLookup(next);
                 renderPeers();
             }
         });
@@ -2610,40 +2574,6 @@ public final class MainActivity extends Activity implements Events.Listener {
             openNewChat();
             return true;
         });
-    }
-
-    /**
-     * Спрашивает каталог, не дожидаясь нажатия.
-     *
-     * Пауза в наборе нужна не для красоты: сервер считает поиски и режет частые
-     * — по одному запросу на букву мы бы упёрлись в этот предел на первом же
-     * имени.
-     *
-     * Показать людей «по первым буквам» нельзя, и это не недоделка. Сервер
-     * хранит не имена, а их хеши, и умеет отвечать только на имя целиком: по
-     * началу имени искать негде. Именно это и мешает постороннему выкачать
-     * список всех, кто здесь есть. Уже знакомые при этом отсеиваются с первой
-     * буквы — они лежат на устройстве, спрашивать о них некого.
-     */
-    private void scheduleLookup(String raw) {
-        if (lookupSoon != null) ui.removeCallbacks(lookupSoon);
-        String name = raw.startsWith("@") ? raw.substring(1) : raw;
-        boolean searchable = name.matches("[a-z][a-z0-9_]{2,19}");
-        if (!searchable) {
-            // Набор перестал быть похож на имя — старый ответ больше не про него.
-            lookupQuery = null;
-            lookupHit = null;
-            lookupMissed = false;
-            return;
-        }
-        if (name.equals(lookupQuery)) return;
-        lookupSoon = () -> {
-            lookupQuery = name;
-            lookupHit = null;
-            lookupMissed = false;
-            submit(Commands.usernameLookup(name));
-        };
-        ui.postDelayed(lookupSoon, 450);
     }
 
     private void wireTyping() {
@@ -2833,6 +2763,11 @@ public final class MainActivity extends Activity implements Events.Listener {
                 onStatus(event);
                 break;
             case "registered":
+                if (registrationPending) {
+                    registrationPending = false;
+                    seedBackupPending = true;
+                    submit(Commands.recoveryCode());
+                }
                 setMyDevice(event.optString("device"));
                 invite.setText("");
                 break;
@@ -2916,13 +2851,6 @@ public final class MainActivity extends Activity implements Events.Listener {
                 }
                 renderRequests();
                 break;
-            case "username":
-                username = event.isNull("name") ? null : event.optString("name");
-                renderUsername();
-                break;
-            case "username_found":
-                onUsernameFound(event);
-                break;
             case "access":
                 access = event;
                 break;
@@ -2972,15 +2900,15 @@ public final class MainActivity extends Activity implements Events.Listener {
                 // Ядро отдаёт обе записи одного ключа. Показываем слова: их
                 // читают глазами, а строку из 55 символов переписывают по
                 // одному знаку и ошибаются.
-                showRecoveryCode(event.optString("words", event.optString("code")));
-                break;
-            case "recovery_saved":
-                recoveryPasswordSave.setEnabled(true);
-                recoveryPassword.setText("");
-                setRecoveryStatus(getString(R.string.recovery_saved, event.optString("login")), false);
-                break;
-            case "recovery_forgotten":
-                setRecoveryStatus(getString(R.string.recovery_forgotten), false);
+                if (seedBackupPending) {
+                    seedBackupPending = false;
+                    new AlertDialog.Builder(this).setTitle("Сохраните сид-фразу")
+                            .setMessage("24 слова нужны для восстановления аккаунта. Покажите их, когда сможете записать в надёжном месте.")
+                            .setPositiveButton("Показать 24 слова", (dialog, which) -> {
+                                open(screenSecurity);
+                                showRecoveryCode(event.optString("words"));
+                            }).setNegativeButton("Позже в настройках", null).show();
+                } else showRecoveryCode(event.optString("words"));
                 break;
             case "failed":
                 onFailed(event);
@@ -3020,6 +2948,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         // Transport failures must allow retry too, not only invalid names/invites.
         if (screenEntry.getVisibility() == View.VISIBLE) {
+            registrationPending = false;
             entrySubmit.setEnabled(true);
             entrySubmit.setText(R.string.register);
         }
@@ -3030,11 +2959,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (recovery != null && screenRecover.getVisibility() == View.VISIBLE) {
             recoverError.setText(recovery);
             resetRecoverButton();
-            return;
-        }
-        if (recovery != null && screenProfile.getVisibility() == View.VISIBLE) {
-            recoveryPasswordSave.setEnabled(true);
-            setRecoveryStatus(recovery, true);
             return;
         }
 
@@ -3259,8 +3183,6 @@ public final class MainActivity extends Activity implements Events.Listener {
             @Override public View render(ChatListItem item, int position, View recycled,
                     ViewGroup parent) {
                 switch (item.kind) {
-                    case CHAT_ROW_SEARCH:
-                        return searchHitRow(item.search);
                     case CHAT_ROW_NOTICE:
                         return listNotice(item.text);
                     case CHAT_ROW_EMPTY:
@@ -3668,7 +3590,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 screen == screenProfile && !history.isEmpty() ? View.VISIBLE : View.INVISIBLE);
         for (View candidate : new View[]{screenBoot, screenMigrate, screenEntry, screenRecover,
                 screenChat, screenConversation, screenProfile, screenSettings, screenPrivacy,
-                screenPrivacySection, screenAppearance, screenConnection, screenProtection, screenUsername, screenSecurity,
+                screenPrivacySection, screenAppearance, screenConnection, screenProtection, screenSecurity,
                 screenAdmin, screenChatSettings, screenData, screenChannel}) {
             if (candidate == null) continue;
             if (candidate != screen) {
@@ -3828,7 +3750,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String haystack(String peer) {
         Profile profile = profiles.get(peer);
         StringBuilder out = new StringBuilder(displayName(peer)).append(' ').append(peer);
-        if (profile != null) out.append(' ').append(profile.chatCode).append(' ').append(profile.handle);
+        if (profile != null) out.append(' ').append(profile.chatCode);
         return out.toString().toLowerCase(Locale.ROOT);
     }
 
@@ -3950,12 +3872,8 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void renderPeers() {
         List<ChatListItem> rows = new ArrayList<>();
-        if (lookupHit != null) rows.add(ChatListItem.search(lookupHit));
         if (!listFilter.isEmpty() && matchingPeers().isEmpty()) {
-            if (lookupHit == null) {
-                rows.add(ChatListItem.notice(lookupMissed
-                        ? getString(R.string.search_miss) : getString(R.string.nothing_found)));
-            }
+            rows.add(ChatListItem.notice(getString(R.string.nothing_found)));
             chatListAdapter.submit(rows);
             return;
         }
@@ -4056,7 +3974,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private String displayName(String peer) {
         Profile profile = profiles.get(peer);
-        return profile != null && !profile.handle.isEmpty() ? "@" + profile.handle : shortHex(peer);
+        return profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(peer);
     }
 
     /** Имя со значком владельца — тем самым, который он выбрал у себя. */
@@ -4606,8 +4524,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         identity.addView(name);
-        String handle = profile != null && profile.handle != null && !profile.handle.isEmpty()
-                ? "@" + profile.handle : "Без публичного юзернейма";
+        String handle = profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(device);
         TextView username = peerCardText(handle, 12, getColor(R.color.valanium_muted));
         LinearLayout.LayoutParams usernameParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -4937,10 +4854,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             show(screenRecover);
         });
         findViewById(R.id.recover_back).setOnClickListener(v -> show(screenEntry));
-        findViewById(R.id.recover_mode_code).setOnClickListener(v -> setRecoverMode(true));
-        findViewById(R.id.recover_mode_password).setOnClickListener(v -> setRecoverMode(false));
         recoverSubmit.setOnClickListener(v -> submitRecovery());
-        setRecoverMode(true);
 
         recoveryCodeToggle.setOnClickListener(v -> toggleRecoveryCode());
         recoveryCodeCopy.setOnClickListener(v -> {
@@ -4951,20 +4865,6 @@ public final class MainActivity extends Activity implements Events.Listener {
                     android.content.ClipData.newPlainText("Valanium recovery", recoveryCodeValue));
             toast(getString(R.string.recovery_code_copied));
         });
-        recoveryPasswordSave.setOnClickListener(v -> saveRecoveryPassword());
-        findViewById(R.id.recovery_password_forget)
-                .setOnClickListener(v -> submit(Commands.recoveryForget()));
-    }
-
-    private void setRecoverMode(boolean byCode) {
-        recoverByCode = byCode;
-        recoverFormCode.setVisibility(byCode ? View.VISIBLE : View.GONE);
-        recoverFormPassword.setVisibility(byCode ? View.GONE : View.VISIBLE);
-        recoverError.setText("");
-        ((TextView) findViewById(R.id.recover_mode_hint)).setText(byCode
-                ? R.string.recover_code_mode_hint : R.string.recover_password_mode_hint);
-        highlightSegment(byCode ? R.id.recover_mode_code : R.id.recover_mode_password,
-                R.id.recover_mode_code, R.id.recover_mode_password);
     }
 
     /** Подсвечивает выбранную кнопку в группе-сегменте. */
@@ -4980,23 +4880,14 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void submitRecovery() {
         recoverError.setText("");
-        if (recoverByCode) {
-            String code = recoverCode.getText().toString().trim();
-            if (code.isEmpty()) return;
-            recoverSubmit.setEnabled(false);
-            recoverSubmit.setText(R.string.recover_working);
-            submit(Commands.recover(serverUrl(), code));
+        String words = recoverCode.getText().toString().trim().replaceAll("\\s+", " ");
+        if (words.isEmpty() || words.split(" ").length != 24) {
+            recoverError.setText("Введите все 24 слова сид-фразы в исходном порядке");
             return;
         }
-        String login = recoverLogin.getText().toString().trim();
-        String password = recoverPassword.getText().toString();
-        if (login.length() < 3) { recoverError.setText(R.string.recovery_login_min); return; }
-        if (password.isEmpty()) return;
         recoverSubmit.setEnabled(false);
-        // Argon2id на 128 МиБ считается заметное время; молчащая кнопка
-        // выглядела бы как зависание.
-        recoverSubmit.setText(R.string.recover_password_working);
-        submit(Commands.recoverPassword(serverUrl(), login, password));
+        recoverSubmit.setText(R.string.recover_working);
+        submit(Commands.recover(serverUrl(), words));
     }
 
     private void resetRecoverButton() {
@@ -5025,21 +4916,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         recoveryCodeText.animate().alpha(1f).setDuration(180).start();
         recoveryCodeCopy.setVisibility(View.VISIBLE);
         recoveryCodeToggle.setText(R.string.recovery_code_hide);
-    }
-
-    private void saveRecoveryPassword() {
-        String login = recoveryLogin.getText().toString().trim();
-        String password = recoveryPassword.getText().toString();
-        if (login.length() < 3) { setRecoveryStatus(getString(R.string.recovery_login_min), true); return; }
-        if (password.length() < 10) { setRecoveryStatus(getString(R.string.recovery_password_min), true); return; }
-        recoveryPasswordSave.setEnabled(false);
-        setRecoveryStatus(getString(R.string.recovery_computing), false);
-        submit(Commands.recoverySetup(login, password));
-    }
-
-    private void setRecoveryStatus(String message, boolean bad) {
-        recoveryStatus.setText(message);
-        recoveryStatus.setTextColor(bad ? getColor(R.color.valanium_danger) : getColor(R.color.valanium_muted));
     }
 
     /**
@@ -5645,11 +5521,8 @@ public final class MainActivity extends Activity implements Events.Listener {
             {"voice_recording_hint", "Показывать запись голосового", "", "everyone,contacts,nobody"},
 
             {"#", "Профиль и поиск"},
-            {"discoverable", "Поиск по юзернейму",
-             "«Никто» — сервер не отдаёт вас в поиске совсем.", "everyone,nobody"},
             {"profile_avatar", "Аватар", "", "everyone,contacts,nobody"},
             {"profile_name", "Имя профиля", "", "everyone,contacts,nobody"},
-            {"profile_username", "Юзернейм", "", "everyone,contacts,nobody"},
     };
 
     private static final String DEFAULT_SCOPES = "everyone,approved,contacts,nobody";
@@ -6051,31 +5924,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
     }
 
-    // --- юзернейм ----------------------------------------------------------------
-
-    private void wireUsername() {
-        findViewById(R.id.username_save).setOnClickListener(v -> {
-            String name = ((EditText) findViewById(R.id.username_input)).getText().toString()
-                    .trim().replaceFirst("^@", "");
-            if (name.isEmpty()) {
-                setUsernameStatus("Введите имя: латиница, цифры и подчёркивание, от 3 до 20 символов.");
-                return;
-            }
-            boolean discoverable = privacy == null
-                    || !"nobody".equals(privacy.optJSONObject("discoverable") == null ? ""
-                        : privacy.optJSONObject("discoverable").optString("scope"));
-            submit(Commands.usernameSet(name, discoverable));
-        });
-        findViewById(R.id.username_clear).setOnClickListener(v -> {
-            if (username == null) setUsernameStatus("Юзернейм не занят.");
-            else submit(Commands.usernameClear());
-        });
-        findViewById(R.id.username_copy).setOnClickListener(v -> {
-            if (username == null) setUsernameStatus("Сначала займите имя.");
-            else copyToClipboard("@" + username, "Юзернейм скопирован");
-        });
-    }
-
     /**
      * Значки: слово на проводе, глиф на экране.
      *
@@ -6184,7 +6032,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     /** Шапка профиля: имя, значок, цвет — то, что видят собеседники. */
     private void renderOwnProfile() {
         TextView name = findViewById(R.id.profile_name);
-        name.setText(username == null ? getString(R.string.username_free) : "@" + username);
+        name.setText(R.string.profile_account_title);
         name.setTextColor(getColor(R.color.valanium_white));
         // Свой аватар красится тем же цветом, что увидят собеседники.
         Profile own = profiles.get(myDeviceHex);
@@ -6195,8 +6043,6 @@ public final class MainActivity extends Activity implements Events.Listener {
             profileAvatar.setBackground(avatarPlaceholder(profileColor(myColor)));
         }
         ((TextView) findViewById(R.id.profile_emblem)).setText(emblemGlyph(myEmblem));
-        ((TextView) findViewById(R.id.open_username_value))
-                .setText(username == null ? getString(R.string.not_chosen) : "@" + username);
         ((TextView) findViewById(R.id.open_emblem_value))
                 .setText(myEmblem.isEmpty() || "none".equals(myEmblem)
                         ? getString(R.string.not_chosen) : emblemGlyph(myEmblem));
@@ -6471,86 +6317,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         return String.format(Locale.ROOT, "%.1f MB", bytes / 1024f / 1024f);
     }
 
-    private void setUsernameStatus(String text) {
-        ((TextView) findViewById(R.id.username_status)).setText(text);
-    }
-
-    private void renderUsername() {
-        ((EditText) findViewById(R.id.username_input)).setText(username == null ? "" : username);
-        ((Button) findViewById(R.id.username_save))
-                .setText(username == null ? R.string.username_take : R.string.username_change);
-        findViewById(R.id.username_clear).setEnabled(username != null);
-        findViewById(R.id.username_copy).setEnabled(username != null);
-        setUsernameStatus(username == null ? "Не занят." : "Занят.");
-        renderOwnProfile();
-    }
-
-    private void onUsernameFound(JSONObject event) {
-        // Ответ на прошлый набор: пока летел, спросили уже о другом.
-        if (lookupQuery != null && !lookupQuery.equals(event.optString("query"))) return;
-        lookupMissed = event.isNull("device");
-        lookupHit = lookupMissed ? null : event;
-        renderPeers();
-    }
-
-    /** Найденный человек — такой же строкой, как и переписки. */
-    private View searchHitRow(JSONObject event) {
-        String device = event.optString("device");
-        String handle = event.optString("query");
-        profiles.put(device, new Profile(device, event.optString("chat_code"), handle,
-                event.optString("avatar_mime"), event.optString("avatar_base64")));
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(12), dp(10));
-        row.setBackgroundResource(R.drawable.panel_glass);
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(66));
-        rowParams.bottomMargin = dp(8);
-        row.setLayoutParams(rowParams);
-
-        TextView avatar = new TextView(this);
-        avatar.setGravity(Gravity.CENTER);
-        avatar.setTextColor(Color.WHITE);
-        avatar.setLayoutParams(new LinearLayout.LayoutParams(dp(44), dp(44)));
-        applyAvatar(avatar, profiles.get(device), initials("@" + handle));
-        row.addView(avatar);
-
-        LinearLayout copy = new LinearLayout(this);
-        copy.setOrientation(LinearLayout.VERTICAL);
-        copy.setPadding(dp(12), 0, 0, 0);
-        copy.setLayoutParams(new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        TextView title = new TextView(this);
-        title.setText("@" + handle);
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(15);
-        TextView subtitle = new TextView(this);
-        subtitle.setText(conversations.containsKey(device)
-                ? getString(R.string.search_known) : getString(R.string.search_found));
-        subtitle.setTextColor(getColor(R.color.valanium_muted));
-        subtitle.setTextSize(11);
-        copy.addView(title);
-        copy.addView(subtitle);
-        row.addView(copy);
-
-        row.setOnClickListener(v -> {
-            if (!conversations.containsKey(device)) {
-                submit(Commands.directorySet(device, "approved"));
-                conversations.put(device, null);
-            }
-            clearSearch();
-            selectPeer(device);
-        });
-        return row;
-    }
-
     private void clearSearch() {
-        if (lookupSoon != null) ui.removeCallbacks(lookupSoon);
-        lookupQuery = null;
-        lookupHit = null;
-        lookupMissed = false;
         listFilter = "";
         newPeer.setText("");
     }
@@ -6896,7 +6663,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         card.addView(name);
 
         TextView who = new TextView(this);
-        who.setText(entry.isNull("username") ? shortHex(device) : "@" + entry.optString("username"));
+        who.setText(shortHex(device));
         who.setTextColor(getColor(R.color.valanium_muted));
         who.setTextSize(10);
         card.addView(who);

@@ -98,6 +98,18 @@
         }
         const command = JSON.parse(args.json);
         bridge.commands.push(command);
+        // Public BIP39 test vector, never an actual account or network request.
+        // Supports exercising the seed-only onboarding with ordinary UI actions.
+        if (command.type === "register" || command.type === "recover") {
+          queueMicrotask(() => {
+            emit({ type: "registered", device: "11".repeat(32), identity: "22".repeat(32) });
+            emit({ type: "authenticated", admin: false, queued: 0 });
+          });
+        }
+        if (command.type === "recovery_code") {
+          queueMicrotask(() => emit({ type: "recovery_code",
+            words: [...Array(23).fill("abandon"), "art"].join(" ") }));
+        }
         if (command.type === "history") {
           bridge.historyCalls += 1;
           queueMicrotask(() => respondHistory(command));
