@@ -23,9 +23,9 @@ export function StatusDashboard() {
     <section className="status-board" aria-label="Службы Valanium">
       <header className="status-board-head"><div><span>Service health</span><h2>Службы</h2></div><small>{data ? `${data.services.length} служб` : 'Проверяем…'}</small></header>
       <p className="status-group-description">Доставка сообщений, защита данных и сетевые маршруты. Сбой службы не означает отключение сервера.</p>
-      {data?.services.map(service => <article className={`status-service status-service-${failed ? 'unknown' : service.status}`} key={service.id}>
+      <div className="compact-services">{data?.services.map(service => <article className={`status-service status-service-${failed ? 'unknown' : service.status}`} key={service.id}>
         <ServiceDetails service={service} failed={failed} />
-      </article>)}
+      </article>)}</div>
       {!data && <p className="network-empty">{failed ? 'Не удалось получить состояние служб' : 'Проверяем службы…'}</p>}
     </section>
     <div className="status-note"><span>i</span><p>Нажмите на сервер или службу для подробностей. При потере связи данные помечаются как недоступные. IP-адреса и число пользователей не публикуются.</p>

@@ -17,7 +17,7 @@ export function LiveNetwork() {
         <NodeDetails node={node} failed={failed} />
       </li>)}</ol>
       <h3 className="network-group-heading">Службы <span>{data ? String(data.services.length).padStart(2, '0') : '—'}</span></h3>
-      <ol aria-label="Службы Valanium">{data?.services.map(service => <li key={service.id} data-status={failed ? 'unknown' : service.status}>
+      <ol className="compact-services" aria-label="Службы Valanium">{data?.services.map(service => <li key={service.id} data-status={failed ? 'unknown' : service.status}>
         <ServiceDetails service={service} failed={failed} />
       </li>)}</ol>
       {!data && <div className="network-empty">{failed ? 'Статус временно недоступен' : 'Проверяем веб-узлы и службы'}</div>}

@@ -913,6 +913,19 @@ h1, h2, h3 { text-wrap: balance; }
 .network-group-heading span { color:#9e83b5; font-size:12px; font-weight:400; }
 .status-group-description { padding:0 20px 16px; color:#a399ae; font-size:12px; line-height:1.7; }
 .status-board + .status-board { margin-top:28px; }
+.compact-services { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:0 16px; padding:0 14px 12px; }
+.compact-services>article,.network-index.live-network .compact-services>li { min-width:0; margin:0; padding:0; border-bottom:1px solid #ffffff0b; }
+.compact-services>article:has(details[open]),.compact-services>li:has(details[open]) { grid-column:1/-1; }
+.compact-services .network-service-details summary { grid-template-columns:10px minmax(0,1fr) auto 10px; min-height:44px; padding:10px 8px; gap:8px; }
+.compact-services .network-node-name strong { font-size:12px; line-height:1.4; }
+.compact-services .network-service-details em { font-size:10px; white-space:nowrap; }
+.compact-services .service-symbol { font-size:8px; }
+.compact-services .node-detail-body { padding:0 8px 14px; }
+.compact-services .node-detail-body dl { gap:8px; margin-bottom:8px; }
+.compact-services .node-detail-body dl>div { padding:10px; }
+.compact-services .node-detail-body dd { font-size:13px; }
+.compact-services .service-description { margin:0 0 10px; color:#c7bbd0; font-size:12px; }
+@media(max-width:640px) { .compact-services { grid-template-columns:minmax(0,1fr); gap:0; padding-inline:6px; } }
 .service-symbol { color:#b78ce0; font-size:25px; text-align:center; }
 .network-node-details.network-server-details summary { grid-template-columns:32px minmax(90px,1fr) 110px 14px; }
 .nav { gap:12px; }

@@ -1,5 +1,6 @@
 export type Country = 'FI' | 'NL';
-export type Metrics = { cpuPercent: number | null; memoryPercent: number | null; uptimeHours: number | null };
+export type Metrics = { cpuPercent: number | null; memoryPercent: number | null; uptimeHours: number | null;
+  rxMbps: number | null; txMbps: number | null };
 export type NodeStatus = 'operational' | 'degraded' | 'outage';
 export type PublicNode = {
   id: string; name: string; role: string; status: NodeStatus; latency: number;
@@ -8,7 +9,7 @@ export type PublicNode = {
 export type PublicService = Omit<PublicNode, 'country' | 'metrics'>;
 export type StatusData = { overall: NodeStatus; checkedAt: string; servers: PublicNode[]; services: PublicService[] };
 export type Heartbeat = { checkedAt: string; latency: number; healthy: boolean; metrics: Metrics };
-export const EMPTY_METRICS: Metrics = { cpuPercent: null, memoryPercent: null, uptimeHours: null };
+export const EMPTY_METRICS: Metrics = { cpuPercent: null, memoryPercent: null, uptimeHours: null, rxMbps: null, txMbps: null };
 export const COUNTRIES = {
   FI: { name: 'Финляндия', flag: '/flags/finland.svg' },
   NL: { name: 'Нидерланды', flag: '/flags/netherlands.svg' },
@@ -20,8 +21,9 @@ export function sanitizeMetrics(value: unknown): Metrics {
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const rounded = (value: unknown) => { const n = numberInRange(value, 100); return n === null ? null : Math.round(n / 5) * 5; };
   const uptime = numberInRange(input.uptimeHours, 1_000_000);
+  const rate = (value: unknown) => { const n = numberInRange(value, 1_000_000); return n === null ? null : Math.round(n * 100) / 100; };
   return { cpuPercent: rounded(input.cpuPercent), memoryPercent: rounded(input.memoryPercent),
-    uptimeHours: uptime === null ? null : Math.floor(uptime) };
+    uptimeHours: uptime === null ? null : Math.floor(uptime), rxMbps: rate(input.rxMbps), txMbps: rate(input.txMbps) };
 }
 export function sanitizeHeartbeat(value: unknown, now: number): Heartbeat | null {
   if (!value || typeof value !== 'object') return null;

@@ -7,11 +7,25 @@ test('only aggregate numeric telemetry can reach the public DTO', () => {
     ip: '192.0.2.1', hostname: 'secret-host', users: 42,
     metrics: { cpuPercent: 12.4, memoryPercent: 46, uptimeHours: 18.9, address: '192.0.2.1', sessions: 7 } }, now);
   const node = publicNode('test', 'Test', 'Relay', 'FI', beat, 90_000, now);
-  assert.deepEqual(node.metrics, { cpuPercent: 10, memoryPercent: 45, uptimeHours: 18 });
+  assert.deepEqual(node.metrics, { cpuPercent: 10, memoryPercent: 45, uptimeHours: 18, rxMbps: null, txMbps: null });
   assert.ok(!JSON.stringify(node).includes('192.0.2.1'));
   assert.ok(!JSON.stringify(node).includes('secret-host'));
   assert.deepEqual(sanitizeMetrics({ cpuPercent: -1, memoryPercent: Infinity, uptimeHours: 'password' }),
-    { cpuPercent: null, memoryPercent: null, uptimeHours: null });
+    { cpuPercent: null, memoryPercent: null, uptimeHours: null, rxMbps: null, txMbps: null });
+});
+
+test('network rates are numeric, rounded, bounded and removed with stale telemetry', () => {
+  const metrics = sanitizeMetrics({ rxMbps: 1.234, txMbps: 2.345, interfaces: ['secret-interface'], rxBytes: 12345 });
+  assert.equal(metrics.rxMbps, 1.23);
+  assert.equal(metrics.txMbps, 2.35);
+  assert.equal('interfaces' in metrics, false);
+  assert.equal('rxBytes' in metrics, false);
+  for (const invalid of [-1, Infinity, NaN, '4', 1_000_001]) {
+    assert.equal(sanitizeMetrics({ rxMbps: invalid, txMbps: invalid }).rxMbps, null);
+    assert.equal(sanitizeMetrics({ rxMbps: invalid, txMbps: invalid }).txMbps, null);
+  }
+  const beat = { checkedAt: new Date(now).toISOString(), healthy: true, latency: 10, metrics };
+  assert.equal(publicNode('test', 'Test', 'Server', 'NL', beat, 90000, now + 90000).metrics.rxMbps, null);
 });
 
 test('multiple service reports describe exactly three machines with one set of metrics per machine', () => {
