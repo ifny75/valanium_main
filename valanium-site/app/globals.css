@@ -913,19 +913,23 @@ h1, h2, h3 { text-wrap: balance; }
 .network-group-heading span { color:#9e83b5; font-size:12px; font-weight:400; }
 .status-group-description { padding:0 20px 16px; color:#a399ae; font-size:12px; line-height:1.7; }
 .status-board + .status-board { margin-top:28px; }
-.compact-services { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:0 16px; padding:0 14px 12px; }
-.compact-services>article,.network-index.live-network .compact-services>li { min-width:0; margin:0; padding:0; border-bottom:1px solid #ffffff0b; }
-.compact-services>article:has(details[open]),.compact-services>li:has(details[open]) { grid-column:1/-1; }
-.compact-services .network-service-details summary { grid-template-columns:10px minmax(0,1fr) auto 10px; min-height:44px; padding:10px 8px; gap:8px; }
-.compact-services .network-node-name strong { font-size:12px; line-height:1.4; }
-.compact-services .network-service-details em { font-size:10px; white-space:nowrap; }
-.compact-services .service-symbol { font-size:8px; }
-.compact-services .node-detail-body { padding:0 8px 14px; }
-.compact-services .node-detail-body dl { gap:8px; margin-bottom:8px; }
+.compact-services,.network-index.live-network .compact-services { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:12px; padding:0 14px 16px; }
+.compact-services>article,.network-index.live-network .compact-services>li { display:block; min-width:0; min-height:0; margin:0; padding:0; border:1px solid #b58ad324; border-radius:14px; background:linear-gradient(135deg,#a16cda0b,#ffffff02); overflow:hidden; }
+.compact-services .network-service-details>summary { grid-template-columns:34px minmax(0,1fr) 12px; min-height:110px; padding:16px; gap:12px; border-radius:13px; text-align:left; }
+.compact-services .service-icon { display:grid; place-items:center; align-self:start; width:34px; height:34px; border:1px solid #b989e42b; border-radius:10px; background:#a46ddd10; color:#be9de0; }
+.compact-services .service-icon svg { width:20px; height:20px; }
+.compact-services .service-copy { display:flex; flex-direction:column; align-items:flex-start; min-width:0; gap:4px; text-align:left; }
+.compact-services .service-copy strong { font-size:14px; line-height:1.4; color:#eee7f6; }
+.compact-services .service-copy small { font-size:11px; line-height:1.5; color:#9e93aa; }
+.compact-services .service-copy em { display:inline-flex; align-items:center; gap:6px; margin-top:5px; font-size:10px; line-height:1.5; font-style:normal; white-space:nowrap; text-transform:none; }
+.compact-services .service-copy em i { width:5px; height:5px; flex-shrink:0; border-radius:50%; background:currentColor; }
+.compact-services .node-expand { align-self:start; margin-top:9px; font-size:12px; }
+.compact-services .node-detail-body { padding:0 16px 16px; border-top:1px solid #ffffff09; }
+.compact-services .node-detail-body dl { grid-template-columns:minmax(0,1fr); gap:8px; margin-bottom:0; }
 .compact-services .node-detail-body dl>div { padding:10px; }
 .compact-services .node-detail-body dd { font-size:13px; }
-.compact-services .service-description { margin:0 0 10px; color:#c7bbd0; font-size:12px; }
-@media(max-width:640px) { .compact-services { grid-template-columns:minmax(0,1fr); gap:0; padding-inline:6px; } }
+.compact-services .service-description { margin:12px 0 10px; color:#b9acc5; font-size:11px; line-height:1.7; }
+@media(max-width:640px) { .compact-services,.network-index.live-network .compact-services { grid-template-columns:minmax(0,1fr); padding-inline:10px; gap:10px; } }
 .service-symbol { color:#b78ce0; font-size:25px; text-align:center; }
 .network-node-details.network-server-details summary { grid-template-columns:32px minmax(90px,1fr) 110px 14px; }
 .nav { gap:12px; }

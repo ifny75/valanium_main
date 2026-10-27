@@ -22,7 +22,7 @@ export function StatusDashboard() {
     </section>
     <section className="status-board" aria-label="Службы Valanium">
       <header className="status-board-head"><div><span>Service health</span><h2>Службы</h2></div><small>{data ? `${data.services.length} служб` : 'Проверяем…'}</small></header>
-      <p className="status-group-description">Доставка сообщений, защита данных и сетевые маршруты. Сбой службы не означает отключение сервера.</p>
+      <p className="status-group-description">Доставка сообщений и сохранность данных. Подробности проверки — по нажатию.</p>
       <div className="compact-services">{data?.services.map(service => <article className={`status-service status-service-${failed ? 'unknown' : service.status}`} key={service.id}>
         <ServiceDetails service={service} failed={failed} />
       </article>)}</div>

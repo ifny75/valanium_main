@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { physicalServers, publicNode, sanitizeHeartbeat, sanitizeMetrics, serviceFromNode, type Heartbeat, type PublicService } from '../../network-status';
+import { physicalServers, publicNode, sanitizeHeartbeat, sanitizeMetrics, type Heartbeat, type PublicService } from '../../network-status';
 import { systemMetrics } from './system-metrics';
 
 const HEARTBEAT_FILES = {
@@ -50,19 +50,22 @@ export async function GET() {
   const guardAge = now - Date.parse(guard?.checkedAt);
   const safe = guard?.ok === true && guardAge >= 0 && guardAge < 3 * 3_600_000;
   const servers = physicalServers(metrics, [one, alpha], [two, beta], now);
+  // Route probes still affect overall health, but are not separate public services.
+  const routes = [
+    publicNode('website-1', '', '', 'NL', one, 45_000, now),
+    publicNode('website-2', '', '', 'FI', two, 45_000, now),
+    publicNode('alpha', '', '', 'NL', alpha, 90_000, now),
+    publicNode('beta', '', '', 'FI', beta, 90_000, now),
+  ];
   const services: PublicService[] = [
-    serviceFromNode(publicNode('website-1', 'Веб-маршрут 1', 'Доступ к сайту · HTTP и туннель', 'NL', one, 45_000, now)),
-    serviceFromNode(publicNode('website-2', 'Веб-маршрут 2', 'Доступ к сайту · HTTP и туннель', 'FI', two, 45_000, now)),
     { id: 'core', name: 'Messaging Core', role: 'Доставка сообщений',
       status: core.online ? 'operational' : 'outage', latency: core.latency, checkedAt },
     { id: 'data', name: 'Data Safety', role: 'Проверка резервных копий и сохранности базы',
       status: safe ? 'operational' : 'degraded', latency: 0,
       checkedAt: Number.isFinite(guardAge) && guardAge >= 0 ? new Date(Date.parse(guard.checkedAt)).toISOString() : null },
-    serviceFromNode(publicNode('alpha', 'Relay Alpha', 'Передача трафика · Onion', 'NL', alpha, 90_000, now)),
-    serviceFromNode(publicNode('beta', 'Relay Beta', 'Передача трафика · Onion', 'FI', beta, 90_000, now)),
   ];
-  const online = (id: string) => services.find(service => service.id === id)?.status === 'operational';
+  const online = (id: string) => routes.find(route => route.id === id)?.status === 'operational';
   const outage = !core.online || (!online('alpha') && !online('beta')) || (!online('website-1') && !online('website-2'));
-  return Response.json({ overall: outage ? 'outage' : services.every(service => service.status === 'operational') ? 'operational' : 'degraded',
+  return Response.json({ overall: outage ? 'outage' : [...services, ...routes].every(service => service.status === 'operational') ? 'operational' : 'degraded',
     checkedAt, servers, services }, { headers: { 'Cache-Control': 'no-store' } });
 }
