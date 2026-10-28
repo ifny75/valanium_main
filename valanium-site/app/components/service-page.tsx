@@ -2,6 +2,7 @@
 import { DynamicHeader, type HeaderPage } from './dynamic-header';
 import { SupportDialog } from './support-dialog';
 import type { Service } from '../services';
+import type { ReactNode } from 'react';
 import { ServiceIcon, type ServiceIconName } from './service-icons';
 
 /**
@@ -34,6 +35,7 @@ export function ServicePage({
   sections,
   note,
   shot,
+  heroTitle,
   sourceUrl,
   closingTitle = 'Пока в разработке.',
   closingBody = 'Работающий сегодня — мессенджер: клиенты, публичный статус узлов и открытый код.',
@@ -45,6 +47,7 @@ export function ServicePage({
   note: string;
   /** Снимок приложения, если он есть. Иначе показываем знак сервиса. */
   shot?: string;
+  heroTitle?: ReactNode;
   sourceUrl?: string;
   closingTitle?: string;
   closingBody?: string;
@@ -53,9 +56,9 @@ export function ServicePage({
     <main id="top">
       <DynamicHeader page={page} />
 
-      <section className="hero shell">
+      <section className={`hero shell${page === 'vpn' ? ' vpn-hero' : ''}`}>
         <div className="hero-copy">
-          <h1>{service.tagline}</h1>
+          <h1>{heroTitle ?? service.tagline}</h1>
           <p>{lead}</p>
 
           {/*

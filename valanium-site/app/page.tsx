@@ -75,7 +75,7 @@ export default function Home() {
               {SERVICES.map((service) => (
                 <a
                   key={service.id}
-                  className={`stage-tile${service.ready ? '' : ' is-soon'}`}
+                  className={`stage-tile${service.ready ? '' : ' is-soon'}${service.id === 'vpn' ? ' is-waiting' : ''}`}
                   href={service.href}
                 >
                   <span className="stage-tile-icon"><img src={service.logo} alt="" /></span>
@@ -83,7 +83,7 @@ export default function Home() {
                     <b>{service.short}</b>
                     <small>
                       {service.ready ? <i aria-hidden="true" /> : null}
-                      {service.ready ? service.badge : 'Скоро'}
+                      {service.ready ? service.badge : service.id === 'vpn' ? 'Ожидание' : 'Скоро'}
                     </small>
                   </span>
                   <i className="stage-tile-arrow" aria-hidden="true" />

@@ -25,6 +25,7 @@ export default function VpnPage() {
     <ServicePage
       service={service}
       page="vpn"
+      heroTitle={<>Выход в сеть<br />через свои узлы</>}
       shot="/media/vpn-phone.png"
       lead="Клиент для Windows готов. Следующий шаг — запуск VPN-сети: для этого нужен бюджет на аренду серверов, сетевой трафик и обслуживание."
       note="Клиент готов · публичная сеть ожидает бюджета на серверы"

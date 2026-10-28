@@ -677,6 +677,9 @@ h1, h2, h3 { text-wrap: balance; }
 .stage-tile:hover .stage-tile-arrow { border-color: #c79bff; transform: translateX(2px) rotate(45deg); }
 .stage-tile.is-soon .stage-tile-icon img { opacity: .55; transition: opacity .22s ease; }
 .stage-tile.is-soon:hover .stage-tile-icon img { opacity: 1; }
+.stage-tile.is-waiting small { color: #f0c274; }
+.vpn-hero .hero-copy h1 { max-width: 620px; font-size: clamp(32px, 3.4vw, 54px); line-height: 1.12; letter-spacing: -.045em; }
+.vpn-hero .hero-copy > p { max-width: 560px; margin-top: 20px; color: #a79eaf; font: 400 clamp(15px, 1.15vw, 18px)/1.7 var(--font-inter), sans-serif; }
 
 /* --- публичная карта сети ------------------------------------------------- */
 .network-overview { position: relative; overflow: hidden; margin-top: 12px; padding-block: clamp(72px,6vw,104px); background: linear-gradient(180deg,transparent,rgba(91,22,145,.075) 52%,transparent); }
