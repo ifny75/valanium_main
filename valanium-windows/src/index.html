@@ -345,7 +345,7 @@
             <button id="emoji-open" class="attach-button" type="button" disabled title="Эмодзи" aria-label="Эмодзи"><span class="ui-icon icon-smile"></span></button>
             <div class="composer-input">
               <textarea id="composer" rows="1" placeholder="Сообщение" disabled></textarea>
-              <div class="composer-mirror" aria-hidden="true"><span id="composer-mirror-text"></span><span id="composer-calculation" class="composer-calculation hidden"></span></div>
+              <div id="composer-mirror" class="composer-mirror" aria-hidden="true"><span id="composer-mirror-text"></span><span id="composer-calculation" class="composer-calculation hidden"></span></div>
             </div>
             <div id="recording-bar" class="recording-bar hidden" aria-live="polite">
               <span class="recording-dot" aria-hidden="true"></span>
@@ -436,11 +436,11 @@
           <section class="settings-section hidden" data-section="privacy">
             <h1>Приватность</h1>
             <p class="settings-sub">У каждого правила есть базовый круг и именные исключения. Сначала действует явный запрет, затем явное разрешение, и только потом круг.</p>
-            <div class="privacy-group">
+            <div class="privacy-group privacy-preset">
               <h2>Максимальная приватность</h2>
-              <p>Onion, скрытый поиск по имени и сообщения от одобренных. Без статуса в сети, прочтения, набора текста и превью ссылок. Разрешающие исключения сбрасываются, запреты сохраняются. Ранее раскрытые сведения отозвать невозможно.</p>
-              <button id="privacy-maximize" type="button">Применить к этому аккаунту</button>
-              <p>Правила сохраняются без сети; ограничения поиска и доступа на сервере обновятся при подключении. Каждое правило можно изменить отдельно.</p>
+              <p>Tor и сообщения от одобренных контактов. Без статуса в сети, отметок прочтения, набора текста и превью ссылок.</p>
+              <button id="privacy-maximize" class="ghost-button" type="button">Применить к этому аккаунту</button>
+              <small>Разрешающие исключения сбрасываются, запреты сохраняются. Правила сохраняются без сети и синхронизируются при подключении.</small>
             </div>
             <div id="privacy-tabs" class="privacy-tabs" role="tablist"></div>
             <div id="privacy-groups"></div>

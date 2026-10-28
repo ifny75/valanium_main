@@ -6,6 +6,6 @@
  * Файлы лежат в /opt/valanium-releases и раздаются nginx по /downloads/.
  */
 export const RELEASES = {
-  windows: { version: '0.13.7', size: '15,8 МБ', file: '/downloads/Valanium-0.13.7.exe' },
+  windows: { version: '0.13.8', size: '15,8 МБ', file: '/downloads/Valanium-0.13.8.exe' },
   android: { version: '0.7.3', size: '8,0 МБ', file: '/downloads/Valanium-0.7.3.apk' },
 };
