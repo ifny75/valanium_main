@@ -1302,6 +1302,8 @@ $("verification-confirm").addEventListener("click", () => {
 
 $("form-send").addEventListener("submit", async (event) => {
   event.preventDefault();
+  // Возвращаем каретку сразу, до ожидания сети, в том числе при пустой отправке.
+  $("composer").focus({ preventScroll: true });
   const body = $("composer").value.trim();
   if (!body || !state.current) return;
   $("composer").value = "";
@@ -1339,6 +1341,10 @@ $("form-send").addEventListener("submit", async (event) => {
       conversationOf(state.current),
     );
   }
+});
+
+$("send").addEventListener("mousedown", (event) => {
+  if (event.button === 0) event.preventDefault();
 });
 
 function resizeComposer() {

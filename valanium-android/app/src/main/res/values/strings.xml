@@ -176,16 +176,15 @@
     <string name="recover_title">Вернуть доступ</string>
     <string name="recover_hint">Вернётся личность и возможность писать прежним собеседникам. Переписка не вернётся: старые сообщения защищены так, что их не прочитает даже сервер.</string>
     <string name="recover_by_code">По коду</string>
-    <string name="recover_by_password">По паролю</string>
+
     <string name="recover_code_mode_hint">Введите все 24 слова сид-фразы в исходном порядке. Фраза обрабатывается локально.</string>
-    <string name="recover_password_mode_hint">Используйте логин и пароль восстановления, которые были настроены в профиле.</string>
+
     <string name="recover_local_note">Восстановится личность и список устройств. История сообщений остаётся в прежней зашифрованной базе.</string>
     <string name="recover_code_hint">24 слова сид-фразы</string>
-    <string name="recover_login_hint">Логин</string>
-    <string name="recover_password_hint">Пароль восстановления</string>
+
     <string name="recover_action">Восстановить</string>
     <string name="recover_working">Проверяем…</string>
-    <string name="recover_password_working">Разбираем пароль…</string>
+
     <string name="recover_back">Назад к регистрации</string>
 
     <!-- Настройки восстановления -->
@@ -196,12 +195,7 @@
     <string name="recovery_code_hide">Скрыть</string>
     <string name="recovery_code_copy">Скопировать</string>
     <string name="recovery_code_copied">Фраза скопирована — вставьте в надёжное место и очистите буфер</string>
-    <string name="recovery_password_title">Восстановление по логину и паролю</string>
-    <string name="recovery_password_hint">Запасной путь, если код потерян. Сервер сохранит запечатанную копию ключа: открыть её можно только этим паролем, и стойкость способа равна стойкости пароля. Код надёжнее — включайте это как второй способ, а не вместо.</string>
-    <string name="recovery_password_enable">Включить</string>
-    <string name="recovery_password_forget">Убрать с сервера</string>
-    <string name="recovery_password_min">Пароль минимум 10 символов</string>
-    <string name="recovery_login_min">Логин от 3 символов</string>
+
     <string name="recovery_saved">Восстановление включено для логина «%1$s»</string>
     <string name="recovery_forgotten">Запечатанная копия убрана с сервера. Остался только код.</string>
     <string name="recovery_computing">Выводим ключ из пароля, это занимает пару секунд…</string>
@@ -263,25 +257,20 @@
     <string name="privacy_intro">У каждого правила есть базовый круг и именные исключения. Сначала действует явный запрет, затем явное разрешение, и только потом круг.</string>
     <string name="exceptions">Исключения</string>
     <string name="exceptions_none">Исключений нет</string>
-    <string name="username_label">Юзернейм</string>
-    <string name="username_hint">Позволяет находить вас без знания адреса устройства. Личность он не заменяет: ключи проверяются по-прежнему.</string>
-    <string name="username_placeholder">не занят</string>
-    <string name="username_take">Занять</string>
-    <string name="username_change">Сменить</string>
-    <string name="username_release">Освободить</string>
+
     <string name="copy">Копировать</string>
     <string name="requests_label">Запросы</string>
     <string name="requests_none">Новых запросов нет</string>
     <string name="requests_none_hint">Здесь появятся люди, которые захотят начать защищённый диалог.</string>
     <string name="chats_none_title">Начните первый разговор</string>
-    <string name="chats_none_hint">Добавьте человека по юзернейму или коду либо поделитесь своим кодом.</string>
+    <string name="chats_none_hint">Добавьте человека по коду чата либо поделитесь своим кодом.</string>
     <string name="channels_none_title">Каналов пока нет</string>
     <string name="channels_none_hint">Создайте свой канал или найдите существующий по имени.</string>
     <string name="accept">Принять</string>
     <string name="decline">Отклонить</string>
     <string name="block">Заблокировать</string>
     <string name="send_request">Отправить запрос</string>
-    <string name="search_miss">Никого не нашли. Либо такого юзернейма нет, либо человек скрыл себя из поиска.</string>
+    <string name="search_miss">Код чата не найден. Проверьте его у собеседника.</string>
     <string name="attachment_hidden">Вложение скрыто</string>
     <string name="attachment_hidden_why">По вашим правилам приватности от этого собеседника такие вложения не показываются.</string>
     <string name="show">Показать</string>
@@ -323,7 +312,7 @@
     <string name="wallpaper_grid">Сетка</string>
     <string name="wallpaper_dots">Точки</string>
     <string name="wallpaper_rays">Лучи</string>
-    <string name="username_free">Юзернейм не занят</string>
+
     <string name="security_section">Безопасность и вход</string>
     <string name="revoke_devices_title">Другие устройства</string>
     <string name="revoke_devices_hint">Отключает все остальные устройства и навсегда блокирует их старые ключи. Это устройство останется подключено.</string>
@@ -396,8 +385,7 @@
     <string name="entry_benefit_phone">Без\nтелефона</string>
     <string name="entry_benefit_keys">Ключи\nлокально</string>
     <string name="entry_benefit_contacts">Без адресной\nкниги</string>
-    <string name="entry_username_label">Ваш псевдоним</string>
-    <string name="entry_username_hint">Не используйте знакомое имя, если не хотите связывать этот профиль с другими аккаунтами.</string>
+
     <string name="entry_tor_title">Регистрация только через Tor</string>
     <string name="entry_tor_hint">Без автоматического перехода на прямое соединение</string>
     <string name="entry_action_hint">Создание ключей происходит только на устройстве</string>

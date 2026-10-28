@@ -14,26 +14,16 @@ import org.junit.Test;
 public class CommandsTest {
 
     @Test
-    public void recoveryCommandsMatchTheCoreVocabulary() {
+    public void recoveryUsesOnlyTheSeedPhrase() {
         assertEquals("{\"type\":\"recovery_code\"}", Commands.recoveryCode());
-        assertEquals("{\"type\":\"recovery_forget\"}", Commands.recoveryForget());
-        assertEquals(
-                "{\"type\":\"recover\",\"url\":\"wss://x/ws\",\"code\":\"AAAAA BBBBB\"}",
-                Commands.recover("wss://x/ws", "AAAAA BBBBB"));
-        assertEquals(
-                "{\"type\":\"recovery_setup\",\"login\":\"alice\",\"password\":\"long enough\"}",
-                Commands.recoverySetup("alice", "long enough"));
-        assertEquals(
-                "{\"type\":\"recover_password\",\"url\":\"wss://x/ws\",\"login\":\"alice\",\"password\":\"p\"}",
-                Commands.recoverPassword("wss://x/ws", "alice", "p"));
+        assertEquals("{\"type\":\"recover\",\"url\":\"wss://x/ws\",\"code\":\"24 words\"}",
+                Commands.recover("wss://x/ws", "24 words"));
     }
 
-    /** Пароль — произвольный текст: кавычка в нём не должна ломать разбор. */
     @Test
-    public void passwordsWithQuotesSurviveEscaping() {
-        assertEquals(
-                "{\"type\":\"recovery_setup\",\"login\":\"bob\",\"password\":\"a\\\"b\\\\c\"}",
-                Commands.recoverySetup("bob", "a\"b\\c"));
+    public void editsKeepTheMessageIdAndEscapeText() {
+        assertEquals("{\"type\":\"edit_message\",\"conversation\":\"c\",\"id\":\"id\",\"body\":\"a\\\"b\",\"for_both\":true}",
+                Commands.editMessage("c", "id", "a\"b"));
     }
 
     @Test
@@ -51,11 +41,9 @@ public class CommandsTest {
     }
 
     @Test
-    public void missingHandleBecomesNullNotEmptyString() {
-        // Ядро отличает «имя не задано» от «имя пустое»: пустое оно отвергнет.
+    public void registrationCannotIncludeAPersonalHandle() {
         String expected = "{\"type\":\"register\",\"url\":\"wss://x/ws\",\"handle\":null,\"invite\":\"code\"}";
-        assertEquals(expected, Commands.register("wss://x/ws", null, "code"));
-        assertEquals(expected, Commands.register("wss://x/ws", "", "code"));
+        assertEquals(expected, Commands.register("wss://x/ws", "code"));
     }
 
     @Test
@@ -91,17 +79,6 @@ public class CommandsTest {
         assertEquals(
                 "{\"type\":\"directory_forget\",\"device\":\"aa\"}",
                 Commands.directoryForget("aa"));
-    }
-
-    @Test
-    public void usernameCommandsAreShaped() {
-        assertEquals(
-                "{\"type\":\"username_set\",\"name\":\"mira\",\"discoverable\":true}",
-                Commands.usernameSet("mira", true));
-        assertEquals("{\"type\":\"username_clear\"}", Commands.usernameClear());
-        assertEquals(
-                "{\"type\":\"username_lookup\",\"name\":\"mira\"}",
-                Commands.usernameLookup("mira"));
     }
 
     /** Пустая заметка уезжает как null, а не пустой строкой. */

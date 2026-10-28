@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/screen_entry" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="horizontal" android:baselineAligned="false" android:visibility="gone">
+    <ScrollView android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1.1"
+        android:fillViewport="true" android:scrollbars="none" android:paddingStart="24dp" android:paddingEnd="24dp">
+        <include layout="@layout/entry_content" />
+    </ScrollView>
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:background="@drawable/entry_tablet_art" android:orientation="vertical" android:gravity="center"
+        android:padding="32dp" android:importantForAccessibility="noHideDescendants">
+        <ImageView android:layout_width="220dp" android:layout_height="260dp" android:src="@drawable/valanium_logo"
+            android:contentDescription="@null" android:scaleType="fitCenter" android:tint="#C599FF" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="32dp"
+            android:fontFamily="@font/unbounded_semibold" android:text="Пространство\nдля личного."
+            android:textColor="#F6EEFF" android:textSize="26sp" android:gravity="center" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp"
+            android:text="Ваши ключи. Ваши разговоры." android:textColor="#C8B8DB" android:textSize="14sp" android:gravity="center" />
+    </LinearLayout>
+</LinearLayout>

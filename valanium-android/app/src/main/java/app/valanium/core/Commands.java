@@ -34,13 +34,13 @@ public final class Commands {
     }
 
     /**
-     * Регистрация по инвайту. {@code handle} может быть null — имя необязательно.
+     * Регистрация без логина и пароля; восстановление только по сид-фразе.
      */
-    public static String register(String url, String handle, String invite) {
+    public static String register(String url, String invite) {
         StringBuilder out = new StringBuilder("{\"type\":\"register\",\"url\":");
         quote(out, url);
         out.append(",\"handle\":");
-        quoteOrNull(out, handle);
+        out.append("null");
         out.append(",\"invite\":");
         quoteOrNull(out, invite);
         return out.append('}').toString();
@@ -100,34 +100,6 @@ public final class Commands {
         return out.append('}').toString();
     }
 
-    /**
-     * Включить восстановление по логину и паролю. Требует подключения: на
-     * сервер кладётся запечатанная копия ключа.
-     */
-    public static String recoverySetup(String login, String password) {
-        StringBuilder out = new StringBuilder("{\"type\":\"recovery_setup\",\"login\":");
-        quote(out, login);
-        out.append(",\"password\":");
-        quote(out, password);
-        return out.append('}').toString();
-    }
-
-    /** Убрать запечатанную копию с сервера. */
-    public static String recoveryForget() {
-        return "{\"type\":\"recovery_forget\"}";
-    }
-
-    /** Восстановление личности по логину и паролю. */
-    public static String recoverPassword(String url, String login, String password) {
-        StringBuilder out = new StringBuilder("{\"type\":\"recover_password\",\"url\":");
-        quote(out, url);
-        out.append(",\"login\":");
-        quote(out, login);
-        out.append(",\"password\":");
-        quote(out, password);
-        return out.append('}').toString();
-    }
-
     public static String profileSet(String avatarMime, String avatarBase64) {
         StringBuilder out = new StringBuilder("{\"type\":\"profile_set\",\"avatar_mime\":");
         quoteOrNull(out, avatarMime);
@@ -144,6 +116,13 @@ public final class Commands {
         out.append(",\"id\":");
         quote(out, id);
         return out.append(",\"for_both\":").append(forBoth).append('}').toString();
+    }
+
+    public static String editMessage(String conversation, String id, String body) {
+        StringBuilder out = new StringBuilder("{\"type\":\"edit_message\",\"conversation\":");
+        quote(out, conversation); out.append(",\"id\":"); quote(out, id);
+        out.append(",\"body\":"); quote(out, body);
+        return out.append(",\"for_both\":true}").toString();
     }
 
     public static String clearConversation(String conversation) {
@@ -204,24 +183,6 @@ public final class Commands {
     public static String directoryForget(String device) {
         StringBuilder out = new StringBuilder("{\"type\":\"directory_forget\",\"device\":");
         quote(out, device);
-        return out.append('}').toString();
-    }
-
-    // --- юзернеймы --------------------------------------------------------------
-
-    public static String usernameSet(String name, boolean discoverable) {
-        StringBuilder out = new StringBuilder("{\"type\":\"username_set\",\"name\":");
-        quote(out, name);
-        return out.append(",\"discoverable\":").append(discoverable).append('}').toString();
-    }
-
-    public static String usernameClear() {
-        return "{\"type\":\"username_clear\"}";
-    }
-
-    public static String usernameLookup(String name) {
-        StringBuilder out = new StringBuilder("{\"type\":\"username_lookup\",\"name\":");
-        quote(out, name);
         return out.append('}').toString();
     }
 

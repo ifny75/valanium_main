@@ -8,7 +8,7 @@ function between(a,b) { const i=source.indexOf(a),j=source.indexOf(b,i+a.length)
 function listener(id,event) { const a=`$("${id}").addEventListener("${event}"`;const i=source.indexOf(a),j=source.indexOf('\n});',i);assert.ok(i>=0&&j>i);return source.slice(i,j+4); }
 function fixture() {
   const elements=Object.fromEntries([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],{
-    value:'', textContent:'', style:{}, scrollHeight:24, scrollTop:0, classList:{ add(){},remove(){} },
+    value:'', textContent:'', style:{}, scrollHeight:24, scrollTop:0, focus(){this.focused=true;}, classList:{ add(){},remove(){} },
     closest:()=>({style:{setProperty(){}}}), addEventListener(type,fn){this[type]=fn;}
   }]));
   const sent=[],appended=[];
@@ -33,6 +33,7 @@ test('real composer markup supports typing and dispatches a send command on subm
   assert.equal(sent[0].type,'send');
   assert.equal(JSON.parse(sent[0].body).text,'Hello from desktop');
   assert.equal(elements.composer.value,'');
+  assert.equal(elements.composer.focused,true);
   assert.equal(appended.length,1);
 });
 test('Enter submits through the same form; calculator output does not break sending',async()=>{
@@ -44,4 +45,11 @@ test('Enter submits through the same form; calculator output does not break send
   await elements.pending;
   assert.equal(sent.length,1);
   assert.equal(JSON.parse(sent[0].body).text,'2+2=');
+});
+
+test('empty submit keeps the composer active without dispatching a message',async()=>{
+  const {elements,sent}=fixture();
+  await elements['form-send'].submit({preventDefault(){}});
+  assert.equal(elements.composer.focused,true);
+  assert.equal(sent.length,0);
 });

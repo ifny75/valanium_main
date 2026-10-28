@@ -39,8 +39,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.HorizontalScrollView;
-import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
@@ -478,6 +476,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.migrate).setOnClickListener(v -> migrateLegacyDatabase());
         findViewById(R.id.reset_legacy).setOnClickListener(v -> confirmResetLegacyDatabase());
         entrySubmit.setOnClickListener(v -> register());
+        findViewById(R.id.send).setFocusable(false);
         findViewById(R.id.send).setOnClickListener(v -> send());
         scrollToBottom.setOnClickListener(v -> scrollToLatest(true));
         composer.setOnFocusChangeListener((view, focused) -> {
@@ -835,6 +834,20 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Первый экран остаётся чисто клиентской композицией: логика регистрации не меняется. */
     private void configureEntryExperience() {
+        // Width-based resource selection also adapts to split screen and tablet rotation.
+        for (int id : new int[]{R.id.entry_content, R.id.recover_content}) {
+            View content = findViewById(id);
+            View parent = (View) content.getParent();
+            parent.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+                int available = view.getWidth() - view.getPaddingLeft() - view.getPaddingRight();
+                int width = Math.min(dp(560), available);
+                if (width > 0 && content.getLayoutParams().width != width) {
+                    FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) content.getLayoutParams();
+                    params.width = width; params.gravity = Gravity.CENTER_HORIZONTAL;
+                    content.setLayoutParams(params);
+                }
+            });
+        }
         Switch torOnly = findViewById(R.id.entry_tor_only);
         findViewById(R.id.entry_tor_row).setOnClickListener(v -> torOnly.setChecked(!torOnly.isChecked()));
         screenMigrate.setBackgroundResource(R.drawable.entry_surface);
@@ -2383,7 +2396,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (!torOnly) {
             appearancePreferences.edit().putString(TRANSPORT_KEY, "auto").apply();
             ((RoutingView) findViewById(R.id.transport_mode)).setMode("auto");
-            submit(Commands.register(SERVER_AUTO_URL, null, null));
+            submit(Commands.register(SERVER_AUTO_URL, null));
             return;
         }
         appearancePreferences.edit().putString(TRANSPORT_KEY, "onion").apply();
@@ -2396,7 +2409,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 if (ready && foregroundAuthorized) {
-                    submit(Commands.register(SERVER_ONION_URL, null, null));
+                    submit(Commands.register(SERVER_ONION_URL, null));
                 } else {
                     registrationPending = false;
                     entrySubmit.setEnabled(true);
@@ -2525,6 +2538,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void send() {
+        composer.requestFocus();
         String text = composer.getText().toString().trim();
         if (text.isEmpty() || currentPeer == null) return;
         composer.setText("");
@@ -2549,7 +2563,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      * Поле под верхней полосой работает и поиском, и добавлением.
      *
      * Пока набирают — отсеивает уже открытые переписки. По «Go» или кнопке «+»
-     * разбирает набранное: @имя ищется на сервере, код OBS- и адрес устройства
+     * разбирает набранное: код чата и адрес устройства
      * открывают переписку.
      */
     private void wireSearch() {
@@ -2860,6 +2874,9 @@ public final class MainActivity extends Activity implements Events.Listener {
                             event.optBoolean("active") ? getString(R.string.typing) : getString(R.string.secure_chat));
                 }
                 break;
+            case "edited":
+                onEdited(event);
+                break;
             case "deleted":
                 onDeleted(event);
                 break;
@@ -3142,7 +3159,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         Profile profile = new Profile(
                 event.optString("device"),
                 event.optString("chat_code"),
-                event.optString("handle", ""),
                 event.optString("avatar_mime", ""),
                 event.optString("avatar_base64", ""));
         profile.emblem = optText(event, "emblem");
@@ -3263,8 +3279,10 @@ public final class MainActivity extends Activity implements Events.Listener {
                 item.outgoing ? Gravity.END : Gravity.START);
         params.leftMargin = item.outgoing ? dp(48) : 0;
         params.rightMargin = item.outgoing ? 0 : dp(48);
-        bubble.setLayoutParams(params);
-        row.addView(bubble);
+        SwipeMessageLayout swipe = new SwipeMessageLayout(this, bubble,
+                messageActions(item.body, item.outgoing, currentPeer), accentColor());
+        swipe.setLayoutParams(params);
+        row.addView(swipe);
         if (created && motionEnabled()) {
             row.setAlpha(0f);
             row.setTranslationY(dp(8));
@@ -3570,6 +3588,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void show(View screen) {
         currentScreen = screen;
+        if (screen == screenConversation) composer.requestFocus();
         updateSystemTopSurface();
         if (tabBar != null) updateTabBar(screen);
         // Следующий переход снова считается движением вглубь, пока не сказано
@@ -4269,46 +4288,9 @@ public final class MainActivity extends Activity implements Events.Listener {
         params.rightMargin = outgoing ? 0 : dp(48);
         bubble.setLayoutParams(params);
 
-        String logical = content.optString("id");
-        if (!logical.isEmpty()) {
-            final String messageText = content.optString("text", "");
-            final float[] start = new float[2];
-            final boolean[] swiping = {false};
-            bubble.setOnTouchListener((view, event) -> {
-                switch (event.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        start[0] = event.getX(); start[1] = event.getY();
-                        swiping[0] = false;
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        float dx = event.getX() - start[0];
-                        float dy = event.getY() - start[1];
-                        if (!swiping[0] && Math.abs(dy) > dp(10) && Math.abs(dy) > Math.abs(dx)) {
-                            return false;
-                        }
-                        if (Math.abs(dx) > dp(12) && Math.abs(dx) > Math.abs(dy)) {
-                            swiping[0] = true;
-                            view.getParent().requestDisallowInterceptTouchEvent(true);
-                            view.setTranslationX(Math.max(-dp(64), Math.min(dp(64), dx)));
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        float distance = event.getX() - start[0];
-                        view.animate().translationX(0).setDuration(150).start();
-                        if (swiping[0] && Math.abs(distance) >= dp(48)) {
-                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
-                            showMessageMenu(view, logical, messageText, outgoing);
-                        } else if (!swiping[0]) {
-                            showMessageMenu(view, logical, messageText, outgoing);
-                        }
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        view.setTranslationX(0);
-                        return false;
-                    default: return false;
-                }
-            });
-        }
+        bubble.setOnClickListener(view -> showMessageMenu(body, outgoing, peer));
+        bubble.setOnLongClickListener(view -> { showMessageMenu(body, outgoing, peer); return true; });
+        bubble.setContentDescription("Сообщение. Нажмите для действий");
         return bubble;
     }
 
@@ -4409,73 +4391,123 @@ public final class MainActivity extends Activity implements Events.Listener {
     private String replyId;
     private String replyText;
 
-    private void showMessageMenu(View anchor, String id, String text, boolean outgoing) {
-        HorizontalScrollView scroll = new HorizontalScrollView(this);
-        scroll.setHorizontalScrollBarEnabled(false);
-        scroll.setFillViewport(false);
-        scroll.setBackgroundResource(R.drawable.card_flat);
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setPadding(dp(6), dp(5), dp(6), dp(5));
-        scroll.addView(actions);
-        PopupWindow popup = new PopupWindow(scroll,
-                Math.min(getResources().getDisplayMetrics().widthPixels - dp(24), dp(340)),
-                dp(52), true);
-        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
-        popup.setOutsideTouchable(true);
-        popup.setElevation(dp(10));
-        addMessageAction(actions, popup, getString(R.string.reply), () -> setReply(id, text));
-        addMessageAction(actions, popup, getString(R.string.copy), () -> copyToClipboard(text, "Скопировано"));
-        addMessageAction(actions, popup, getString(R.string.delete_mine), () -> confirmDelete(id, false));
-        if (outgoing) addMessageAction(actions, popup, getString(R.string.delete_both),
-                () -> confirmDelete(id, true));
-        int[] location = new int[2];
-        anchor.getLocationOnScreen(location);
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
-        int y = location[1] + anchor.getHeight() + dp(4);
-        if (y + dp(52) > screenHeight - dp(20)) y = location[1] - dp(56);
-        int x = Math.max(dp(12), Math.min(location[0],
-                getResources().getDisplayMetrics().widthPixels - popup.getWidth() - dp(12)));
-        popup.showAtLocation(getWindow().getDecorView(), Gravity.TOP | Gravity.START, x, y);
-    }
-
-    private void addMessageAction(LinearLayout actions, PopupWindow popup, String label, Runnable action) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(12);
-        button.setTextColor(themeText());
-        button.setBackgroundColor(Color.TRANSPARENT);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setOnClickListener(v -> { popup.dismiss(); action.run(); });
-        actions.addView(button);
-    }
-
-
-    /**
-     * Спрашивает перед удалением, если так велено в настройках.
-     *
-     * Отменить удаление нечем: сообщение стирается из базы, а «у обоих» ещё и
-     * уходит просьбой собеседнику. Поэтому вопрос включён по умолчанию, а
-     * выключение — осознанный выбор того, кто устал подтверждать.
-     */
-    private void confirmDelete(String id, boolean forBoth) {
-        if (!chatPreference("confirm_delete", true)) {
-            deleteMessage(id, forBoth);
-            return;
+    private java.util.List<SwipeMessageLayout.Action> messageActions(String body, boolean outgoing, String peer) {
+        JSONObject content = parseContent(body);
+        String id = content.optString("id");
+        String type = content.optString("type");
+        String text = content.optString("text");
+        String quote = !text.isEmpty() ? text : "image".equals(type) ? "Фото" : "Голосовое сообщение";
+        java.util.List<SwipeMessageLayout.Action> actions = new ArrayList<>();
+        if (!id.isEmpty()) {
+            actions.add(new SwipeMessageLayout.Action("Ответить", "↩", () -> { setReply(id, quote); focusComposer(); }));
+            actions.add(new SwipeMessageLayout.Action("Реакция", "♡", () -> chooseMessageReaction(peer, id, quote)));
         }
-        new AlertDialog.Builder(this)
-                .setTitle(forBoth ? R.string.delete_both : R.string.delete_mine)
-                .setMessage(forBoth ? R.string.delete_both_hint : R.string.delete_mine_hint)
-                .setPositiveButton(R.string.delete, (dialog, which) -> deleteMessage(id, forBoth))
-                .setNegativeButton(R.string.cancel, null)
-                .show();
+        if (!text.isEmpty()) actions.add(new SwipeMessageLayout.Action("Копировать", "⧉", () -> copyToClipboard(text, "Скопировано")));
+        if ((outgoing || contentRule(type) == null || permits(contentRule(type), peer))
+                && ("text".equals(type) || "image".equals(type) || "voice".equals(type)))
+            actions.add(new SwipeMessageLayout.Action("Переслать", "➜", () -> forwardMessage(body)));
+        String conversation = conversations.get(peer);
+        if (!id.isEmpty() && !TextUtils.isEmpty(conversation)) {
+            if (outgoing && "text".equals(type)) actions.add(new SwipeMessageLayout.Action("Редактировать", "✎", () -> editMessage(conversation, id, body)));
+            actions.add(new SwipeMessageLayout.Action("Удалить", "×", () -> chooseMessageDeletion(conversation, id, outgoing)));
+        }
+        return actions;
     }
 
-    private void deleteMessage(String id, boolean forBoth) {
-        String conversation = conversations.get(currentPeer);
-        if (conversation != null) submit(Commands.deleteMessage(conversation, id, forBoth));
+    private void showMessageMenu(String body, boolean outgoing, String peer) {
+        java.util.List<SwipeMessageLayout.Action> actions = messageActions(body, outgoing, peer);
+        if (actions.isEmpty()) return;
+        String[] labels = new String[actions.size()];
+        for (int i = 0; i < actions.size(); i++) labels[i] = actions.get(i).label;
+        new AlertDialog.Builder(this).setTitle("Сообщение")
+                .setItems(labels, (dialog, which) -> actions.get(which).run.run())
+                .setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void focusComposer() {
+        composer.requestFocus();
+        ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
+                .showSoftInput(composer, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+    }
+
+    private void chooseMessageReaction(String peer, String id, String quote) {
+        // Emoji replies use the same encrypted quote format as desktop, with no new metadata on the server.
+        String[] emoji = {"❤️", "👍", "😂", "🔥", "😮", "😢"};
+        new AlertDialog.Builder(this).setTitle("Реакция")
+                .setItems(emoji, (dialog, which) -> {
+                    String body = encodeReply("text", logicalId(), emoji[which], id, quote);
+                    submit(Commands.send(peer, body));
+                    if (peer.equals(currentPeer)) addBubble(body, true);
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void forwardMessage(String body) {
+        java.util.List<String> peers = new ArrayList<>(conversations.keySet());
+        peers.removeIf(peer -> { JSONObject entry = directory.get(peer);
+            return entry != null && "blocked".equals(entry.optString("standing")); });
+        if (peers.isEmpty()) { toast("Сначала откройте чат с получателем"); return; }
+        String[] labels = new String[peers.size()];
+        for (int i = 0; i < peers.size(); i++) labels[i] = displayName(peers.get(i));
+        new AlertDialog.Builder(this).setTitle("Переслать в чат")
+                .setItems(labels, (dialog, which) -> {
+                    try {
+                        JSONObject copy = new JSONObject(parseContent(body).toString());
+                        copy.put("id", logicalId()); copy.remove("reply");
+                        copy.put("forwarded", true);
+                        String fresh = CONTENT_PREFIX + copy;
+                        String peer = peers.get(which);
+                        submit(Commands.send(peer, fresh));
+                        if (peer.equals(currentPeer)) addBubble(fresh, true);
+                        toast("Добавлено в очередь отправки");
+                    } catch (Exception error) { toast("Не удалось переслать сообщение"); }
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void editMessage(String conversation, String id, String body) {
+        EditText input = new EditText(this);
+        input.setText(parseContent(body).optString("text"));
+        input.setSelection(input.length());
+        input.setPadding(dp(20), dp(12), dp(20), dp(12));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Редактировать сообщение")
+                .setView(input).setPositiveButton("Сохранить", null)
+                .setNegativeButton(R.string.cancel, null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            if (input.getText().toString().trim().isEmpty()) { input.setError("Введите текст"); return; }
+            try {
+                JSONObject content = new JSONObject(parseContent(body).toString());
+                content.put("text", input.getText().toString().trim());
+                submit(Commands.editMessage(conversation, id, CONTENT_PREFIX + content));
+                dialog.dismiss(); focusComposer();
+            } catch (Exception error) { toast("Не удалось сохранить правку"); }
+        }));
+        dialog.show(); input.requestFocus();
+        dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+    }
+
+    private void chooseMessageDeletion(String conversation, String id, boolean outgoing) {
+        String[] labels = outgoing ? new String[]{getString(R.string.delete_mine), getString(R.string.delete_both)}
+                : new String[]{getString(R.string.delete_mine)};
+        new AlertDialog.Builder(this).setTitle("Удалить сообщение?")
+                .setItems(labels, (dialog, which) -> new AlertDialog.Builder(this)
+                        .setTitle(labels[which]).setMessage(which == 1 ? R.string.delete_both_hint : R.string.delete_mine_hint)
+                        .setPositiveButton(R.string.delete, (confirm, button) -> submit(Commands.deleteMessage(conversation, id, which == 1)))
+                        .setNegativeButton(R.string.cancel, null).show())
+                .setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void onEdited(JSONObject event) {
+        String conversation = event.optString("conversation"), id = event.optString("id");
+        ChatPage entry = pages.get(conversation);
+        if (entry == null) return;
+        for (int i = 0; i < entry.timeline.size(); i++) {
+            TimelineItem item = entry.timeline.get(i);
+            if (!item.separator && id.equals(item.id)) {
+                TimelineItem replacement = TimelineItem.message(event.optString("body"), item.outgoing, item.timestamp, id);
+                replacement.bottomMarginDp = item.bottomMarginDp;
+                entry.timeline.set(i, replacement);
+            }
+        }
+        if (conversation.equals(conversations.get(currentPeer))) messageListAdapter.submit(entry.timeline);
     }
 
     private void setReply(String id, String text) {
@@ -4524,13 +4556,13 @@ public final class MainActivity extends Activity implements Events.Listener {
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         identity.addView(name);
-        String handle = profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(device);
-        TextView username = peerCardText(handle, 12, getColor(R.color.valanium_muted));
-        LinearLayout.LayoutParams usernameParams = new LinearLayout.LayoutParams(
+        String chatCode = profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(device);
+        TextView codeLabel = peerCardText(chatCode, 12, getColor(R.color.valanium_muted));
+        LinearLayout.LayoutParams codeParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        usernameParams.topMargin = dp(3);
-        username.setLayoutParams(usernameParams);
-        identity.addView(username);
+        codeParams.topMargin = dp(3);
+        codeLabel.setLayoutParams(codeParams);
+        identity.addView(codeLabel);
         TextView relation = peerCardText(standingLabel(standing), 11,
                 "contact".equals(standing) ? getColor(R.color.valanium_green)
                         : getColor(R.color.valanium_dim));
@@ -5177,18 +5209,16 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final class Profile {
         final String device;
         final String chatCode;
-        final String handle;
         final String avatarMime;
         final String avatarBase64;
         /** Значок и цвет собеседника: их выбирает он, а показываем мы. */
         String emblem = "";
         String color = "";
 
-        Profile(String device, String chatCode, String handle, String avatarMime,
+        Profile(String device, String chatCode, String avatarMime,
                 String avatarBase64) {
             this.device = device;
             this.chatCode = chatCode;
-            this.handle = "null".equals(handle) ? "" : handle;
             this.avatarMime = "null".equals(avatarMime) ? "" : avatarMime;
             this.avatarBase64 = "null".equals(avatarBase64) ? "" : avatarBase64;
         }
@@ -5522,7 +5552,6 @@ public final class MainActivity extends Activity implements Events.Listener {
 
             {"#", "Профиль и поиск"},
             {"profile_avatar", "Аватар", "", "everyone,contacts,nobody"},
-            {"profile_name", "Имя профиля", "", "everyone,contacts,nobody"},
     };
 
     private static final String DEFAULT_SCOPES = "everyone,approved,contacts,nobody";
