@@ -42,7 +42,7 @@ impl VpnManager {
     /// Connects to `server`. Today this only flips local state — wiring it
     /// to a real NaiveProxy client means spawning something like:
     ///   naive --listen=socks://127.0.0.1:1080 \
-    ///         --proxy=https://<naive_username>:<naive_password>@<host>:<port>
+    ///         --proxy=<proxy-url>
     /// using credentials fetched from a future main_server
     /// `GET /api/me/subscription` endpoint (not yet implemented server-side).
     pub fn connect(&mut self, server: ServerInfo) -> Result<ConnectionState> {

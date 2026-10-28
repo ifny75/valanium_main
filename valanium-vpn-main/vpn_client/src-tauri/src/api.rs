@@ -16,7 +16,7 @@ use crate::identity::{hex_decode, Identity};
 
 /// Адрес плоскости управления. Переопределяется `VALANIUM_VPN_API` —
 /// это нужно для своего сервера и для отладки против локального.
-const DEFAULT_BASE_URL: &str = "http://2.27.205.9:62740";
+const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8080";
 
 const DOMAIN_ENROLL: &[u8] = b"valanium-vpn-enroll-v1";
 const DOMAIN_AUTH: &[u8] = b"valanium-vpn-auth-v1";

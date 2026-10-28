@@ -100,7 +100,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
           <OnionButton />
           <a className="status-mobile-link" href={page === 'messenger' ? '/' : '/apps'}>{page === 'messenger' ? '← Назад' : 'Приложения'}</a>
           <SupportDialog variant="header" />
-          <a className="github-link" href="https://github.com/ifny75/valanium_main" target="_blank" rel="noreferrer noopener">
+          <a className="github-link" href={page === 'vpn' ? 'https://github.com/ifny75/Valanium_Vpn' : 'https://github.com/ifny75/valanium_main'} target="_blank" rel="noreferrer noopener">
             <GithubIcon /><b>GitHub</b>
           </a>
         </div>

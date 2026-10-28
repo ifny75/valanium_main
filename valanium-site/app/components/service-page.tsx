@@ -34,6 +34,9 @@ export function ServicePage({
   sections,
   note,
   shot,
+  sourceUrl,
+  closingTitle = 'Пока в разработке.',
+  closingBody = 'Работающий сегодня — мессенджер: клиенты, публичный статус узлов и открытый код.',
 }: {
   service: Service;
   page: HeaderPage;
@@ -42,6 +45,9 @@ export function ServicePage({
   note: string;
   /** Снимок приложения, если он есть. Иначе показываем знак сервиса. */
   shot?: string;
+  sourceUrl?: string;
+  closingTitle?: string;
+  closingBody?: string;
 }) {
   return (
     <main id="top">
@@ -60,6 +66,11 @@ export function ServicePage({
             <span className="service-dot" aria-hidden="true" />
             {note}
           </div>
+          {sourceUrl && <div className="actions" style={{ marginTop: 16, marginBottom: 12 }}>
+            <a className="download-button" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+              <span><small>Открытый код</small><b>GitHub</b></span>
+            </a>
+          </div>}
           <small>Открытый код · AGPL-3.0 · собственные узлы</small>
         </div>
 
@@ -91,8 +102,8 @@ export function ServicePage({
             <div className="closing-mark"><img src={service.logo} alt="" /></div>
             <div>
               <span>{service.badge}</span>
-              <h2>Пока в разработке.</h2>
-              <p>Работающий сегодня — мессенджер: клиенты, публичный статус узлов и открытый код.</p>
+              <h2>{closingTitle}</h2>
+              <p>{closingBody}</p>
             </div>
           </div>
           <div className="closing-actions">

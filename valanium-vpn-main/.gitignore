@@ -8,6 +8,7 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
+*.pyo
 /main_server/venv/
 /main_server/.venv/
 /vpn_node/venv/
@@ -16,14 +17,58 @@ __pycache__/
 # Runtime state / secrets — never commit
 .env
 .env.*
+!.env.example
+!.env.template
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.log
+*.log.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+*.ovpn
+wg*.conf
+peers.json
+credentials.json
+secrets.json
+tokens.json
+accounts.json
+*.bak
+*.backup
+*.dump
+*.sql
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.pcap
+*.pcapng
+backups/
+private/
+secrets/
+.ssh/
+.venv/
+venv/
 # Перец для хешей кодов доступа: его потеря = потеря всех выданных кодов,
 # а утечка вместе с базой даёт перебор. Лежит рядом с базой, в репозиторий
 # не попадает никогда.
 access_code_pepper
 /server_backups/
 dns_settings.json
+mask_settings.json
+kill_switch_settings.json
+wireguard.conf
 test-wg.log
 enroll.log
 status.log
@@ -32,7 +77,15 @@ tls_mask.log
 device.key
 wg_keys.json
 # Собранный портативный клиент — артефакт сборки, не исходник.
-/release/vpn-client-*/
+/release/
+*.exe
+*.msi
+*.msix
+*.pdb
+dist/
+build/
+.idea/
+.vscode/
 
 # Local tooling config (Claude Code dev-server launch config, machine-specific)
 /.claude/
