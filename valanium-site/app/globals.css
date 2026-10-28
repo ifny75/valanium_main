@@ -1060,3 +1060,40 @@ details[open] .node-expand { transform:rotate(180deg); }
   .animated-heading .heading-letter, .stage-status, .glass-inner > p, .stage-actions { animation: none; opacity: 1; transform: none; filter: none; }
   .nav, .brand img, .nav-menu a, .github-link, .support-trigger-header, .stage-button, .reference-button, .button-arrow { transition: none; }
 }
+
+/* Home typography and shared navigation. */
+.home-inter { --font-unbounded: var(--font-inter); font-family: var(--font-inter),Arial,sans-serif; }
+.site-header :is(a,b,button,span) { font-family: var(--font-inter),Arial,sans-serif; letter-spacing: 0; }
+.nav .onion-button { padding: 10px 12px; border-color: transparent; background: transparent; color: #d4c6e3; }
+.nav .onion-button:hover { color: #fff; background: #ffffff09; }
+
+.network-minimal { padding-block: 64px; }
+.network-minimal-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.network-minimal-header h2 { font: 600 clamp(24px,2.8vw,38px)/1.15 var(--font-inter),sans-serif; letter-spacing: -.04em; }
+.network-minimal-header button { flex: none; border: 0; background: #ffffff06; color: #b4aaba; border-radius: 999px; padding: 10px 16px; font: 500 13px var(--font-inter),sans-serif; cursor: pointer; }
+.network-minimal-header button:hover { background: #ffffff0d; color: #fff; }
+.network-minimal-header button:focus-visible { outline: 2px solid #b580e8; outline-offset: 4px; }
+.network-minimal-header button:disabled { opacity: .5; cursor: wait; }
+.network-minimal-servers { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.network-minimal-servers > li { min-width: 0; border: 0; }
+.network-minimal .network-server-details > summary { grid-template-columns: 30px minmax(0,1fr) 110px 14px; padding: 20px 12px; gap: 18px; }
+.network-minimal .network-node-name { align-items: flex-start; }
+.network-minimal .network-node-name strong { font: 550 16px var(--font-inter),sans-serif; letter-spacing: -.02em; }
+.network-minimal .network-node-name small { font: 400 12px var(--font-inter),sans-serif; color: #817987; }
+.network-minimal .network-node-details em { font: 500 12px var(--font-inter),sans-serif; text-transform: none; }
+.network-minimal .node-country-flag { border: 0; border-radius: 3px; }
+.network-minimal .node-detail-body dl > div { border: 0; background: #ffffff03; }
+.network-minimal-message { margin: 16px 12px; font-size: 13px; color: #988b9e; }
+.network-minimal-status { display: inline-block; margin: 20px 12px 0; font-size: 12px; color: #92869b; }
+.network-minimal-status:hover { color: #cfb2e8; }
+@media(max-width:520px) {
+  .network-minimal { padding-block: 42px; }
+  .network-minimal-header { gap: 12px; margin-bottom: 16px; }
+  .network-minimal-header h2 { max-width: 200px; font-size: 25px; }
+  .network-minimal-header button { padding: 9px 12px; font-size: 12px; }
+  .network-minimal .network-server-details > summary { grid-template-columns: 26px minmax(0,1fr) 90px 12px; gap: 10px; padding: 17px 4px; }
+  .network-minimal .node-country-flag { width: 26px; height: 19px; }
+  .network-minimal .network-node-name strong { font-size: 14px; }
+  .network-minimal .network-node-name small { font-size: 10px; }
+  .network-minimal .network-node-details em { font-size: 10px; }
+}

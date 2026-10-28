@@ -43,7 +43,7 @@ export const metadata: Metadata = {
 */
 export default function Home() {
   return (
-    <main id="top">
+    <main id="top" className="home-inter">
       <DynamicHeader page="hub" />
 
       <section className="stage">

@@ -7,12 +7,7 @@ import { SERVICES } from '../services';
 import { OnionButton } from './onion-button';
 
 /**
- * Какая это страница — от этого зависит только меню.
- *
- * `messenger` живёт на якорях внутри одной длинной страницы, остальные —
- * отдельные разделы. Раньше вариантов было два и хватало флага; теперь
- * сервисов несколько, и меню собирается из таблицы, чтобы добавление
- * следующего не превращалось в правку разметки в трёх местах.
+ * Одинаковая навигация на всех страницах; текущий раздел меняет только подсветку.
  */
 export type HeaderPage = 'hub' | 'messenger' | 'mail' | 'vpn' | 'status' | 'apps';
 
@@ -23,18 +18,6 @@ const SERVICE_LINKS: Link[] = SERVICES.map((service) => ({
   label: service.short,
   logo: service.logo,
 }));
-
-/** Якоря есть только на странице мессенджера: снаружи они ведут на неё же. */
-const MESSENGER_LINKS: Link[] = [
-  { href: '#features', label: 'Возможности' },
-  { href: '#routes', label: 'Маршруты' },
-  { href: '#download', label: 'Скачать' },
-];
-
-function linksFor(page: HeaderPage): Link[] {
-  if (page === 'messenger') return MESSENGER_LINKS;
-  return SERVICE_LINKS;
-}
 
 export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
   const [compact, setCompact] = useState(false);
@@ -59,10 +42,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
     };
   }, []);
 
-  // На странице мессенджера логотип возвращает к началу, на остальных — к
-  // выбору сервисов: это разные намерения, и вести их в одно место нельзя.
   const brandHref = '/';
-  const links = linksFor(page);
 
   return (
     <header className={`site-header${compact ? ' is-compact' : ''}`}>
@@ -77,16 +57,15 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
         <a className="brand" href={brandHref} aria-label="Valanium">
           <img src="/logos/brand.svg" alt="" />
           <b>Valanium</b>
-          {page === 'messenger' ? <span>Public Beta</span> : null}
         </a>
 
         <div className="nav-menu">
-          {page === 'messenger' ? <a href="/">← Главная</a> : null}
-          {links.map((link) => (
+          {SERVICE_LINKS.map((link) => (
             <a
               key={link.href}
               href={link.href}
               className={link.href === `/${page}` ? 'is-active' : undefined}
+              aria-current={link.href === `/${page}` ? 'page' : undefined}
             >
               {link.logo ? <img className="nav-logo" src={link.logo} alt="" /> : null}
               {link.label}
@@ -98,7 +77,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
 
         <div className="nav-actions">
           <OnionButton />
-          <a className="status-mobile-link" href={page === 'messenger' ? '/' : '/apps'}>{page === 'messenger' ? '← Назад' : 'Приложения'}</a>
+          <a className="status-mobile-link" href="/apps">Приложения</a>
           <SupportDialog variant="header" />
           <a className="github-link" href={page === 'vpn' ? 'https://github.com/ifny75/Valanium_Vpn' : 'https://github.com/ifny75/valanium_main'} target="_blank" rel="noreferrer noopener">
             <GithubIcon /><b>GitHub</b>

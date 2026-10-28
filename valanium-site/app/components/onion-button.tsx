@@ -8,7 +8,7 @@ export function OnionButton({ prominent = false }: { prominent?: boolean }) {
   return <>
     <button type="button" className={`onion-button${prominent ? ' onion-button-prominent' : ''}`}
       onClick={() => { setCopied(false); dialog.current?.showModal(); }} aria-haspopup="dialog">
-      <span aria-hidden="true">◉</span> Onion <span className="onion-button-hint">через Tor</span>
+      Onion
     </button>
     <dialog ref={dialog} className="onion-dialog" aria-labelledby={prominent ? 'onion-hero-title' : 'onion-nav-title'}
       onClick={event => { if (event.target === dialog.current) dialog.current.close(); }}>
