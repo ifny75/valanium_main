@@ -8,12 +8,11 @@
 */
 const SERVER_URLS = Object.freeze({
   auto: "valanium://auto",
-  basic: "wss://valanium.com/ws",
   onion: "valanium://onion",
 });
 
 /** Узлы, из которых можно выбрать второе плечо. Имена те же, что на /status. */
-const HOP_NODES = Object.freeze(["alpha", "beta", "gamma"]);
+let connectionGeneration = 0;
 
 /* Cloudflare направляет Relay на один из доступных узлов hop1 и hop3. */
 function serverUrl() {
@@ -148,6 +147,11 @@ function sendRead(peer, ids) {
 }
 
 function showScreen(screen) {
+  if (screen === "screen-route") {
+    chosenTransport = preferences.transport;
+    for (const option of document.querySelectorAll(".route-option"))
+      option.classList.toggle("active", option.dataset.transport === chosenTransport);
+  }
   for (const id of [
     "screen-boot", "screen-locked", "screen-migrate", "screen-language",
     "screen-route", "screen-entry", "screen-recover", "screen-backup", "screen-main",
@@ -230,6 +234,8 @@ let connectionKind = "offline";
 function setConnection(kind, text) {
   const was = connectionKind;
   connectionKind = kind;
+  const networkStatus = $("connection-route-state");
+  if (networkStatus) { networkStatus.textContent = text; networkStatus.dataset.state = kind; }
   if (kind === "offline" && was !== "offline") toast(`Связь потеряна: ${text}`);
   // О возвращении говорим только тем, кто видел обрыв: при первом входе
   // «связь восстановлена» сообщало бы о том, чего не случалось.
@@ -309,9 +315,9 @@ const onboardingCopy = {
       "Приватность заложена в архитектуру. Открытый код. Номер телефона не нужен.",
     ],
     start: "Проведите, чтобы начать", next: "Продолжить", routeText: "Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.",
-    relay: "Через hop1 или hop3 к main", multi: "Multi-hop временно выключен", tor: "Максимальная сетевая приватность",
+    relay: "Автоматический выбор доступного соединения", tor: "Только сеть Tor",
     entryTitle: "Начните с Valanium", entryLead: "Аккаунт без логина и пароля. Для восстановления сохраните сид-фразу из 24 слов.",
-    routeTitle: "сервер Valanium", back: "Назад", relayTitle: "Relay (автоматически)",
+    routeTitle: "сервер Valanium", back: "Назад", relayTitle: "Auto",
     register: "Зарегистрироваться", recoverWords: "Восстановить по 24 словам",
     recoveryTitle: "Recovery phrase", recoveryLead: "Введите 24 слова в том же порядке. За один шаг показываются восемь слов.",
     backToRegister: "Назад к регистрации",
@@ -327,9 +333,9 @@ const onboardingCopy = {
       "Privacy by design. Open source. No phone number required.",
     ],
     start: "Slide to start", next: "Continue", routeText: "Choose how the app connects to the network. You can change this later.",
-    relay: "Through hop1 or hop3 to main", multi: "Multi-hop temporarily off", tor: "Maximum network privacy",
+    relay: "Automatically choose an available connection", tor: "Tor network only",
     entryTitle: "Get started with Valanium", entryLead: "No login or password. Save your 24-word seed phrase to recover the account.",
-    routeTitle: "Valanium server", back: "Back", relayTitle: "Relay (automatic)",
+    routeTitle: "Valanium server", back: "Back", relayTitle: "Auto",
     register: "Create account", recoverWords: "Recover with 24 words",
     recoveryTitle: "Recovery phrase", recoveryLead: "Enter all 24 words in the original order. Eight words are shown per step.",
     backToRegister: "Back to registration",
@@ -350,7 +356,6 @@ function applyOnboardingLanguage() {
   $("route-next-label").textContent = copy.next;
   $("route-text").textContent = copy.routeText;
   $("route-relay-text").textContent = copy.relay;
-  $("route-multi-text").textContent = copy.multi;
   $("route-tor-text").textContent = copy.tor;
   $("entry-title").textContent = copy.entryTitle;
   $("entry-lead").textContent = copy.entryLead;
@@ -465,6 +470,7 @@ $("route-back").addEventListener("click", () => {
   });
 });
 $("entry-back").addEventListener("click", () => showScreen("screen-route"));
+$("entry-connection").addEventListener("click", () => showScreen("screen-route"));
 for (const option of document.querySelectorAll(".route-option")) {
   option.addEventListener("click", () => {
     chosenTransport = option.dataset.transport;
@@ -608,6 +614,7 @@ document.querySelectorAll(".onboarding-shader").forEach(initOnboardingShader);
 $("route-next").addEventListener("click", () => {
   preferences.transport = chosenTransport;
   savePreferences();
+  renderEntryConnection();
   localStorage.setItem(ONBOARDING_COMPLETE, "1");
   showScreen("screen-entry");
 });
@@ -620,7 +627,7 @@ $("form-entry").addEventListener("submit", async (event) => {
   state.registrationPending = true;
   button.disabled = true;
   button.textContent = "Подключаем…";
-  const torOnly = $("entry-tor-only").checked;
+  const torOnly = preferences.transport === "onion";
   // Freeze the route before asynchronous bootstrap: UI changes must not downgrade this request.
   const registrationUrl = torOnly ? "valanium://onion" : serverUrl();
   if (torOnly) {
@@ -1883,7 +1890,7 @@ const handlers = {
     $("my-device").title = event.device;
     $("profile-device").textContent = short(event.device);
     $("profile-device").title = event.device;
-    showBoot("Подключаем защищённый сеанс…");
+    showScreen("screen-main");
     submit({ type: "fingerprint", identity: event.identity });
     submit({ type: "conversations" });
     submit({ type: "groups" });
@@ -1891,13 +1898,7 @@ const handlers = {
     submit({ type: "directory_list" });
     submit({ type: "access_get" });
     setConnection("connecting", "подключаемся…");
-    if (preferences.transport === "onion") {
-      ensureOnionize().then(() => {
-        if (preferences.transport === "onion") submit({ type: "connect", url: serverUrl() });
-      }).catch((error) => setConnection("offline", `Tor: ${error.message ?? error}`));
-    } else {
-      submit({ type: "connect", url: serverUrl() });
-    }
+    void connectSelectedRoute();
   },
 
   connected(event) {
@@ -2349,8 +2350,7 @@ const handlers = {
       preferences.transport = "onion";
       savePreferences();
       applyPreferences();
-      ensureOnionize().then(() => submit({ type: "connect", url: SERVER_URLS.onion }))
-        .catch(error => toast(`Профиль сохранён. Tor не готов: ${error.message ?? error}`));
+      void connectSelectedRoute({ disconnect: true });
       toast("Профиль сохранён. Серверные ограничения обновятся при подключении через Onion.");
     }
     if (ownEcho) {
@@ -2624,12 +2624,9 @@ function loadPreferences() {
       saved.onionDefaultVersion = 1;
       localStorage.setItem("valanium.preferences", JSON.stringify(saved));
     }
-    if (saved.transport === "multihop") {
-      saved.transport = "basic";
-      delete saved.multihopNode;
-      localStorage.setItem("valanium.preferences", JSON.stringify(saved));
-      localStorage.setItem(ROUTE_MIGRATION_NOTICE, "1");
-    }
+    if (!["auto", "onion"].includes(saved.transport)) saved.transport = "onion";
+    delete saved.multihopNode;
+    localStorage.setItem("valanium.preferences", JSON.stringify(saved));
     // До этой версии белый был не выбором пользователя, а значением по
     // умолчанию. Однократно переводим такие установки на новый фиолетовый
     // акцент; после этого любой цвет, включая белый, сохраняется буквально.
@@ -2708,7 +2705,7 @@ function applyPreferences() {
   // Выбор второго узла имеет смысл только в Multi-hop: в остальных режимах
   // второго узла нет вовсе, и показывать переключатель значило бы обещать
   // настройку, которая ни на что не влияет.
-  $("hop-picker")?.classList.toggle("hidden", preferences.transport !== "multihop");
+  renderEntryConnection();
 
   for (const button of document.querySelectorAll("#theme-segment [data-theme]")) {
     button.classList.toggle("active", button.dataset.theme === preferences.theme);
@@ -2718,7 +2715,6 @@ function applyPreferences() {
   }
   for (const [selector, attribute, current] of [
     ["#transport-segment [data-transport]", "transport", preferences.transport],
-    ["#hop-segment [data-hop]", "hop", preferences.multihopNode ?? "auto"],
     ["#divider-segment [data-dividers]", "dividers", preferences.dividers],
     ["#wallpaper-grid [data-wallpaper]", "wallpaper", preferences.wallpaper],
     ["#font-segment [data-font]", "font", preferences.uiFont],
@@ -3467,26 +3463,46 @@ for (const button of document.querySelectorAll("#settings-nav button[data-sectio
 }
 
 for (const button of document.querySelectorAll("#transport-segment [data-transport]")) {
-  button.addEventListener("click", async () => {
+  button.addEventListener("click", () => {
     const mode = button.dataset.transport;
     if (!SERVER_URLS[mode] || mode === preferences.transport) return;
     preferences.transport = mode;
-    savePreferences();
-    applyPreferences();
-    submit({ type: "disconnect" });
-    if (mode === "onion") {
-      try {
-        await ensureOnionize();
-        if (preferences.transport === "onion") submit({ type: "connect", url: serverUrl() });
-      } catch (error) {
-        toast(`Tor не запустился: ${error.message ?? error}`);
-      }
-    } else {
-      window.setTimeout(() => submit({ type: "connect", url: serverUrl() }), 250);
-    }
-    toast(mode === "onion" ? "Подключаемся через Tor…"
-      : mode === "auto" ? "Выбираем доступный маршрут…" : "Меняем маршрут…");
+    savePreferences(); applyPreferences();
+    void connectSelectedRoute({ disconnect: true });
   });
+}
+$("network-retry").addEventListener("click", () => { void connectSelectedRoute({ disconnect: true }); });
+
+function renderEntryConnection() {
+  const tor = preferences.transport === "onion";
+  $("entry-connection").querySelector("b").textContent = tor ? "Tor" : "Auto";
+  const install = $("entry-install-tor");
+  install.classList.toggle("hidden", !tor || install.dataset.installed === "true");
+}
+
+async function connectSelectedRoute({ disconnect = false } = {}) {
+  const generation = ++connectionGeneration;
+  const mode = preferences.transport;
+  const url = SERVER_URLS[mode] || SERVER_URLS.onion;
+  if (disconnect) await submit({ type: "disconnect" });
+  if (!state.device || generation !== connectionGeneration) return;
+  setConnection("connecting", mode === "onion" ? "Подготавливаем Tor…" : "Подключаемся через Auto…");
+  if (mode === "onion") {
+    try { await ensureOnionize(); }
+    catch (error) {
+      if (generation === connectionGeneration) setConnection("offline", String(error.message ?? error));
+      return;
+    }
+  } else {
+    // Auto connects immediately. Prepare its Tor fallback without blocking Relay
+    // or initiating an executable download.
+    void invoke("onionize_status").then(tor => {
+      if (tor?.installed && generation === connectionGeneration && preferences.transport === "auto")
+        return ensureOnionize();
+    }).catch(() => {});
+  }
+  if (generation === connectionGeneration && preferences.transport === mode)
+    await submit({ type: "connect", url });
 }
 
 /*
@@ -3508,6 +3524,9 @@ $("entry-install-tor")?.addEventListener("click", () => {
     try {
       await invoke("onionize_install");
       button.textContent = "Tor установлен — можно регистрироваться";
+      button.dataset.installed = "true";
+      renderEntryConnection();
+      void prewarmOnionize();
     } catch (error) {
       $("entry-error").textContent = String(error.message ?? error);
       button.textContent = "Повторить установку Tor (HTTPS)";
@@ -3522,7 +3541,13 @@ async function refreshOnionize() {
   // Именно объект: сборка без этой команды ответит чем угодно, и трогать поля
   // у не-объекта значит показать карточку в выдуманном состоянии.
   if (!state || typeof state !== "object") return;
+  const stoppedUnexpectedly = card.dataset.running === "true" && !state.running;
+  card.dataset.running = String(state.running);
+  if (stoppedUnexpectedly && preferences.transport === "onion")
+    void connectSelectedRoute({ disconnect: true });
 
+  $("entry-install-tor").dataset.installed = String(state.installed);
+  renderEntryConnection();
   const note = $("onionize-note");
   const hint = $("onionize-hint");
   let circuitView = $("onionize-circuit");
@@ -3541,13 +3566,13 @@ async function refreshOnionize() {
     circuitView.textContent = "IP появятся после onion-соединения. Для просмотра цепочки нужен Onionize 0.1.1 или новее.";
   }
   $("onionize-install").classList.toggle("hidden", state.installed);
-  $("onionize-start").classList.toggle("hidden", !state.installed || state.running || onionizeWarming);
+  $("onionize-start").classList.toggle("hidden", !state.installed || state.running || onionizeWarming || Boolean(onionizeStartup));
   $("onionize-stop").classList.toggle("hidden", !state.running);
 
   if (onionizeError) {
     note.textContent = "Не удалось подготовить Tor";
     hint.textContent = onionizeError;
-  } else if (onionizeWarming) {
+  } else if (onionizeWarming || onionizeStartup) {
     note.textContent = "Строим цепь Tor заранее, чтобы Onion не заставлял ждать.";
     hint.textContent = "Первый раз это занимает около минуты. Приложением можно пользоваться.";
   } else if (state.running) {
@@ -3624,7 +3649,11 @@ $("onionize-install")?.addEventListener("click", async () => {
     refreshOnionize();
     // Поставили при выбранном Onion — греем сразу, не дожидаясь, пока человек
     // упрётся в минуту ожидания.
-    if (!onionizeError) prewarmOnionize();
+    if (!onionizeError) {
+      await prewarmOnionize();
+      if (state.device && preferences.transport === "onion")
+        await connectSelectedRoute({ disconnect: true });
+    }
   }
 });
 
@@ -3637,7 +3666,8 @@ $("onionize-start")?.addEventListener("click", async () => {
   onionizeError = "";
   try {
     const socks = await invoke("onionize_start");
-    toast(`Tor готов: ${socks}`);
+    toast("Tor готов");
+    if (state.device) void connectSelectedRoute({ disconnect: true });
   } catch (error) {
     onionizeError = String(error.message ?? error);
     toast(`Tor не запустился: ${error}`);
@@ -3649,6 +3679,12 @@ $("onionize-start")?.addEventListener("click", async () => {
 });
 
 $("onionize-stop")?.addEventListener("click", async () => {
+  $("onionize-card").dataset.running = "false";
+  if (preferences.transport === "onion") {
+    ++connectionGeneration;
+    await submit({ type: "disconnect" });
+    setConnection("offline", "Tor остановлен");
+  }
   await invoke("onionize_stop").catch((error) => toast(`Tor: ${error}`));
   refreshOnionize();
 });
@@ -3657,22 +3693,8 @@ refreshOnionize();
 prewarmOnionize();
 setInterval(() => {
   const card = $("onionize-card");
-  if (card && card.getClientRects().length && !document.hidden) refreshOnionize();
+  if (!document.hidden && card && (card.getClientRects().length || (preferences.transport === "onion" && state.device))) refreshOnionize();
 }, 3000);
-
-for (const button of document.querySelectorAll("#hop-segment [data-hop]")) {
-  button.addEventListener("click", () => {
-    const choice = button.dataset.hop === "auto" ? null : button.dataset.hop;
-    if (choice === (preferences.multihopNode ?? null)) return;
-    preferences.multihopNode = choice;
-    savePreferences();
-    applyPreferences();
-    if (preferences.transport !== "multihop") return;
-    submit({ type: "disconnect" });
-    window.setTimeout(() => submit({ type: "connect", url: serverUrl() }), 250);
-    toast(choice ? `Второй узел: ${choice}` : "Второй узел выбирается сам");
-  });
-}
 
 function openSettingsSection(name) {
   for (const button of document.querySelectorAll("#settings-nav button[data-section]")) {
@@ -4388,7 +4410,7 @@ function compareVersions(left, right) {
   замок, и всё остальное разом.
 */
 async function checkForUpdates(showFailure = false) {
-  if (preferences.transport === "onion" || (!state.device && $("entry-tor-only")?.checked)) {
+  if (preferences.transport === "onion") {
     if (showFailure) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
     return;
   }
@@ -5617,7 +5639,7 @@ function showRouteMigrationNotice() {
   const modal = document.createElement("div");
   modal.className = "modal";
   modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2>Маршрут изменён</h2></div>
-    <p class="modal-copy">Multi-hop временно выключен. Подключение переключено на Relay через hop1 или hop3. Cloudflare и входной relay видят ваш сетевой адрес; main получает только жетон. Для соединения без Cloudflare выберите Onion.</p>
+    <p class="modal-copy">Подключение переведено на Tor. Доступны только Tor и Auto; изменить выбор можно в настройках подключения.</p>
     <div class="setting-actions peer-actions"><button class="ghost-button" type="button">Понятно</button></div></div>`;
   modal.querySelector("button").addEventListener("click", () => modal.remove());
   document.body.appendChild(modal);

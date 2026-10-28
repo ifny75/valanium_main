@@ -12,11 +12,11 @@ function listener(id, event) {
 }
 function registration(torReady) {
   const commands = [];
-  const nodes = Object.fromEntries(['form-entry', 'entry-submit', 'entry-error', 'entry-tor-only'].map(id => [id, { checked: true }]));
+  const nodes = Object.fromEntries(['form-entry', 'entry-submit', 'entry-error'].map(id => [id, {}]));
   nodes['form-entry'].addEventListener = (_, handler) => { nodes.submit = handler; };
   const context = vm.createContext({
     $: id => { assert.ok(nodes[id], `Unexpected credential field: ${id}`); return nodes[id]; },
-    state: {}, preferences: {}, savePreferences() {},
+    state: {}, preferences: { transport: 'onion' }, savePreferences() {},
     serverUrl: () => 'valanium://auto',
     ensureOnionize: async () => { if (!torReady) throw Error('Tor unavailable'); },
     submit: async command => { commands.push(command); return true; },

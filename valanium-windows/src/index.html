@@ -140,7 +140,7 @@
               <p data-intro-part="1">Messages are encrypted on your device. Relay and Tor keep the main server out of sight.</p>
               <p data-intro-part="2">Privacy by design. Open source. No phone number required.</p>
             </div>
-            <div class="intro-links"><a href="https://github.com/ifny75/valanium" target="_blank" rel="noreferrer noopener">Github</a><i>/</i><a href="https://valanium.com" target="_blank" rel="noreferrer noopener">Website</a><i>/</i><span>onion website</span></div>
+            <div class="intro-links"><a href="https://github.com/ifny75/valanium_main" target="_blank" rel="noreferrer noopener">Github</a><i>/</i><a href="https://valanium.com" target="_blank" rel="noreferrer noopener">Website</a><i>/</i><span>onion website</span></div>
           </div>
           <div class="phone-stage" aria-label="Valanium on a phone">
             <img class="phone-mokker" src="assets/onboarding/mokker.png" alt="Интерфейс Valanium на смартфоне" />
@@ -158,9 +158,9 @@
         <h1 id="route-title">Valanium server</h1>
         <p id="route-text">Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.</p>
         <div class="route-list">
-          <button class="route-option" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Relay (automatic)</b><small id="route-relay-text">Быстрое прямое соединение</small></span><u>✓</u></button>
-          <button class="route-option hidden" type="button" data-transport="multihop" hidden disabled><img src="assets/onboarding/route-multihop.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Multihop</b><small id="route-multi-text">Multi-hop временно выключен</small></span><u>✓</u></button>
-          <button class="route-option active" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span><u>✓</u></button>
+          <button class="route-option" type="button" data-transport="auto"><img src="assets/onboarding/route-relay.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b id="route-relay-title">Auto</b><small id="route-relay-text">Автоматический выбор доступного соединения</small></span></button>
+
+          <button class="route-option active" type="button" data-transport="onion"><img src="assets/onboarding/route-tor.png" alt="" /><i class="route-flow"><b></b><b></b><b></b></i><span><b>Tor</b><small id="route-tor-text">Максимальная сетевая приватность</small></span></button>
         </div>
       </div>
       <div class="onboarding-art" aria-hidden="true"><canvas id="route-shader" class="onboarding-shader"></canvas><img src="assets/svg/spy.svg" alt="" /></div>
@@ -173,11 +173,12 @@
         <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
         <h1 id="entry-title">Начните с Valanium</h1>
         <p id="entry-lead">Аккаунт без логина и пароля. Для восстановления сохраните сид-фразу из 24 слов.</p>
+        <button id="entry-connection" class="entry-connection" type="button"><span>Подключение</span><b>Tor</b><i>Изменить →</i></button>
         <form id="form-entry" class="onboarding-form" autocomplete="off">
 
-          <label class="registration-privacy"><input id="entry-tor-only" type="checkbox" checked /> Только Tor — без перехода на Relay</label>
-          <p class="registration-privacy-note">Tor скрывает сетевой адрес от сервера, но не гарантирует абсолютную анонимность. Не передавайте сид-фразу: она даёт доступ к аккаунту.</p>
-          <button class="ghost-button" type="button" id="entry-install-tor">Установить Tor (загрузка по HTTPS)</button>
+
+
+          <button class="ghost-button" type="button" id="entry-install-tor">Подготовить Tor</button>
           <button class="onboarding-submit" type="submit" id="entry-submit">Зарегистрироваться</button>
         </form>
         <div class="entry-actions"><button id="open-recover" type="button">Восстановить по 24 словам</button></div>
@@ -475,101 +476,19 @@
 
           <section class="settings-section hidden" data-section="transport">
             <h1>Подключение</h1>
-            <p class="settings-sub">Клиент никогда не обращается к main напрямую. Нажмите на схему, чтобы сменить маршрут текущего соединения.</p>
-            <p class="warning-strip">До main ваш адрес не доходит: входной relay заменяет его жетоном, из которого IP не восстановить. На Relay сетевой адрес видят Cloudflare и входной узел — hop1 или hop3. Onion скрывает его от инфраструктуры Valanium, но входной узел Tor видит адрес подключения к сети Tor.</p>
-            <div class="routing-options" id="transport-segment" role="radiogroup" aria-label="Маршрут Valanium">
-              <button class="routing-option" data-transport="auto" type="button" role="radio" aria-checked="false">
-                <span class="routing-head"><span><b>Auto</b><small>Relay через рабочий узел, при сбое — Onion</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Сначала подключается через Relay на hop1 или hop3. Если маршрут недоступен, пробует их Tor-входы.</span></span><i class="routing-radio"></i></span>
-                <span class="routing-diagram">
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M22 15.18V8a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5v7.18A3 3 0 0 0 3 21h18a3 3 0 0 0 1-5.82ZM7 5h10a3 3 0 0 1 3 3v7h-4.15a2 2 0 0 0-1.53.71l-.25.29H9.93l-.25-.29A2 2 0 0 0 8.15 15H4V8a3 3 0 0 1 3-3Zm14 14H3a1 1 0 0 1 0-2h5.15l.25.29a2 2 0 0 0 1.53.71h4.14a2 2 0 0 0 1.53-.71l.25-.29H21a1 1 0 0 1 0 2Z"/></svg><small>Устройство</small></span>
-                  <span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M24 11.5A4.48 4.48 0 0 0 22.29 8 4.48 4.48 0 0 0 19.5 0h-15a4.48 4.48 0 0 0-2.79 8 4.44 4.44 0 0 0 0 7 4.48 4.48 0 0 0 2.79 8h15a4.48 4.48 0 0 0 2.79-8A4.48 4.48 0 0 0 24 11.5ZM4.5 2H5v1a1 1 0 0 0 2 0V2h2v1a1 1 0 0 0 2 0V2h8.5a2.5 2.5 0 0 1 0 5h-15a2.5 2.5 0 0 1 0-5ZM22 18.5a2.5 2.5 0 0 1-2.5 2.5h-15a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0v-1h2v1a1 1 0 0 0 2 0v-1h8.5a2.5 2.5 0 0 1 2.5 2.5ZM4.5 14a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0V9h2v1a1 1 0 0 0 2 0V9h8.5a2.5 2.5 0 0 1 0 5Z"/></svg><small>Лучший путь</small><em>AUTO</em></span>
-                  <span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M19 1H5a5 5 0 0 0-5 5v12a5 5 0 0 0 5 5h14a5 5 0 0 0 5-5V6a5 5 0 0 0-5-5ZM5 3h14a3 3 0 0 1 2.78 1.89l-7.66 7.66a3 3 0 0 1-4.24 0L2.22 4.89A3 3 0 0 1 5 3Zm14 18H5a3 3 0 0 1-3-3V7.5l6.46 6.46a5 5 0 0 0 7.08 0L22 7.5V18a3 3 0 0 1-3 3Z"/></svg><small>Main</small></span>
-                </span>
-              </button>
-
-              <button class="routing-option" data-transport="basic" type="button" role="radio" aria-checked="false">
-                <span class="routing-head"><span><b>Relay</b><small>Быстро · один промежуточный узел</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Cloudflare → наш узел → main. Самый быстрый путь. Узел меняет ваш адрес на жетон, поэтому main его не знает; сам узел видит адрес доли секунды и никуда не пишет. Cloudflare адрес видит.</span></span><i class="routing-radio"></i></span>
-                <span class="routing-diagram">
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M22 15.18V8a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5v7.18A3 3 0 0 0 3 21h18a3 3 0 0 0 1-5.82ZM7 5h10a3 3 0 0 1 3 3v7h-4.15a2 2 0 0 0-1.53.71l-.25.29H9.93l-.25-.29A2 2 0 0 0 8.15 15H4V8a3 3 0 0 1 3-3Zm14 14H3a1 1 0 0 1 0-2h5.15l.25.29a2 2 0 0 0 1.53.71h4.14a2 2 0 0 0 1.53-.71l.25-.29H21a1 1 0 0 1 0 2Z"/></svg><small>Устройство</small></span>
-                  <span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M24 11.5A4.48 4.48 0 0 0 22.29 8 4.48 4.48 0 0 0 19.5 0h-15a4.48 4.48 0 0 0-2.79 8 4.44 4.44 0 0 0 0 7 4.48 4.48 0 0 0 2.79 8h15a4.48 4.48 0 0 0 2.79-8A4.48 4.48 0 0 0 24 11.5ZM4.5 2H5v1a1 1 0 0 0 2 0V2h2v1a1 1 0 0 0 2 0V2h8.5a2.5 2.5 0 0 1 0 5h-15a2.5 2.5 0 0 1 0-5ZM22 18.5a2.5 2.5 0 0 1-2.5 2.5h-15a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0v-1h2v1a1 1 0 0 0 2 0v-1h8.5a2.5 2.5 0 0 1 2.5 2.5ZM4.5 14a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0V9h2v1a1 1 0 0 0 2 0V9h8.5a2.5 2.5 0 0 1 0 5Z"/></svg><small>NL / DE</small></span>
-                  <span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M19 1H5a5 5 0 0 0-5 5v12a5 5 0 0 0 5 5h14a5 5 0 0 0 5-5V6a5 5 0 0 0-5-5ZM5 3h14a3 3 0 0 1 2.78 1.89l-7.66 7.66a3 3 0 0 1-4.24 0L2.22 4.89A3 3 0 0 1 5 3Zm14 18H5a3 3 0 0 1-3-3V7.5l6.46 6.46a5 5 0 0 0 7.08 0L22 7.5V18a3 3 0 0 1-3 3Z"/></svg><small>Main</small></span>
-                </span>
-              </button>
-
-              <button class="routing-option hidden" data-transport="multihop" type="button" role="radio" aria-checked="false" hidden disabled>
-                <span class="routing-head"><span><b>Multi-hop</b><small>Два узла · адрес знает только первый</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Cloudflare → первый узел → второй узел → main. Адрес видит только первый узел и только мгновение: второму уезжает уже жетон. Захвативший второй узел не получит ни адреса, ни содержимого. Плата — лишний переход, то есть чуть медленнее.</span></span><i class="routing-radio"></i></span>
-                <span class="routing-diagram route-four">
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M22 15.18V8a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5v7.18A3 3 0 0 0 3 21h18a3 3 0 0 0 1-5.82ZM7 5h10a3 3 0 0 1 3 3v7h-4.15a2 2 0 0 0-1.53.71l-.25.29H9.93l-.25-.29A2 2 0 0 0 8.15 15H4V8a3 3 0 0 1 3-3Zm14 14H3a1 1 0 0 1 0-2h5.15l.25.29a2 2 0 0 0 1.53.71h4.14a2 2 0 0 0 1.53-.71l.25-.29H21a1 1 0 0 1 0 2Z"/></svg><small>Устройство</small></span><span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M24 11.5A4.48 4.48 0 0 0 22.29 8 4.48 4.48 0 0 0 19.5 0h-15a4.48 4.48 0 0 0-2.79 8 4.44 4.44 0 0 0 0 7 4.48 4.48 0 0 0 2.79 8h15a4.48 4.48 0 0 0 2.79-8A4.48 4.48 0 0 0 24 11.5ZM4.5 2H5v1a1 1 0 0 0 2 0V2h2v1a1 1 0 0 0 2 0V2h8.5a2.5 2.5 0 0 1 0 5h-15a2.5 2.5 0 0 1 0-5ZM22 18.5a2.5 2.5 0 0 1-2.5 2.5h-15a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0v-1h2v1a1 1 0 0 0 2 0v-1h8.5a2.5 2.5 0 0 1 2.5 2.5ZM4.5 14a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0V9h2v1a1 1 0 0 0 2 0V9h8.5a2.5 2.5 0 0 1 0 5Z"/></svg><small>NL <img class="route-flag" src="assets/route-flag-nl.svg" alt="" /></small></span><span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M24 11.5A4.48 4.48 0 0 0 22.29 8 4.48 4.48 0 0 0 19.5 0h-15a4.48 4.48 0 0 0-2.79 8 4.44 4.44 0 0 0 0 7 4.48 4.48 0 0 0 2.79 8h15a4.48 4.48 0 0 0 2.79-8A4.48 4.48 0 0 0 24 11.5ZM4.5 2H5v1a1 1 0 0 0 2 0V2h2v1a1 1 0 0 0 2 0V2h8.5a2.5 2.5 0 0 1 0 5h-15a2.5 2.5 0 0 1 0-5ZM22 18.5a2.5 2.5 0 0 1-2.5 2.5h-15a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0v-1h2v1a1 1 0 0 0 2 0v-1h8.5a2.5 2.5 0 0 1 2.5 2.5ZM4.5 14a2.5 2.5 0 0 1 0-5H5v1a1 1 0 0 0 2 0V9h2v1a1 1 0 0 0 2 0V9h8.5a2.5 2.5 0 0 1 0 5Z"/></svg><small>DE <img class="route-flag" src="assets/route-flag-de.svg" alt="" /></small></span><span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M19 1H5a5 5 0 0 0-5 5v12a5 5 0 0 0 5 5h14a5 5 0 0 0 5-5V6a5 5 0 0 0-5-5ZM5 3h14a3 3 0 0 1 2.78 1.89l-7.66 7.66a3 3 0 0 1-4.24 0L2.22 4.89A3 3 0 0 1 5 3Zm14 18H5a3 3 0 0 1-3-3V7.5l6.46 6.46a5 5 0 0 0 7.08 0L22 7.5V18a3 3 0 0 1-3 3Z"/></svg><small>Main</small></span>
-                </span>
-              </button>
-
-              <button class="routing-option" data-transport="onion" type="button" role="radio" aria-checked="false">
-                <span class="routing-head"><span><b>Onion</b><small>Единственный режим без Cloudflare</small></span><span class="route-help"><span class="route-info" aria-hidden="true">!</span><span class="route-tip" role="tooltip">Через сеть Tor, мимо Cloudflare. Единственный маршрут, где адреса не знает вообще никто. Нужен запущенный Tor или Orbot, и он заметно медленнее остальных.</span></span><i class="routing-radio"></i></span>
-                <span class="routing-diagram route-four">
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M22 15.18V8a5 5 0 0 0-5-5H7a5 5 0 0 0-5 5v7.18A3 3 0 0 0 3 21h18a3 3 0 0 0 1-5.82ZM7 5h10a3 3 0 0 1 3 3v7h-4.15a2 2 0 0 0-1.53.71l-.25.29H9.93l-.25-.29A2 2 0 0 0 8.15 15H4V8a3 3 0 0 1 3-3Zm14 14H3a1 1 0 0 1 0-2h5.15l.25.29a2 2 0 0 0 1.53.71h4.14a2 2 0 0 0 1.53-.71l.25-.29H21a1 1 0 0 1 0 2Z"/></svg><small>Устройство</small></span><span class="route-link"></span>
-                  <span class="route-node"><svg class="tor-icon" viewBox="0 0 192 192"><path d="M96 170a74 74 0 1 0 0-148 74 74 0 0 0 0 148Z"/><path d="M96 46a50 50 0 1 1 0 100M96 70a26 26 0 1 1 0 52"/></svg><small>Tor</small></span><span class="route-link"></span>
-                  <span class="route-node"><svg class="tor-icon" viewBox="0 0 192 192"><path d="M96 170a74 74 0 1 0 0-148 74 74 0 0 0 0 148Z"/><path d="M96 46a50 50 0 1 1 0 100M96 70a26 26 0 1 1 0 52"/></svg><small>Onion</small></span><span class="route-link"></span>
-                  <span class="route-node"><svg viewBox="0 0 24 24"><path d="M19 1H5a5 5 0 0 0-5 5v12a5 5 0 0 0 5 5h14a5 5 0 0 0 5-5V6a5 5 0 0 0-5-5ZM5 3h14a3 3 0 0 1 2.78 1.89l-7.66 7.66a3 3 0 0 1-4.24 0L2.22 4.89A3 3 0 0 1 5 3Zm14 18H5a3 3 0 0 1-3-3V7.5l6.46 6.46a5 5 0 0 0 7.08 0L22 7.5V18a3 3 0 0 1-3 3Z"/></svg><small>Main</small></span>
-                </span>
-              </button>
+            <p class="settings-sub">Tor выбран по умолчанию. Auto доступен по вашему выбору.</p>
+            <div class="pc-route-options" id="transport-segment" role="radiogroup" aria-label="Подключение">
+              <button class="pc-route-choice" data-transport="onion" type="button" role="radio" aria-checked="true"><b>Tor <span>По умолчанию</span></b><small>Только через сеть Tor, без перехода на прямое соединение.</small></button>
+              <button class="pc-route-choice" data-transport="auto" type="button" role="radio" aria-checked="false"><b>Auto</b><small>Автоматический выбор рабочего маршрута. Может использовать Relay.</small></button>
             </div>
-
-            <div class="settings-card relay-locations" aria-label="Доступные узлы Valanium">
-              <div class="setting-block">
-                <b>Доступные узлы</b>
-                <small>Доступны два relay: hop1 и hop3. Каждый передаёт трафик на main через WireGuard.</small>
-                <div class="relay-location-list">
-                  <span><b>hop1</b><small>Relay мессенджера</small></span>
-                  <span><b>hop3</b><small>Relay мессенджера</small></span>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-card hop-picker hidden" id="hop-picker">
-              <div class="setting-block">
-                <b>Второй узел Multi-hop</b>
-                <small>Какой узел говорит с main. Первый выбирает Cloudflare — он ближайший, и заменить его нечем. Имена те же, что на странице состояния сети.</small>
-                <div class="setting-segment hop-segment" id="hop-segment" role="radiogroup" aria-label="Второй узел">
-                  <button data-hop="auto" type="button" role="radio" aria-checked="false">Авто</button>
-                  <button data-hop="alpha" type="button" role="radio" aria-checked="false">Alpha <img class="hop-flag" src="assets/route-flag-se.svg" alt="Швеция" /></button>
-                  <button data-hop="beta" type="button" role="radio" aria-checked="false">Beta <img class="hop-flag" src="assets/route-flag-fi.svg" alt="Финляндия" /></button>
-                  <button data-hop="gamma" type="button" role="radio" aria-checked="false">Gamma <img class="hop-flag" src="assets/route-flag-de.svg" alt="Германия" /></button>
-                </div>
-                <p class="hop-note">Выбранный узел постоянен, а «Авто» меняет его сам. Постоянный путь заметнее: первый узел видит, что вы всегда уходите через один и тот же второй. Это выбор в пользу предсказуемости, а не анонимности.</p>
-              </div>
-            </div>
-
-            <!--
-              Встроенный Tor. Скачивается отдельным файлом и проверяется дважды:
-              подпись манифеста тем же офлайновым ключом, что и у обновлений, и
-              хеш самого файла. Первая говорит, какой файл правильный, вторая —
-              что приехал именно он.
-            -->
+            <div class="pc-connection-state"><p id="connection-route-state" role="status">Подключение подготавливается</p><button id="network-retry" class="ghost-button" type="button">Переподключить</button></div>
             <div class="settings-card routing-note" id="onionize-card">
               <div class="setting-block">
-                <b>Tor внутри приложения</b>
-                <small id="onionize-note">Чтобы Onion работал без Tor Browser и Orbot, нужен небольшой отдельный файл. Он подписан тем же ключом, что и обновления, и проверяется до запуска.</small>
-                <div class="setting-actions">
-                  <button id="onionize-install" class="ghost-button" type="button">Установить</button>
-                  <button id="onionize-start" class="ghost-button hidden" type="button">Включить</button>
-                  <button id="onionize-stop" class="ghost-button hidden" type="button">Выключить</button>
-                </div>
-                <p class="hop-note" id="onionize-hint">Первый запуск строит цепь Tor примерно минуту — это нормально и происходит один раз. Дальше около десяти секунд.</p>
+                <b>Встроенный Tor</b><small id="onionize-note">Проверяем состояние Tor…</small>
+                <div class="setting-actions"><button id="onionize-install" class="ghost-button" type="button">Установить Tor</button><button id="onionize-start" class="ghost-button hidden" type="button">Запустить</button><button id="onionize-stop" class="ghost-button hidden" type="button">Остановить</button></div>
+                <p class="hop-note" id="onionize-hint"></p>
               </div>
-            </div>
-
-            <div class="settings-card routing-note">
-              <div class="setting-block">
-                <b>Свой Tor тоже подходит</b>
-                <small>Если встроенный не нужен или нужны мосты, запустите Tor Browser либо Tor с SOCKS5 на 127.0.0.1:9050 — Onion будет ходить через него. DNS-запрос .onion передаётся внутрь Tor и системному резолверу не достаётся.</small>
-              </div>
+              <details class="pc-network-details"><summary>Технические подробности</summary><pre id="onionize-circuit" class="tor-circuit"></pre></details>
             </div>
           </section>
 

@@ -44,7 +44,9 @@ function preferences(saved) {
 test('new and previous default installations use onion; explicit choices survive migration', () => {
   assert.equal(preferences({}).transport, 'onion');
   assert.equal(preferences({ transport: 'auto' }).transport, 'onion');
-  assert.equal(preferences({ transport: 'basic' }).transport, 'basic');
+  assert.equal(preferences({ transport: 'basic' }).transport, 'onion');
+  assert.equal(preferences({ transport: 'multihop' }).transport, 'onion');
+  assert.equal(preferences({ transport: 'invalid' }).transport, 'onion');
   assert.equal(preferences({ transport: 'auto', onionDefaultVersion: 1 }).transport, 'auto');
 });
 test('starting Tor without a local installation cannot initiate a clearnet download', async () => {
@@ -74,7 +76,7 @@ test('only the dedicated preset acknowledgement activates onion and reconnects',
     preferences: { transport: 'basic' }, ownEcho: false, exceptionsFor: null,
     $: () => button, savePreferences() {}, applyPreferences() {}, toast() {},
     renderPrivacy() {}, updatePrivacyCounts() {}, renderExceptions() {},
-    ensureOnionize: async () => { calls.push('tor'); },
+    connectSelectedRoute: async options => { calls.push(options); },
     submit: event => calls.push(event), SERVER_URLS: { onion: 'valanium://onion' },
   });
   vm.runInContext(method, context);
@@ -86,6 +88,5 @@ test('only the dedicated preset acknowledgement activates onion and reconnects',
   assert.equal(vm.runInContext('maximumPrivacyPending', context), false);
   assert.equal(vm.runInContext('preferences.transport', context), 'onion');
   assert.equal(button.disabled, false);
-  assert.equal(calls[0], 'tor');
-  assert.equal(calls[1].url, 'valanium://onion');
+  assert.equal(calls[0].disconnect, true);
 });

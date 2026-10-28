@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 const source = readFileSync(new URL("../src/main.js", import.meta.url), "utf8")
   .replace(/\r\n/g, "\n");
 const from = source.indexOf('let onionizeError = ""');
-const to = source.indexOf('for (const button of document.querySelectorAll("#hop-segment');
+const to = source.indexOf('function openSettingsSection(name)');
 assert.ok(from > 0 && to > from, "не нашёл блок onionize в main.js");
 const block = source.slice(from, to);
 
@@ -24,6 +24,7 @@ const block = source.slice(from, to);
 function run({ transport, installed, running }) {
   const calls = [];
   const element = () => ({
+    dataset: {},
     classList: { toggle() {} },
     addEventListener() {},
     textContent: "",
@@ -32,6 +33,7 @@ function run({ transport, installed, running }) {
     getClientRects: () => [],
   });
   const context = {
+    renderEntryConnection() {},
     preferences: { transport },
     $: () => element(),
     toast: () => {},
