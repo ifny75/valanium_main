@@ -16,7 +16,8 @@ const SELECTORS = [
 
 export function RevealObserver() {
   useEffect(() => {
-    const elements = Array.from(document.querySelectorAll<HTMLElement>(SELECTORS));
+    const elements = Array.from(document.querySelectorAll<HTMLElement>(SELECTORS))
+      .filter(element => !element.classList.contains('animated-heading'));
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       elements.forEach((element) => element.classList.add('reveal-visible'));
       return;

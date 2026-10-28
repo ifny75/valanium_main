@@ -2,7 +2,7 @@
 import { DynamicHeader, type HeaderPage } from './dynamic-header';
 import { SupportDialog } from './support-dialog';
 import type { Service } from '../services';
-import type { ReactNode } from 'react';
+import { AnimatedHeading, ButtonArrow, type HeadingLine } from './animated-heading';
 import { ServiceIcon, type ServiceIconName } from './service-icons';
 
 /**
@@ -35,7 +35,7 @@ export function ServicePage({
   sections,
   note,
   shot,
-  heroTitle,
+  titleLines,
   sourceUrl,
   closingTitle = 'Пока в разработке.',
   closingBody = 'Работающий сегодня — мессенджер: клиенты, публичный статус узлов и открытый код.',
@@ -47,7 +47,7 @@ export function ServicePage({
   note: string;
   /** Снимок приложения, если он есть. Иначе показываем знак сервиса. */
   shot?: string;
-  heroTitle?: ReactNode;
+  titleLines?: HeadingLine[];
   sourceUrl?: string;
   closingTitle?: string;
   closingBody?: string;
@@ -58,7 +58,7 @@ export function ServicePage({
 
       <section className={`hero shell${page === 'vpn' ? ' vpn-hero' : ''}`}>
         <div className="hero-copy">
-          <h1>{heroTitle ?? service.tagline}</h1>
+          <AnimatedHeading lines={titleLines ?? [{ text: service.tagline }]} />
           <p>{lead}</p>
 
           {/*
@@ -70,8 +70,9 @@ export function ServicePage({
             {note}
           </div>
           {sourceUrl && <div className="actions" style={{ marginTop: 16, marginBottom: 12 }}>
-            <a className="download-button" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+            <a className="download-button reference-button reference-button-primary" href={sourceUrl} target="_blank" rel="noopener noreferrer">
               <span><small>Открытый код</small><b>GitHub</b></span>
+              <ButtonArrow />
             </a>
           </div>}
           <small>Открытый код · AGPL-3.0 · собственные узлы</small>

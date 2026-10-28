@@ -43,7 +43,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
     let frame = 0;
 
     const update = () => {
-      setCompact(window.scrollY > 42);
+      setCompact(previous => window.scrollY > 88 ? true : window.scrollY < 40 ? false : previous);
       frame = 0;
     };
 

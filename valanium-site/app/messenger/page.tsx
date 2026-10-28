@@ -7,6 +7,7 @@ import { RouteSelector } from '../components/route-selector';
 import { SupportDialog } from '../components/support-dialog';
 import { RELEASES } from '../releases';
 import { OnionButton } from '../components/onion-button';
+import { AnimatedHeading, ButtonArrow } from '../components/animated-heading';
 
 /*
   SEO мессенджера живёт здесь, а не в общем layout.
@@ -65,12 +66,13 @@ const APP_SCHEMA = {
 
 function DownloadButtons({ centered = false }: { centered?: boolean }) {
   return (
-    <div className={`actions${centered ? ' actions-centered' : ''}`}>
-      <a className="download-button download-button-light" href={RELEASES.windows.file}>
+    <div className={`actions reference-actions${centered ? ' actions-centered' : ''}`}>
+      <a className="download-button reference-button reference-button-primary" href={RELEASES.windows.file}>
         <img className="platform-svg" src="/icons/microsoft-windows.svg" alt="" />
         <span><small>Скачать для</small><b>Windows {RELEASES.windows.version}</b></span>
+        <ButtonArrow />
       </a>
-      <a className="download-button" href={RELEASES.android.file}>
+      <a className="download-button reference-button" href={RELEASES.android.file}>
         <img className="platform-svg" src="/icons/android.svg" alt="" />
         <span><small>Скачать для</small><b>Android {RELEASES.android.version}</b></span>
       </a>
@@ -99,7 +101,7 @@ export default function Home() {
 
       <section className="hero shell">
         <div className="hero-copy">
-          <h1>Переписка остаётся <span>на ваших устройствах</span></h1>
+          <AnimatedHeading lines={[{ text: 'Переписка остаётся' }, { text: 'на ваших устройствах', accent: true }]} />
           <p>Ваша приватность начинается здесь</p>
           <DownloadButtons />
           <div className="hero-onion"><OnionButton prominent /><span>Сайт доступен напрямую в сети Tor</span></div>

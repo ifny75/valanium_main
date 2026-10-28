@@ -4,6 +4,7 @@ import { DynamicHeader } from './components/dynamic-header';
 import { SupportDialog } from './components/support-dialog';
 import { SERVICES } from './services';
 import { LiveNetwork } from './components/live-network';
+import { AnimatedHeading, ButtonArrow } from './components/animated-heading';
 
 const TITLE = 'Valanium — приватные сервисы: мессенджер, почта, VPN';
 const DESCRIPTION =
@@ -62,12 +63,12 @@ export default function Home() {
               <em>Windows и Android</em>
             </span>
 
-            <h1><span>Приватность</span> начинается здесь</h1>
+            <AnimatedHeading lines={[{ text: 'Приватность', accent: true }, { text: 'начинается здесь' }]} />
             <p>Сквозное шифрование, свои узлы и открытый код. Аккаунт заводится
               в приложении, без номера телефона.</p>
 
             <div className="stage-actions">
-              <a className="stage-button stage-button-primary" href="/messenger#download">Скачать</a>
+              <a className="stage-button stage-button-primary" href="/messenger#download">Скачать <ButtonArrow /></a>
               <a className="stage-button" href="/messenger#server">Как устроено</a>
             </div>
 
