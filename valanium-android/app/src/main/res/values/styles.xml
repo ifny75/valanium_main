@@ -441,4 +441,22 @@
         <item name="android:scaleType">fitCenter</item>
         <item name="android:stateListAnimator">@null</item>
     </style>
+    <style name="Valanium.Theme.Light" parent="Valanium.Theme">
+        <item name="android:alertDialogTheme">@style/Valanium.Dialog.Light</item>
+        <item name="android:textColorPrimary">#FF101010</item>
+        <item name="android:textColorSecondary">#FF5B5B63</item>
+        <item name="android:colorBackground">#FFF8F8FA</item>
+    </style>
+    <style name="Valanium.Dialog.Light" parent="Valanium.Dialog">
+        <item name="android:windowTitleStyle">@style/Valanium.Dialog.Title.Light</item>
+        <item name="android:buttonBarButtonStyle">@style/Valanium.Dialog.Button.Light</item>
+        <item name="android:windowBackground">@drawable/dialog_bg_light</item>
+        <item name="android:colorBackground">#FFF8F8FA</item>
+        <item name="android:textColorPrimary">#FF101010</item>
+        <item name="android:textColorSecondary">#FF5B5B63</item>
+        <item name="android:textColorAlertDialogListItem">#FF101010</item>
+        <item name="android:colorAccent">#FF101010</item>
+    </style>
+    <style name="Valanium.Dialog.Title.Light" parent="Valanium.Dialog.Title"><item name="android:textColor">#FF101010</item></style>
+    <style name="Valanium.Dialog.Button.Light" parent="Valanium.Dialog.Button"><item name="android:textColor">#FF101010</item></style>
 </resources>

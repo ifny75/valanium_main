@@ -36,3 +36,5 @@ pub mod store;
 pub mod totp;
 
 pub use error::{CoreError, Result};
+
+pub mod calls;

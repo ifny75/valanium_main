@@ -265,7 +265,7 @@
             <button id="leave-group" class="ghost-button hidden" type="button">Забыть</button>
             <button id="open-search" class="ghost-button" type="button" title="Искать в переписке"><span class="ui-icon icon-search"></span></button>
             <button id="verify" class="ghost-button" type="button" disabled><span class="ui-icon icon-fingerprint"></span><span>Сверить</span></button>
-            <button id="call-button" class="ghost-button call-button" type="button" title="Звонки появятся позже" aria-label="Позвонить"><span class="ui-icon icon-phone"></span></button>
+            <button id="call-button" class="ghost-button call-button" type="button" title="Звонки · первый этап" aria-label="Позвонить"><span class="ui-icon icon-phone"></span></button>
           </div>
         </header>
 
@@ -365,6 +365,7 @@
 
       <div class="settings-body">
         <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">
+          <label class="settings-search-label" for="settings-search">Поиск настроек</label><input id="settings-search" type="search" placeholder="Найти настройку…" autocomplete="off" aria-controls="settings-search-results" /><div id="settings-search-results" aria-live="polite"></div>
           <div class="settings-nav-head" aria-hidden="true">
             <span class="settings-nav-logo"><img src="assets/msg_icon.svg" alt="" /></span>
             <span><small>Valanium</small><b>Настройки</b></span>
@@ -376,7 +377,7 @@
           <button type="button" data-section="messages"><span class="ui-icon icon-messages"></span>Чат и сообщения</button>
           <button type="button" data-section="server" id="nav-server" hidden><span class="ui-icon icon-server"></span>Сервер</button>
           <button type="button" data-section="data"><span class="ui-icon icon-data"></span>Данные</button>
-          <label class="ui-language-choice" for="ui-language">Язык<select id="ui-language"><option value="ru">Русский</option><option value="en">English</option></select></label><p class="settings-nav-note">Медиа и безопасность — следующие этапы.</p>
+          <label class="ui-language-choice" for="ui-language">Язык<select id="ui-language"><option value="ru">Русский</option><option value="en">English</option></select></label>
         </nav>
 
         <div class="settings-content" id="settings-content">

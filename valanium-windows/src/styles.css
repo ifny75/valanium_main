@@ -3192,3 +3192,33 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 
 /* Horizontal message gestures coexist with native vertical scrolling. */
 #messages li[data-message-id] { touch-action: pan-y; }
+
+/* Settings remain readable in a small desktop window. */
+.settings-search-label{font-size:11px;color:var(--muted);margin:8px 0 6px}
+#settings-search{width:100%;min-height:40px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);font:inherit;font-size:12px}
+#settings-search-results{display:grid;gap:4px;max-height:260px;overflow:auto;font-size:12px;color:var(--muted)}
+#settings-search-results:empty{display:none}
+#settings-search-results button{height:auto;min-height:38px;white-space:normal;padding:9px 12px;text-align:left}
+.settings-nav>button{min-height:44px;font-size:13px}
+.settings-content{scroll-padding-top:20px;overscroll-behavior:contain}
+.settings-section{max-width:820px;margin-inline:auto;width:100%}
+.settings-search-hit{outline:2px solid var(--accent);outline-offset:6px;border-radius:4px}
+.typing-dots{gap:5px;margin-left:7px;align-items:center;min-height:12px}
+.typing-dots i{width:5px;height:5px;animation:typing-pulse 1.2s ease-in-out infinite}
+@keyframes typing-pulse{0%,60%,100%{opacity:.35;transform:scale(.75)}25%{opacity:1;transform:scale(1.35)}}
+.peer-recently-online{color:var(--success,#67d4a3)!important}
+@media(prefers-reduced-motion:no-preference){
+ .conversation-button{transition:background .18s,transform .18s,border-color .18s}
+ .conversation-button:active{transform:scale(.985)}
+ #screen-main .message-list li.fresh-message{animation:message-appear .2s ease-out both}
+ @keyframes message-appear{from{opacity:.3;transform:translateY(6px)}to{opacity:1;transform:none}}
+ .settings-section:not(.hidden){animation:settings-reveal .2s ease-out}
+ @keyframes settings-reveal{from{opacity:.3;transform:translateY(8px)}to{opacity:1;transform:none}}
+}
+@media(prefers-reduced-motion:reduce){.typing-dots i{animation:none;opacity:.8;transform:none}}
+@media(max-width:900px){.settings-body{width:calc(100% - 32px);grid-template-columns:180px minmax(0,1fr);gap:18px}.settings-close{left:12px;top:calc(var(--titlebar) + 8px);width:32px;height:32px}.settings-nav-head{margin-top:16px}}
+
+.notification-preview{border-radius:0}
+
+.settings-nav button[hidden]{display:none!important}
+@media(prefers-reduced-motion:reduce){.settings-section,.modal-card,#screen-main .message-list li.fresh-message{animation:none!important}.conversation-button{transition:none}}

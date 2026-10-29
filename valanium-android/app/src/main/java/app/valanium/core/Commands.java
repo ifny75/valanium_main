@@ -137,6 +137,11 @@ public final class Commands {
         return out.append('}').toString();
     }
 
+    public static String callProbe(String recipientDevice) {
+        StringBuilder out=new StringBuilder("{\"type\":\"call_probe\",\"recipient_device\":");
+        quote(out,recipientDevice);return out.append('}').toString();
+    }
+
     public static String typing(String recipientDevice, boolean active) {
         StringBuilder out = new StringBuilder("{\"type\":\"typing\",\"recipient_device\":");
         quote(out, recipientDevice);

@@ -429,4 +429,5 @@
     <string name="language_auto">Язык устройства</string>
     <string name="tablet_private">Пространство\nдля личного.</string>
     <string name="tablet_keys">Ваши ключи. Ваши разговоры.</string>
+    <string name="calls_preview">Звонки · предварительная версия</string>
 </resources>

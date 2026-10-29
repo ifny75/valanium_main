@@ -15,7 +15,7 @@
    чёрный прямоугольник. Сама карточка при этом плотная, без backdrop-filter:
    размыть им можно только страницу, а за окном не страница, а чужие программы —
    полупрозрачный фон показывал бы их резкими, сквозь текст. */
-html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#101010;
   font:14px/1.5 "Inter UI","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 body{display:grid;place-items:center}
 
@@ -25,7 +25,7 @@ body{display:grid;place-items:center}
   position:relative;width:100%;height:100%;
   display:grid;grid-template-columns:41px minmax(0,1fr) 30px;align-items:center;gap:11px;
   padding:12px 12px 12px 16px;overflow:hidden;
-  border-radius:calc(var(--radius) + 5px);
+  border-radius:0;
   background:var(--panel-solid);color:var(--text);
   /* Без обводки: край карточки держат две тени — ближняя очерчивает форму,
      дальняя отрывает её от того, что под окном. Линия по краю на чужом фоне
@@ -69,3 +69,5 @@ button:active{transform:scale(.96)}
 .card.leaving{animation:out .18s ease both}
 @keyframes in{from{opacity:0;transform:translateX(30px) scale(.97)}}
 @keyframes out{to{opacity:0;transform:translateX(24px) scale(.98)}}
+
+@media(prefers-reduced-motion:reduce){.card.arriving,.card.leaving{animation:none}}

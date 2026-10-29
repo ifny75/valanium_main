@@ -429,4 +429,5 @@
     <string name="language_auto">Device language</string>
     <string name="tablet_private">Room for\nprivacy.</string>
     <string name="tablet_keys">Your keys. Your conversations.</string>
+    <string name="calls_preview">Calls · preview</string>
 </resources>

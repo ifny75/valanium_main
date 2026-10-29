@@ -113,6 +113,7 @@ pub enum Command {
     /// Убрать и переписку, и беседу целиком.
     DeleteConversation { conversation: String },
     /// Сообщить собеседнику, что мы набираем текст.
+    CallProbe { recipient_device:String },
     Typing { recipient_device: String, active: bool },
     /// Прочитать, кому позволено писать. Работает без подключения.
     AccessGet,
@@ -399,6 +400,7 @@ pub enum Event {
     /// не бывает — связь рвётся молча.
     PeerOnline { peer_device: String },
     /// Собеседник набирает текст.
+    CallStatus { peer_device:String, call_id:String, status:String },
     PeerTyping { peer_device: String, active: bool },
     /// Текущая политика и выпущенные приглашения.
     Access {

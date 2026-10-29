@@ -64,6 +64,8 @@ public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
             alice.send(new JSONObject().put("type","directory_set").put("device",bob.device).put("standing","approved"));
             bob.send(new JSONObject().put("type","directory_set").put("device",alice.device).put("standing","approved"));
             exchange(alice,bob,"phone-first");exchange(bob,alice,"phone-reply");
+            alice.send(new JSONObject().put("type","call_probe").put("recipient_device",bob.device));
+            assertEquals(bob.device,alice.waitFor(e->"call_status".equals(e.optString("type"))&&"media_unavailable".equals(e.optString("status"))).getString("peer_device"));
             alice.send(new JSONObject().put("type","profile_get").put("query",bob.device));
             assertEquals(bob.device,alice.waitFor(e->"profile".equals(e.optString("type"))).getString("device"));
             alice.send(new JSONObject().put("type","verify").put("peer_device",bob.device));

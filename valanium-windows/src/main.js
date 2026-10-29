@@ -1880,6 +1880,7 @@ function peerOf(conversation) {
 
 // --- события ядра -------------------------------------------------------------
 
+const callChecks = new Map();
 const handlers = {
   status(event) {
     if (!event.has_identity) {
@@ -2403,6 +2404,17 @@ const handlers = {
     $("show-recovery-code").textContent = tr("Скрыть");
   },
 
+  call_status(event) {
+    const id=event.call_id;
+    if(event.status==="checking") {
+      toast(tr("Проверяем поддержку звонков по защищённому каналу…"));
+      callChecks.set(event.peer_device,id);
+      setTimeout(()=>{if(callChecks.get(event.peer_device)===id){callChecks.delete(event.peer_device);toast(tr("Нет ответа на проверку звонка. Проверьте сеть, версию приложения и разрешение звонков у собеседника."));}},95000);
+    } else if(event.status==="media_unavailable"&&callChecks.get(event.peer_device)===id) {
+      callChecks.delete(event.peer_device);
+      toast(tr("Защищённая сигнализация работает. Передача звука ещё не доступна."));
+    }
+  },
   failed(event) {
     if (event.code === "privacy_preset") { maximumPrivacyPending = false; $("privacy-maximize").disabled = false; }
     if (event.code === "anonymous_delivery_waiting") { toast(getLanguage() === "en" ? "Anonymous delivery is pending. The app will retry through Tor." : event.message); return; }
@@ -2446,6 +2458,8 @@ function recoveryError(event) {
 
 /** Понятные причины отказа вместо машинных кодов. */
 const FRIENDLY_ERRORS = {
+  call_probe_pending: tr("Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания."),
+  call_no_conversation: tr("Сначала начните личную переписку с этим человеком."),
   dm_not_allowed: tr("Этот человек не принимает сообщения от незнакомых. Нужна его ссылка-приглашение."),
   passes_full: tr("Слишком много выпущенных приглашений. Отзовите ненужные."),
   username_taken: tr("Это имя уже занято."),
@@ -3705,6 +3719,7 @@ setInterval(() => {
 function openSettingsSection(name) {
   for (const button of document.querySelectorAll("#settings-nav button[data-section]")) {
     button.classList.toggle("active", button.dataset.section === name);
+    if(button.dataset.section === name)button.setAttribute("aria-current","page");else button.removeAttribute("aria-current");
   }
   for (const section of document.querySelectorAll(".settings-section")) {
     section.classList.toggle("hidden", section.dataset.section !== name);
@@ -3743,7 +3758,7 @@ const PRIVACY_GROUPS = [
       { key: "media", label: tr("Фото и видео"), hint: tr("Вложения от незнакомых людей не будут показаны и сохранены.") },
       { key: "voice", label: tr("Голосовые сообщения"), hint: "" },
       { key: "files", label: tr("Файлы"), hint: "" },
-      { key: "calls", label: tr("Звонки"), hint: tr("Звонков пока нет; правило начнёт действовать вместе с ними.") },
+      { key: "calls", label: tr("Звонки"), hint: tr("Кто может проверять поддержку звонков. Звуковые вызовы ещё недоступны."), scopes: ["everyone", "approved", "contacts", "nobody"] },
       {
         key: "link_previews",
         label: tr("Превью ссылок"),
@@ -6003,7 +6018,9 @@ $("revoke-other-devices").addEventListener("click", () => {
 
 $("call-button")?.addEventListener("click", (e) => {
   e.preventDefault();
-  toast(tr("Функция звонков ещё не реализована и появится скоро"));
+  const callPeer=state.current;
+  if(!/^[a-f0-9]{64}$/.test(callPeer??"")){toast(tr("Откройте личный диалог для проверки звонка"));return;}
+  confirmAction(tr("Звонки · первый этап"),tr("Можно проверить защищённый канал звонка. Микрофон не включается: передача звука пока разрабатывается. Проверить поддержку у собеседника?"),()=>submit({type:"call_probe",recipient_device:callPeer}));
 });
 
 $("chat-search-input").addEventListener("input", runSearch);
@@ -6323,6 +6340,7 @@ function showTyping(peer, active) {
     dots.append(document.createElement("i"), document.createElement("i"),
       document.createElement("i"));
     node.appendChild(dots);
+    node.classList.remove("peer-recently-online");
     node.classList.add("typing");
   } else {
     node.classList.remove("typing");
@@ -6357,7 +6375,8 @@ function refreshPeerState() {
   if (!peer) return;
   if (typingPeers.has(peer)) return;
   node.classList.remove("typing");
-  node.textContent = isOnline(peer) ? tr("в сети · контроль ключа включён") : tr("контроль ключа включён");
+  node.textContent = isOnline(peer) ? tr("● В сети недавно") : tr("Статус не сообщается");
+  node.classList.toggle("peer-recently-online", isOnline(peer));
   node.title = tr("Приложение запоминает ключ собеседника и остановит отправку, если он неожиданно изменится");
 }
 
@@ -6440,3 +6459,38 @@ if (localStorage.getItem(ROUTE_MIGRATION_NOTICE) === "1") {
   localStorage.removeItem(ROUTE_MIGRATION_NOTICE);
   window.setTimeout(showRouteMigrationNotice, 300);
 }
+
+function settingsMatches(text, query) {
+  const words=text.toLocaleLowerCase(getLocale()).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const terms=query.toLocaleLowerCase(getLocale()).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return terms.length>0 && terms.every(term=>words.some(word=>word.startsWith(term)));
+}
+
+// Search all settings without hiding controls or changing their values.
+$("settings-search").addEventListener("input", () => {
+  const query=$("settings-search").value.trim().toLocaleLowerCase(getLocale());
+  const results=$("settings-search-results");results.replaceChildren();
+  if(!query)return;
+  const seen=new Set();
+  for(const title of [...document.querySelectorAll(".settings-section h1,.settings-section h2,.settings-section h3,.settings-section label,.settings-section .setting-label,.settings-section p,.settings-section .settings-card>b,.settings-section .setting-row>b,.settings-section .pc-route-choice b")].sort((a,b)=>a.textContent.trim().length-b.textContent.trim().length)) {
+    const text=title.textContent.trim().replace(/\s+/g," ").slice(0,140);
+    const section=title.closest(".settings-section");
+    if(!section||!settingsMatches(text,query)||seen.has(text)||seen.size>=8)continue;
+    if(section.dataset.section==="server"&&$("nav-server").hidden)continue;
+    seen.add(text);const button=document.createElement("button");button.type="button";button.textContent=text;
+    button.addEventListener("click",()=>{openSettingsSection(section.dataset.section);title.scrollIntoView({block:"center",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth"});title.classList.add("settings-search-hit");setTimeout(()=>title.classList.remove("settings-search-hit"),1800);$("settings-search").value="";results.replaceChildren();});
+    results.append(button);
+  }
+  if(!seen.size)results.textContent=tr("Настройка не найдена");
+});
+$("settings-search").addEventListener("keydown",event=>{
+  if(event.key==="Escape"){event.preventDefault();event.stopPropagation();$("settings-search").value="";$("settings-search-results").replaceChildren();}
+  if(event.key==="Enter"){$("settings-search-results").querySelector("button")?.click();event.preventDefault();}
+  if(event.key==="ArrowDown"){$("settings-search-results").querySelector("button")?.focus();event.preventDefault();}
+});
+$("settings-nav").addEventListener("keydown",event=>{
+  if(!["ArrowDown","ArrowUp","Home","End"].includes(event.key)||!event.target.matches("button[data-section]"))return;
+  const buttons=[...document.querySelectorAll("#settings-nav button[data-section]")].filter(button=>!button.hidden);
+  let index=buttons.indexOf(event.target);index=event.key==="Home"?0:event.key==="End"?buttons.length-1:(index+(event.key==="ArrowDown"?1:-1)+buttons.length)%buttons.length;
+  buttons[index]?.focus();buttons[index]?.click();event.preventDefault();
+});

@@ -134,7 +134,7 @@ impl Access {
 /// Префикс отличается от того, которым пользуется интерфейс, поэтому такое
 /// сообщение до него не доходит и в переписке не появляется. Ядро разбирает его
 /// само и наружу не отдаёт — человеку показывать нечего.
-const CONTROL_PREFIX: &str = "\u{2063}VALCTL1:";
+pub(crate) const CONTROL_PREFIX: &str = "\u{2063}VALCTL1:";
 
 pub fn pass_gift(pass: &str) -> String {
     format!("{CONTROL_PREFIX}{{\"pass\":\"{pass}\"}}")
@@ -269,6 +269,7 @@ pub enum Control {
     /// Правка уже отправленного: тот же логический идентификатор, новое тело.
     Edit { id: String, body: String },
     Typing(bool),
+    Call(crate::calls::Signal),
     Online,
     Group { title: String, kind: String, owner: String },
     /// Список устройств собеседника — **ещё не проверенный**.
@@ -331,6 +332,10 @@ impl Announcement {
 pub fn parse_signal(body: &str) -> Option<Control> {
     let payload = body.strip_prefix(CONTROL_PREFIX)?;
     let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if let Some(call)=value.get("call") {
+        let signal:crate::calls::Signal=serde_json::from_value(call.clone()).ok()?;
+        return signal.valid().then_some(Control::Call(signal));
+    }
 
     if let Some(ids) = value.get("delivered").and_then(|v| v.as_array()) {
         if ids.len() > 64 { return None; }

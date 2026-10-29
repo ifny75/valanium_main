@@ -292,6 +292,7 @@ struct Live {
     /// переподключение. Свой короткий срок годности билеты и так несут сами;
     /// протухший билет приводит к новой анонимной попытке, без downgrade.
     tickets: VecDeque<[u8; proto::TICKET_LEN]>,
+    calls: crate::calls::Pending,
     anon_inflight: HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
     anon_retries: HashMap<[u8; ID_LEN], (tokio::time::Instant, u32)>,
     route_cooldowns: HashMap<String, tokio::time::Instant>,
@@ -791,6 +792,7 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             | Command::RecoverySetup { .. }
             | Command::DeleteMessage { .. }
             | Command::EditMessage { .. }
+            | Command::CallProbe { .. }
             | Command::Typing { .. }
             | Command::AccessSet { .. }
             | Command::PassInvite { .. }
@@ -1934,6 +1936,7 @@ fn emit_delivery(store: &Store, sink: &EventSink, conversation: &[u8], id: &str)
 fn activity_rule(body: &str) -> Option<&'static str> {
     match crate::access::parse_signal(body) {
         Some(crate::access::Control::Delivered(_)) => return Some("read_receipts"),
+        Some(crate::access::Control::Call(_)) => return Some("calls"),
         Some(crate::access::Control::Typing(_)) => return Some("typing"),
         Some(crate::access::Control::Online) => return Some("presence"),
         _ => {}
@@ -1944,7 +1947,14 @@ fn activity_rule(body: &str) -> Option<&'static str> {
     }
 }
 
+fn permits_incoming_call(store:&Store, device:&[u8;KEY_LEN])->Result<bool>{
+    let peer=hex::encode(device);
+    let relation=load_directory(store).standing(&peer).map(|standing|standing.relation()).unwrap_or(crate::privacy::Relation::Unknown);
+    Ok(load_privacy_checked(store)?.calls.permits(&peer,relation))
+}
+
 fn permits_activity(store: &Store, body: &str, device: &[u8; KEY_LEN]) -> Result<bool> {
+    if matches!(crate::access::parse_signal(body),Some(crate::access::Control::Call(_))){return Ok(true)}
     let Some(name) = activity_rule(body) else { return Ok(true) };
     let privacy = load_privacy_checked(store)?;
     let peer = hex::encode(device);
@@ -2796,6 +2806,16 @@ async fn pump(
                             Err(err) => fail(sink, "storage", &err.to_string()),
                         }
                     }
+                    Command::CallProbe { recipient_device } => {
+                        let device=hex::decode(&recipient_device).map_err(|_|CoreError::BadFrame)?;
+                        let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Open a conversation first");continue};
+                        let Some(signal)=live.calls.start(&recipient_device,now_millis()) else {fail(sink,"call_probe_pending","A capability check is already pending");continue};
+                        if !permits_activity(store,&signal.body(),&device)? {fail(sink,"call_privacy","Calls are disabled by your privacy rule");continue}
+                        let id=signal.id.clone();
+                        encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?;
+                        sink(Event::CallStatus{peer_device:recipient_device,call_id:id,status:"checking".into()});
+                    }
                     Command::Typing { recipient_device, active } => {
                         // Ошибку не показываем: индикатор набора — вещь
                         // необязательная, и ругаться на него посреди переписки
@@ -3351,7 +3371,7 @@ async fn on_frame(
     match opcode {
         op::PONG => {}
         op::QUEUE_DONE => sink(Event::QueueDone),
-        op::ENVELOPE => on_envelope(socket, body, store, mls, sink).await?,
+        op::ENVELOPE => on_envelope(socket, body, store, mls, sink, &mut live.calls).await?,
         op::KEYPKG => {
             let sealed = Some(SealedSenderCtx { required: live.require_anonymous });
             on_key_package(socket, body, store, mls, sink, pending, &mut live.outbox, sealed).await?;
@@ -3518,6 +3538,7 @@ async fn on_envelope(
     store: &Store,
     mls: &mut Mls,
     sink: &EventSink,
+    calls: &mut crate::calls::Pending,
 ) -> Result<()> {
     let envelope = proto::parse_envelope(body)?;
 
@@ -3636,6 +3657,17 @@ async fn on_envelope(
                                 // сводятся в одну нить прямо здесь: узнали, что
                                 // это один человек, — значит и переписка одна.
                                 let _ = merge_threads(store, &identity);
+                            }
+                        }
+                    }
+                    Some(Control::Call(signal)) => {
+                        let now=now_millis();
+                        if signal.fresh(now) {
+                            if signal.action==crate::calls::Action::Probe && permits_incoming_call(store,&sender_device)? && calls.answer(&device,&signal,now) {
+                                let response=crate::calls::Signal{action:crate::calls::Action::Unavailable,..signal};
+                                queue_private_message(store,mls,&group_id,&PendingSend{device:sender_device,body:response.body(),stored:true})?;
+                            } else if calls.complete(&device,&signal,now) {
+                                sink(Event::CallStatus{peer_device:device.clone(),call_id:signal.id,status:"media_unavailable".into()});
                             }
                         }
                     }
@@ -4206,7 +4238,7 @@ fn queue_private_message(store: &Store, mls: &mut Mls, group_id: &[u8], waiting:
             client_ref, device: waiting.device, conversation: thread, logical_id, ciphertext,
             kind: if ephemeral { crate::anon_queue::Kind::Ephemeral } else if control {
                 crate::anon_queue::Kind::Essential } else { crate::anon_queue::Kind::Message },
-            expires_at: Some(now + if ephemeral { 15_000 } else { i64::from(DEFAULT_TTL_SEC) * 1000 }),
+            expires_at: Some(now + if matches!(crate::access::parse_signal(&waiting.body),Some(crate::access::Control::Call(_))) { crate::calls::TTL_MS } else if ephemeral { 15_000 } else { i64::from(DEFAULT_TTL_SEC) * 1000 }),
         })
     });
     if result.is_err() {
@@ -4552,6 +4584,21 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn incoming_call_checks_obey_approval_and_explicit_privacy_blocks() {
+        let store=Store::open(":memory:",b"calls-test").unwrap();
+        let device=[2;KEY_LEN];let peer=hex::encode(device);
+        assert!(!permits_incoming_call(&store,&device).unwrap());
+        let mut directory=load_directory(&store);
+        directory.set(&peer,crate::directory::Standing::Approved,1);
+        save_directory(&store,&directory).unwrap();
+        assert!(permits_incoming_call(&store,&device).unwrap());
+        let mut privacy=load_privacy_checked(&store).unwrap();
+        privacy.calls.deny.push(peer.clone());
+        store.save_setting(PRIVACY_KEY,&serde_json::to_vec(&privacy).unwrap()).unwrap();
+        assert!(!permits_incoming_call(&store,&device).unwrap());
+    }
+
     #[tokio::test]
     async fn retry_deadline_wakes_without_heartbeat_and_ignores_active_sends() {
         let mut live = Live::default();
@@ -4768,12 +4815,12 @@ mod tests {
         let envelope_body = |id: u8, ciphertext: &[u8]| {
             let mut body = vec![id; ID_LEN]; body.extend_from_slice(&(now_millis() as u64).to_be_bytes()); body.extend_from_slice(ciphertext); body
         };
-        on_envelope(&mut socket, &envelope_body(1, &message.ciphertext), &bob_store.0, &mut bob, &sink).await.unwrap();
+        on_envelope(&mut socket, &envelope_body(1, &message.ciphertext), &bob_store.0, &mut bob, &sink, &mut crate::calls::Pending::default()).await.unwrap();
         let receipts = crate::anon_queue::load(&bob_store.0).unwrap();
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].kind, crate::anon_queue::Kind::Ephemeral);
         assert_eq!(bob_store.0.list_messages(&bob_store.0.thread_of(&group).unwrap(), 10, None).unwrap().len(), 1);
-        on_envelope(&mut socket, &envelope_body(2, &receipts[0].ciphertext), &alice_store.0, &mut alice, &sink).await.unwrap();
+        on_envelope(&mut socket, &envelope_body(2, &receipts[0].ciphertext), &alice_store.0, &mut alice, &sink, &mut crate::calls::Pending::default()).await.unwrap();
         let thread = alice_store.0.thread_of(&group).unwrap();
         assert_eq!(crate::delivery::state(&alice_store.0, &thread, "m1").unwrap().as_deref(), Some("delivered"));
         crate::anon_queue::acknowledge(&alice_store.0, &message.client_ref).unwrap();

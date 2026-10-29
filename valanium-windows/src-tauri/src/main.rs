@@ -536,7 +536,7 @@ async fn show_desktop_notification(app: AppHandle, payload: serde_json::Value) -
     .title("Valanium")
     .inner_size(card.width, card.height)
     .decorations(false)
-    .transparent(true)
+    .transparent(false)
     .shadow(false)
     .always_on_top(true)
     .skip_taskbar(true)
@@ -549,6 +549,13 @@ async fn show_desktop_notification(app: AppHandle, payload: serde_json::Value) -
     .build()
     .map_err(|err| format!("не открыть уведомление: {err}"))?;
 
+    #[cfg(target_os = "windows")]
+    if let Ok(handle) = window.hwnd() {
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE};
+        let preference: u32 = 1; // DWMWCP_DONOTROUND
+        unsafe { let _ = DwmSetWindowAttribute(windows::Win32::Foundation::HWND(handle.0 as _),
+            DWMWA_WINDOW_CORNER_PREFERENCE, &preference as *const _ as _, std::mem::size_of_val(&preference) as u32); }
+    }
     place_notification(&window, card)?;
     window
         .show()

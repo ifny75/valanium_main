@@ -751,5 +751,22 @@ export default {
   "Редактор фото": "Photo editor",
   "Подпись — необязательно": "Signature - optional",
   "Просмотр фото": "View photos",
-  "Закрыть фото": "Close photo"
+  "Закрыть фото": "Close photo",
+  "● В сети недавно": "● Recently online",
+  "Статус не сообщается": "Status not shared",
+  "Поиск настроек": "Search settings",
+  "Найти настройку…": "Find a setting…",
+  "Настройка не найдена": "No matching setting",
+  "Сведите или разведите пальцы для масштаба. Перетаскивайте рамку и её углы.": "Pinch to zoom. Drag the frame or its corners.",
+  "Масштаб": "Zoom",
+  "Звонки · первый этап": "Calls · phase one",
+  "Проверить поддержку": "Check support",
+  "Откройте личный диалог для проверки звонка": "Open a direct conversation to check call support",
+  "Можно проверить защищённый канал звонка. Микрофон не включается: передача звука пока разрабатывается. Проверить поддержку у собеседника?": "You can test the encrypted call signaling channel. Your microphone stays off; audio transmission is still in development. Check support with this contact?",
+  "Проверяем поддержку звонков по защищённому каналу…": "Checking call support over the encrypted channel…",
+  "Защищённая сигнализация работает. Передача звука ещё не доступна.": "Encrypted signaling works. Audio transmission is not available yet.",
+  "Нет ответа на проверку звонка. Проверьте сеть, версию приложения и разрешение звонков у собеседника.": "No response to the call check. Check connectivity, app versions and the contact’s call permissions.",
+  "Кто может проверять поддержку звонков. Звуковые вызовы ещё недоступны.": "Who can check call support. Audio calls are not available yet.",
+  "Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания.": "A call check is already in progress. Wait for the response or timeout.",
+  "Сначала начните личную переписку с этим человеком.": "Start a direct conversation with this person first."
 };

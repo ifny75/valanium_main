@@ -14,6 +14,9 @@ import android.graphics.RectF;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
+import android.view.GestureDetector;
+import android.widget.ScrollView;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -67,6 +70,8 @@ final class PhotoEditor {
     private CropView view;
     private TextView size;
     private Button send;
+    private SeekBar zoomBar;
+    private TextView zoomLabel;
 
     PhotoEditor(Activity activity, Bitmap source, float ratio, int maxBase64, Result result) {
         this.activity = activity;
@@ -90,6 +95,14 @@ final class PhotoEditor {
                 new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(280));
         root.addView(view, viewParams);
 
+        TextView hint = new TextView(activity);
+        hint.setText(I18n.t("Сведите или разведите пальцы для масштаба. Перетаскивайте рамку и её углы."));
+        hint.setTextSize(12); hint.setTextColor(activity.getColor(R.color.valanium_muted));
+        root.addView(hint);
+        LinearLayout zoomControl = (LinearLayout) slider(I18n.t("Масштаб"), 100, 500, 100, value -> view.zoomTo(value / 100f, view.getWidth()/2f, view.getHeight()/2f));
+        zoomBar = (SeekBar) zoomControl.getChildAt(1);
+        zoomLabel = (TextView) zoomControl.getChildAt(0);
+        root.addView(zoomControl);
         if (ratio == 0) root.addView(ratioRow());
         root.addView(toolRow());
         root.addView(slider(I18n.t("Яркость"), 50, 160, brightness, value -> {
@@ -118,10 +131,14 @@ final class PhotoEditor {
         size.setPadding(0, dp(6), 0, 0);
         root.addView(size);
 
+        ScrollView scroll = new ScrollView(activity);
+        scroll.setFillViewport(false); scroll.addView(root);
+        android.content.SharedPreferences appearance=activity.getSharedPreferences("appearance",0);
+        ThemeSurfaces.apply(root,appearance.getInt("accent_color",0xff9770ff),"light".equals(appearance.getString("theme","dark")));
         AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle(ratio == 1 ? I18n.t("Аватар") : I18n.t("Фото"))
-                .setView(root)
-                .setPositiveButton(I18n.t("Отправить"), null)
+                .setView(scroll)
+                .setPositiveButton(ratio == 1 ? I18n.t("Сохранить") : I18n.t("Отправить"), null)
                 .setNegativeButton(I18n.t("Отмена"), null)
                 .create();
 
@@ -152,7 +169,7 @@ final class PhotoEditor {
             int width = Math.max(1, Math.round(turned.getWidth() * scale));
             int height = Math.max(1, Math.round(turned.getHeight() * scale));
             Bitmap scaled = Bitmap.createScaledBitmap(turned, width, height, true);
-            if (scaled != turned) turned.recycle();
+            if (scaled != turned && turned != source) turned.recycle();
             turned = scaled;
         }
         if (work != null && work != source) work.recycle();
@@ -161,6 +178,7 @@ final class PhotoEditor {
 
     /** Кадр по умолчанию: всё изображение, подрезанное под соотношение. */
     private void resetCrop() {
+        if (view != null) view.resetViewport();
         float width = work.getWidth();
         float height = work.getHeight();
         if (ratio == 0) {
@@ -238,7 +256,11 @@ final class PhotoEditor {
     }
 
     /** Показывает вес результата: иначе отказ прилетает уже при отправке. */
+    private final Runnable estimateTask=this::estimateNow;
     private void updateEstimate() {
+        if(view==null)return;view.removeCallbacks(estimateTask);view.postDelayed(estimateTask,120);
+    }
+    private void estimateNow() {
         Rendered rendered = render();
         if (rendered == null) {
             size.setText(I18n.t("не помещается — уменьшите кадр"));
@@ -388,6 +410,10 @@ final class PhotoEditor {
         private float startX;
         private float startY;
         private RectF startCrop;
+        private float zoom=1f, panX, panY, startPanX, startPanY;
+        private boolean transformed;
+        private final ScaleGestureDetector scaler;
+        private final GestureDetector gestures;
 
         CropView(Activity context) {
             super(context);
@@ -395,18 +421,46 @@ final class PhotoEditor {
             framePaint.setStrokeWidth(dp(2));
             framePaint.setColor(Color.WHITE);
             shadePaint.setColor(Color.argb(140, 0, 0, 0));
+            scaler = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                @Override public boolean onScale(ScaleGestureDetector detector) {
+                    transformed=true;zoomTo(zoom*detector.getScaleFactor(),detector.getFocusX(),detector.getFocusY());return true;
+                }
+            });
+            gestures = new GestureDetector(context,new GestureDetector.SimpleOnGestureListener(){
+                @Override public boolean onDown(MotionEvent event){return true;}
+                @Override public boolean onDoubleTap(MotionEvent event){transformed=true;zoomTo(zoom>1.1f?1f:2f,event.getX(),event.getY());return true;}
+            });
         }
 
         private float scale() {
-            return Math.min((float) getWidth() / work.getWidth(), (float) getHeight() / work.getHeight());
+            return zoom * Math.min((float) getWidth() / work.getWidth(), (float) getHeight() / work.getHeight());
         }
 
         private float offsetX() {
-            return (getWidth() - work.getWidth() * scale()) / 2;
+            return (getWidth() - work.getWidth() * scale()) / 2 + panX;
         }
 
         private float offsetY() {
-            return (getHeight() - work.getHeight() * scale()) / 2;
+            return (getHeight() - work.getHeight() * scale()) / 2 + panY;
+        }
+
+        void resetViewport() { zoom=1f;panX=panY=0; if(zoomBar!=null)zoomBar.setProgress(0); }
+        void zoomTo(float wanted,float focusX,float focusY) {
+            if(getWidth()==0||getHeight()==0)return;
+            RectF frame=cropOnScreen();float before=scale();
+            float anchorX=(focusX-offsetX())/before,anchorY=(focusY-offsetY())/before;
+            zoom=Math.max(1f,Math.min(5f,wanted));float after=scale();
+            panX=focusX-anchorX*after-(getWidth()-work.getWidth()*after)/2;
+            panY=focusY-anchorY*after-(getHeight()-work.getHeight()*after)/2;
+            float width=Math.min(work.getWidth(),Math.max(MIN_CROP,frame.width()/after));
+            float height=Math.min(work.getHeight(),Math.max(MIN_CROP,frame.height()/after));
+            if(ratio!=0){width=Math.min(width,height*ratio);height=width/ratio;}
+            float left=clamp((frame.left-offsetX())/after,0,work.getWidth()-width);
+            float top=clamp((frame.top-offsetY())/after,0,work.getHeight()-height);
+            crop.set(left,top,left+width,top+height);
+            if(zoomBar!=null){zoomBar.setProgress(Math.round((zoom-1)*100));zoomBar.setContentDescription(I18n.t("Масштаб")+" "+String.format(java.util.Locale.getDefault(),"%.1f×",zoom));}
+            if(zoomLabel!=null)zoomLabel.setText(I18n.t("Масштаб")+" "+String.format(java.util.Locale.getDefault(),"%.1f×",zoom));
+            invalidate();updateEstimate();
         }
 
         private RectF cropOnScreen() {
@@ -433,10 +487,20 @@ final class PhotoEditor {
             canvas.drawRect(target.left, box.top, box.left, box.bottom, shadePaint);
             canvas.drawRect(box.right, box.top, target.right, box.bottom, shadePaint);
             canvas.drawRect(box, framePaint);
+            framePaint.setStrokeWidth(dp(1));framePaint.setAlpha(100);
+            for(int i=1;i<3;i++){float x=box.left+box.width()*i/3,y=box.top+box.height()*i/3;canvas.drawLine(x,box.top,x,box.bottom,framePaint);canvas.drawLine(box.left,y,box.right,y,framePaint);}
+            framePaint.setStrokeWidth(dp(2));framePaint.setAlpha(255);
         }
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
+            if(event.getActionMasked()==MotionEvent.ACTION_DOWN)transformed=false;
+            scaler.onTouchEvent(event); gestures.onTouchEvent(event);
+            if(scaler.isInProgress()||event.getPointerCount()>1||transformed){
+                getParent().requestDisallowInterceptTouchEvent(true);
+                if(event.getActionMasked()==MotionEvent.ACTION_UP)updateEstimate();
+                return true;
+            }
             float s = scale();
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
@@ -450,13 +514,15 @@ final class PhotoEditor {
                     startX = event.getX();
                     startY = event.getY();
                     startCrop = new RectF(crop);
+                    startPanX=panX;startPanY=panY;
                     getParent().requestDisallowInterceptTouchEvent(true);
                     return true;
                 }
                 case MotionEvent.ACTION_MOVE: {
                     float dx = (event.getX() - startX) / s;
                     float dy = (event.getY() - startY) / s;
-                    crop = handle == null ? moved(dx, dy) : resized(dx, dy);
+                    if(handle==null&&zoom>1.01f){crop=moved(-dx,-dy);panX=startPanX-(crop.left-startCrop.left)*s;panY=startPanY-(crop.top-startCrop.top)*s;}
+                    else crop = handle == null ? moved(dx, dy) : resized(dx, dy);
                     invalidate();
                     return true;
                 }
@@ -482,31 +548,15 @@ final class PhotoEditor {
         }
 
         private RectF resized(float dx, float dy) {
-            float left = startCrop.left;
-            float top = startCrop.top;
-            float right = startCrop.right;
-            float bottom = startCrop.bottom;
-
-            if (handle.contains("w")) left = clamp(left + dx, 0, right - MIN_CROP);
-            else right = clamp(right + dx, left + MIN_CROP, work.getWidth());
-            if (handle.contains("n")) top = clamp(top + dy, 0, bottom - MIN_CROP);
-            else bottom = clamp(bottom + dy, top + MIN_CROP, work.getHeight());
-
-            if (ratio != 0) {
-                // Соотношение ведёт ширина; высота подстраивается и, упёршись в
-                // край, тянет ширину обратно — иначе рамка вылезет за картинку.
-                float width = right - left;
-                float height = width / ratio;
-                if (top + height > work.getHeight()) {
-                    height = work.getHeight() - top;
-                    width = height * ratio;
-                }
-                if (handle.contains("n")) top = bottom - height;
-                else bottom = top + height;
-                if (handle.contains("w")) left = right - width;
-                else right = left + width;
-            }
-            return new RectF(left, top, right, bottom);
+            boolean west=handle.contains("w"),north=handle.contains("n");
+            float anchorX=west?startCrop.right:startCrop.left,anchorY=north?startCrop.bottom:startCrop.top;
+            float maxWidth=west?anchorX:work.getWidth()-anchorX,maxHeight=north?anchorY:work.getHeight()-anchorY;
+            float minimum=Math.min(MIN_CROP,Math.min(work.getWidth(),work.getHeight()));
+            float width=clamp(startCrop.width()+(west?-dx:dx),Math.min(minimum,maxWidth),maxWidth);
+            float height=clamp(startCrop.height()+(north?-dy:dy),Math.min(minimum,maxHeight),maxHeight);
+            if(ratio!=0){width=Math.min(width,maxHeight*ratio);height=width/ratio;}
+            float left=west?anchorX-width:anchorX,top=north?anchorY-height:anchorY;
+            return new RectF(left,top,left+width,top+height);
         }
 
         private float clamp(float value, float min, float max) {

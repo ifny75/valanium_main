@@ -407,6 +407,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        if("light".equals(getSharedPreferences("appearance",0).getString("theme","dark")))super.setTheme(R.style.Valanium_Theme_Light);
         super.onCreate(savedInstanceState);
         configureWindow();
         applyScreenPrivacy(screenPrivacyEnabled());
@@ -555,7 +556,9 @@ public final class MainActivity extends Activity implements Events.Listener {
         wireTyping();
         wireSearch();
         wireListTabs();
+        findViewById(R.id.call_peer).setOnClickListener(v -> showCallPreview());
         findViewById(R.id.avatar_upload).setOnClickListener(v -> chooseAvatar());
+        findViewById(R.id.chat_logo).setOnClickListener(v -> open(screenProfile));
         findViewById(R.id.profile_avatar).setOnClickListener(v -> showOwnAvatarOrChoose());
         findViewById(R.id.attach_photo).setOnClickListener(v -> choosePhoto());
 
@@ -634,6 +637,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onStart() {
         super.onStart();
+        if(currentPeer!=null)refreshPeerActivity();
         try {
             if (ValaniumService.isSigningOut()) return;
             if (!ValaniumService.core().isOpen()) { autoOpenDatabase(); return; }
@@ -659,6 +663,9 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (manager != null) manager.unregisterNetworkCallback(networkCallback);
             networkCallback = null;
         }
+        ui.removeCallbacks(activityExpiry);
+        peerTypingUntil.clear();
+        for(Runnable timeout:callProbeTimeouts.values())ui.removeCallbacks(timeout);callProbeTimeouts.clear();
         backgroundedAt = SystemClock.elapsedRealtime();
         foregroundAuthorized = false;
         stopRecording(false);
@@ -1169,7 +1176,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView title = new TextView(this);
         title.setText(titleText);
-        title.setTextColor(getColor(R.color.valanium_white));
+        title.setTextColor(themeText());
         title.setTextSize(13);
         copy.addView(title);
         TextView detail = new TextView(this);
@@ -1352,7 +1359,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         switch (themeName()) {
             case "black": return Color.rgb(0, 0, 0);
             case "light": return Color.rgb(246, 244, 248);
-            default: return Color.rgb(11, 8, 16);
+            default: return Color.rgb(11, 11, 14);
         }
     }
 
@@ -1360,7 +1367,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         switch (themeName()) {
             case "black": return Color.rgb(7, 7, 7);
             case "light": return Color.rgb(255, 255, 255);
-            default: return Color.rgb(26, 21, 34);
+            default: return Color.rgb(23, 23, 27);
         }
     }
 
@@ -1369,7 +1376,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         switch (themeName()) {
             case "black": return Color.rgb(16, 16, 16);
             case "light": return Color.rgb(238, 234, 242);
-            default: return Color.rgb(31, 26, 38);
+            default: return Color.rgb(31, 31, 35);
         }
     }
 
@@ -1386,6 +1393,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void applyTheme() {
+        super.setTheme("light".equals(themeName())?R.style.Valanium_Theme_Light:R.style.Valanium_Theme);
         int background = themeBackground();
         View root = findViewById(R.id.app_root);
         if ("black".equals(themeName())) {
@@ -1396,7 +1404,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                     new int[]{
                             blend(background, accentColor(), .94f),
                             background,
-                            blend(background, Color.rgb(238, 134, 116), .97f),
+                            blend(background, accentColor(), .97f),
                     });
             root.setBackground(ambience);
         }
@@ -1415,6 +1423,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                         android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
             }
         }
+        ThemeSurfaces.apply(root, accentColor(), "light".equals(themeName()));
         applyThemeText(findViewById(R.id.app_root));
         layoutTopBars();
     }
@@ -1438,7 +1447,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 original = label.getCurrentTextColor();
                 label.setTag(R.id.base_text_color_tag, original);
             }
-            if (original == Color.rgb(245, 245, 243) || original == Color.WHITE) {
+            if (original == Color.rgb(245, 245, 243) || original == Color.WHITE || original == getColor(R.color.valanium_white)) {
                 label.setTextColor(themeText());
             }
             if (original == getColor(R.color.valanium_dim) || original == getColor(R.color.valanium_muted)) {
@@ -1854,15 +1863,21 @@ public final class MainActivity extends Activity implements Events.Listener {
         loadOlder(conversation);
     }
 
+    private void showCallPreview() {
+        if(currentPeer==null||!currentPeer.matches("[a-f0-9]{64}")){toast(I18n.t("Откройте личный диалог для проверки звонка"));return;}
+        final String peer=currentPeer;
+        new AlertDialog.Builder(this).setTitle(I18n.t("Звонки · первый этап"))
+            .setMessage(I18n.t("Можно проверить защищённый канал звонка. Микрофон не включается: передача звука пока разрабатывается. Проверить поддержку у собеседника?"))
+            .setPositiveButton(I18n.t("Проверить поддержку"),(dialog,which)->submit(Commands.callProbe(peer)))
+            .setNegativeButton(I18n.t("Отмена"),null).show();
+    }
+
     private void chooseAvatar() {
         if (!profilesSupported) {
             toast(I18n.t("Сервер ещё не обновлён для аватаров"));
             return;
         }
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        startActivityForResult(intent, AVATAR_PICK_REQUEST);
+        chooseSystemImage(AVATAR_PICK_REQUEST);
     }
 
     /** Аватар открывается как фото; пустой аватар остаётся быстрым входом в выбор. */
@@ -1895,12 +1910,17 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
     }
 
+    private void chooseSystemImage(int requestCode) {
+        if(Build.VERSION.SDK_INT>=33){
+            try{startActivityForResult(new Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).setType("image/*"),requestCode);return;}
+            catch(android.content.ActivityNotFoundException ignored){}
+        }
+        startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),requestCode);
+    }
+
     private void choosePhoto() {
         if (currentPeer == null) return;
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        startActivityForResult(intent, PHOTO_PICK_REQUEST);
+        chooseSystemImage(PHOTO_PICK_REQUEST);
     }
 
     @Override
@@ -1950,9 +1970,23 @@ public final class MainActivity extends Activity implements Events.Listener {
         final boolean avatar = requestCode == AVATAR_PICK_REQUEST;
         // Декодирование — в фоне: большой снимок иначе подвешивает интерфейс.
         new Thread(() -> {
-            try (InputStream input = getContentResolver().openInputStream(data.getData())) {
-                Bitmap source = BitmapFactory.decodeStream(input);
-                if (source == null) throw new IOException("image decode failed");
+            try {
+                BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
+                try(InputStream input=getContentResolver().openInputStream(data.getData())){BitmapFactory.decodeStream(input,null,options);}
+                if(options.outWidth<=0||options.outHeight<=0)throw new IOException("Invalid image dimensions");
+                options.inSampleSize=1;
+                while(options.outWidth/options.inSampleSize>2048||options.outHeight/options.inSampleSize>2048)options.inSampleSize*=2;
+                options.inJustDecodeBounds=false;
+                Bitmap decoded;
+                try(InputStream input=getContentResolver().openInputStream(data.getData())){decoded=BitmapFactory.decodeStream(input,null,options);}
+                if(decoded==null)throw new IOException("image decode failed");
+                android.graphics.Matrix orientation=new android.graphics.Matrix();
+                try(InputStream input=getContentResolver().openInputStream(data.getData())){
+                    int value=new android.media.ExifInterface(input).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION,1);
+                    switch(value){case 2:orientation.setScale(-1,1);break;case 3:orientation.setRotate(180);break;case 4:orientation.setScale(1,-1);break;case 5:orientation.setRotate(90);orientation.postScale(-1,1);break;case 6:orientation.setRotate(90);break;case 7:orientation.setRotate(270);orientation.postScale(-1,1);break;case 8:orientation.setRotate(270);break;}
+                }catch(IOException ignored){}
+                final Bitmap source=Bitmap.createBitmap(decoded,0,0,decoded.getWidth(),decoded.getHeight(),orientation,true);
+                if(source!=decoded)decoded.recycle();
                 runOnUiThread(() -> openEditor(source, avatar));
             } catch (Exception error) {
                 runOnUiThread(() -> toast(I18n.t("Не удалось прочитать изображение")));
@@ -2374,6 +2408,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void logoutAccount() {
+        peerTypingUntil.clear();peerOnlineUntil.clear();
         if (ValaniumService.isSigningOut()) return;
         foregroundAuthorized = false;
         stopRecording(false);
@@ -2714,7 +2749,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         } catch (Exception ignored) { /* Numeric verification remains available. */ }
         TextView code = new TextView(this);
         code.setText(event.optString("safety_number"));
-        code.setTextColor(getColor(R.color.valanium_white));
+        code.setTextColor(themeText());
         code.setTextIsSelectable(true);
         code.setTextSize(18);
         code.setGravity(Gravity.CENTER);
@@ -2733,7 +2768,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 .setPositiveButton(I18n.t("Ввести код"), (dialog, which) -> {
                     EditText input = new EditText(this);
                     input.setHint(I18n.t("Код с устройства собеседника"));
-                    input.setTextColor(getColor(R.color.valanium_white));
+                    input.setTextColor(themeText());
                     input.setHintTextColor(getColor(R.color.valanium_muted));
                     input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
                     new AlertDialog.Builder(this).setTitle(I18n.t("Сверка кода")).setView(input)
@@ -2883,11 +2918,24 @@ public final class MainActivity extends Activity implements Events.Listener {
             case "access":
                 access = event;
                 break;
+            case "call_status":
+                String callPeer=event.optString("peer_device");
+                Runnable oldCheck=callProbeTimeouts.remove(callPeer);if(oldCheck!=null)ui.removeCallbacks(oldCheck);
+                if ("checking".equals(event.optString("status"))) {
+                    toast(I18n.t("Проверяем поддержку звонков по защищённому каналу…"));
+                    Runnable timeout=()->{callProbeTimeouts.remove(callPeer);toast(I18n.t("Нет ответа на проверку звонка. Проверьте сеть, версию приложения и разрешение звонков у собеседника."));};
+                    callProbeTimeouts.put(callPeer,timeout);ui.postDelayed(timeout,95000);
+                } else if ("media_unavailable".equals(event.optString("status"))) toast(I18n.t("Защищённая сигнализация работает. Передача звука ещё не доступна."));
+                break;
             case "peer_typing":
-                if (event.optString("peer_device").equals(currentPeer)) {
-                    ((TextView) findViewById(R.id.peer_state)).setText(
-                            event.optBoolean("active") ? getString(R.string.typing) : getString(R.string.secure_chat));
-                }
+                String typingPeer = event.optString("peer_device");
+                if (event.optBoolean("active")) peerTypingUntil.put(typingPeer, android.os.SystemClock.elapsedRealtime()+8000);
+                else peerTypingUntil.remove(typingPeer);
+                refreshPeerActivity();
+                break;
+            case "peer_online":
+                peerOnlineUntil.put(event.optString("peer_device"), android.os.SystemClock.elapsedRealtime()+300000);
+                refreshPeerActivity();
                 break;
             case "edited":
                 onEdited(event);
@@ -2970,6 +3018,8 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void onFailed(JSONObject event) {
         String code = event.optString("code");
+        if("call_probe_pending".equals(code)){toast(I18n.t("Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания."));return;}
+        if("call_no_conversation".equals(code)){toast(I18n.t("Сначала начните личную переписку с этим человеком."));return;}
         if ("privacy_preset".equals(code)) {
             maximumPrivacyPending = false;
             findViewById(R.id.privacy_maximize).setEnabled(true);
@@ -3816,7 +3866,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView title = new TextView(this);
         title.setText(titleText);
-        title.setTextColor(getColor(R.color.valanium_white));
+        title.setTextColor(themeText());
         title.setTextSize(16);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
@@ -3997,10 +4047,30 @@ public final class MainActivity extends Activity implements Events.Listener {
         submit(Commands.history(conversation, HISTORY_PAGE, entry.oldest));
     }
 
+    private final Map<String,Runnable> callProbeTimeouts=new java.util.HashMap<>();
+    private final Map<String,Long> peerTypingUntil = new java.util.HashMap<>();
+    private final Map<String,Long> peerOnlineUntil = new java.util.HashMap<>();
+    private final Runnable activityExpiry = this::refreshPeerActivity;
+    private void refreshPeerActivity() {
+        if (currentPeer == null) return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        boolean typing=peerTypingUntil.getOrDefault(currentPeer,0L)>now;
+        boolean online=peerOnlineUntil.getOrDefault(currentPeer,0L)>now;
+        TypingIndicator dots=findViewById(R.id.peer_typing_dots);
+        dots.setColor(accentColor());dots.setVisibility(typing?View.VISIBLE:View.GONE);
+        TextView label=findViewById(R.id.peer_state);
+        label.setText(typing?getString(R.string.typing):online?I18n.t("● В сети недавно"):I18n.t("Статус не сообщается"));
+        label.setTextColor(online?getColor(R.color.valanium_green):themeText());
+        label.setContentDescription(label.getText());
+        ui.removeCallbacks(activityExpiry);
+        if(typing||online)ui.postDelayed(activityExpiry,1000);
+    }
+
     private void updateConversationHeader(String peer) {
         Profile profile = profiles.get(peer);
         peerName.setText(nameWithEmblem(peer));
         applyAvatar(peerAvatar, profile, initials(displayName(peer)));
+        refreshPeerActivity();
     }
 
     private String displayName(String peer) {
@@ -4563,7 +4633,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         identityParams.leftMargin = dp(14);
         identity.setLayoutParams(identityParams);
-        TextView name = peerCardText(displayName(device), 17, getColor(R.color.valanium_white));
+        TextView name = peerCardText(displayName(device), 17, themeText());
         name.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
@@ -4647,7 +4717,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         title.setLayoutParams(new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         row.addView(title);
-        TextView content = peerCardText(value, 11, getColor(R.color.valanium_white));
+        TextView content = peerCardText(value, 11, themeText());
         if (mono) content.setTypeface(android.graphics.Typeface.MONOSPACE);
         content.setMaxLines(1);
         content.setEllipsize(TextUtils.TruncateAt.MIDDLE);
@@ -5493,7 +5563,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView title = new TextView(this);
         title.setText(R.string.attachment_hidden);
-        title.setTextColor(getColor(R.color.valanium_white));
+        title.setTextColor(themeText());
         title.setTextSize(12);
         wrap.addView(title);
 
@@ -5548,7 +5618,7 @@ public final class MainActivity extends Activity implements Events.Listener {
              I18n.t("Вложения от незнакомых не будут показаны и сохранены."), ""},
             {"voice", I18n.t("Голосовые сообщения"), "", ""},
             {"files", I18n.t("Файлы"), "", ""},
-            {"calls", I18n.t("Звонки"), I18n.t("Звонков пока нет; правило начнёт действовать вместе с ними."), ""},
+            {"calls", I18n.t("Звонки"), I18n.t("Кто может проверять поддержку звонков. Звуковые вызовы ещё недоступны."), "everyone,approved,contacts,nobody"},
             {"link_previews", I18n.t("Превью ссылок"),
              I18n.t("Чтобы показать превью, надо сходить на чужой сайт, и он увидит, что ссылку открыли вы."),
              "everyone,contacts,nobody"},
@@ -5687,7 +5757,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
             TextView title = new TextView(this);
             title.setText(row[1]);
-            title.setTextColor(getColor(R.color.valanium_white));
+            title.setTextColor(themeText());
             title.setTextSize(14);
             title.setLayoutParams(new LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -5759,7 +5829,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView label = new TextView(this);
         label.setText(spec[1]);
-        label.setTextColor(getColor(R.color.valanium_white));
+        label.setTextColor(themeText());
         label.setTextSize(13);
         row.addView(label);
 
@@ -6074,7 +6144,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void renderOwnProfile() {
         TextView name = findViewById(R.id.profile_name);
         name.setText(R.string.profile_account_title);
-        name.setTextColor(getColor(R.color.valanium_white));
+        name.setTextColor(themeText());
         // Свой аватар красится тем же цветом, что увидят собеседники.
         Profile own = profiles.get(myDeviceHex);
         if (own != null) {
@@ -6083,6 +6153,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         } else {
             profileAvatar.setBackground(avatarPlaceholder(profileColor(myColor)));
         }
+        TextView headerAvatar = findViewById(R.id.chat_logo);
+        applyAvatar(headerAvatar, own, "ME");
         ((TextView) findViewById(R.id.profile_emblem)).setText(emblemGlyph(myEmblem));
         ((TextView) findViewById(R.id.open_emblem_value))
                 .setText(myEmblem.isEmpty() || "none".equals(myEmblem)
@@ -6244,7 +6316,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         TextView right = new TextView(this);
         right.setText(value);
-        right.setTextColor(getColor(R.color.valanium_white));
+        right.setTextColor(themeText());
         right.setTextSize(12);
         row.addView(left);
         row.addView(right);
@@ -6482,7 +6554,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         TextView mark = new TextView(this);
         mark.setText("◈");
         mark.setGravity(Gravity.CENTER);
-        mark.setTextColor(getColor(R.color.valanium_white));
+        mark.setTextColor(themeText());
         mark.setBackground(avatarPlaceholder());
         mark.setLayoutParams(new LinearLayout.LayoutParams(dp(44), dp(44)));
 
@@ -6564,7 +6636,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView body = new TextView(this);
         body.setText(post.optString("body"));
-        body.setTextColor(getColor(R.color.valanium_white));
+        body.setTextColor(themeText());
         body.setTextSize(14);
 
         TextView when = new TextView(this);
@@ -6710,7 +6782,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView name = new TextView(this);
         name.setText(entry.isNull("display_name") ? displayName(device) : entry.optString("display_name"));
-        name.setTextColor(getColor(R.color.valanium_white));
+        name.setTextColor(themeText());
         name.setTextSize(13);
         card.addView(name);
 
