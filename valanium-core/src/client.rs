@@ -411,8 +411,8 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
         Command::PrivacySet { privacy } => privacy.direct_messages.scope != crate::privacy::Scope::Everyone,
         _ => false,
     };
-    if restricting && load_access(store).policy == crate::access::Policy::Everyone {
-        match passes_ready(store) {
+    if restricting {
+        match restrictions_ready(store) {
             Ok(true) => {},
             _ => {
                 fail(sink, "privacy_pass_exchange_pending",
@@ -1831,6 +1831,13 @@ fn deserving(store: &Store) -> Vec<String> {
 
 // Do not close the bootstrap channel while pass gifts still need it.
 // An already restricted account is never silently reopened on upgrade.
+fn restrictions_ready(store: &Store) -> Result<bool> {
+    // Already restricted accounts may still change transport/privacy settings;
+    // this guard must never prevent switching their primary socket to onion.
+    if load_access(store).policy == crate::access::Policy::Passes { return Ok(true); }
+    passes_ready(store)
+}
+
 fn passes_ready(store: &Store) -> Result<bool> {
     let access = load_access(store);
     for peer in deserving(store) {
@@ -2110,7 +2117,7 @@ async fn wait_before_retry(
             command = commands.recv() => {
                 let Some(command) = command else { return Pause::Closed };
                 if handle_local(&command, store, sink) {
-                    if matches!(command, Command::PrivacyMaximize) && passes_ready(store).unwrap_or(false) { return Pause::Closed; }
+                    if matches!(command, Command::PrivacyMaximize) && restrictions_ready(store).unwrap_or(false) { return Pause::Closed; }
                     continue;
                 }
                 match command {
@@ -2288,7 +2295,7 @@ async fn while_connecting<T>(future: impl std::future::Future<Output = Result<T>
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(None); };
                 if handle_local(&command, store, sink) {
-                    if matches!(command, Command::PrivacyMaximize) && passes_ready(store).unwrap_or(false) { return Ok(None); }
+                    if matches!(command, Command::PrivacyMaximize) && restrictions_ready(store).unwrap_or(false) { return Ok(None); }
                     continue;
                 }
                 match command {
@@ -2707,7 +2714,7 @@ async fn pump(
 
                 // Локальные команды отвечают одинаково, подключены мы или нет.
                 if handle_local(&command, store, sink) {
-                    if matches!(command, Command::PrivacyMaximize) && passes_ready(store).unwrap_or(false) {
+                    if matches!(command, Command::PrivacyMaximize) && restrictions_ready(store).unwrap_or(false) {
                         cancel_removed_anonymous(store, live)?;
                         let _ = socket.close(None).await;
                         sink(Event::Disconnected { reason: "Профиль сохранён; подключаемся через Onion".into() });
@@ -2803,8 +2810,7 @@ async fn pump(
                         }
                     }
                     Command::AccessSet { policy } => {
-                        if policy == crate::access::Policy::Passes && load_access(store).policy == crate::access::Policy::Everyone
-                            && !passes_ready(store)? {
+                        if policy == crate::access::Policy::Passes && !restrictions_ready(store)? {
                             fail(sink, "privacy_pass_exchange_pending", "Дождитесь обмена пропусками с контактами онлайн и повторите.");
                             continue;
                         }
@@ -4567,6 +4573,12 @@ mod tests {
         directory.set(&peer, crate::directory::Standing::Contact, now_millis());
         save_directory(&store.0, &directory).unwrap();
         assert!(!passes_ready(&store.0).unwrap());
+        let mut restricted = load_access(&store.0);
+        restricted.policy = crate::access::Policy::Passes;
+        save_access(&store.0, &restricted).unwrap();
+        assert!(restrictions_ready(&store.0).unwrap());
+        restricted.policy = crate::access::Policy::Everyone;
+        save_access(&store.0, &restricted).unwrap();
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = events.clone();
         let sink: EventSink = Arc::new(move |event| captured.lock().unwrap().push(event));
