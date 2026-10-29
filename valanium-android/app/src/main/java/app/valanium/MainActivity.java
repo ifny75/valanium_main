@@ -3275,12 +3275,9 @@ public final class MainActivity extends Activity implements Events.Listener {
         row.setPadding(0, 0, 0, dp(item.bottomMarginDp));
         View bubble = buildBubble(item.body, item.outgoing, currentPeer);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                item.outgoing ? Gravity.END : Gravity.START);
-        params.leftMargin = item.outgoing ? dp(48) : 0;
-        params.rightMargin = item.outgoing ? 0 : dp(48);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         SwipeMessageLayout swipe = new SwipeMessageLayout(this, bubble,
-                messageActions(item.body, item.outgoing, currentPeer), accentColor());
+                messageActions(item.body, item.outgoing, currentPeer), accentColor(), item.outgoing);
         swipe.setLayoutParams(params);
         row.addView(swipe);
         if (created && motionEnabled()) {

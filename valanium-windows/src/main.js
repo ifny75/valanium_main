@@ -6047,13 +6047,21 @@ $("messages").addEventListener("contextmenu", (event) => {
   openMessageMenu(item, event.clientX, event.clientY);
 });
 
-// Горизонтальный жест открывает те же действия, что правая кнопка мыши.
-// Вертикальное движение оставляем списку для обычной прокрутки.
+// Swipe toward the center; selection uses gesture distance, not bubble width.
 let messageSwipe = null;
 $("messages").addEventListener("pointerdown", (event) => {
   const item = event.target.closest("li[data-message-id]");
-  if (!item || event.button !== 0) return;
-  messageSwipe = { item, x: event.clientX, y: event.clientY, pointerId: event.pointerId, horizontal: false };
+  if (!item || event.button !== 0 || event.isPrimary === false
+      || event.target.closest("button, a, input, textarea, select, audio, video")) return;
+  const box = item.getBoundingClientRect();
+  const list = $("messages");
+  const viewport = list.getBoundingClientRect();
+  const padding = getComputedStyle(list);
+  const left = viewport.left + list.clientLeft + (parseFloat(padding.paddingLeft) || 0);
+  const right = viewport.left + list.clientLeft + list.clientWidth - (parseFloat(padding.paddingRight) || 0);
+  messageSwipe = { item, x: event.clientX, y: event.clientY, pointerId: event.pointerId,
+    horizontal: false, direction: item.classList.contains("out") ? -1 : 1,
+    leftRoom: Math.max(0, box.left - left), rightRoom: Math.max(0, right - box.right) };
 });
 $("messages").addEventListener("pointermove", (event) => {
   const gesture = messageSwipe;
@@ -6064,15 +6072,24 @@ $("messages").addEventListener("pointermove", (event) => {
     messageSwipe = null;
     return;
   }
-  if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) gesture.horizontal = true;
-  if (gesture.horizontal) gesture.item.style.translate = `${Math.max(-70, Math.min(70, dx))}px 0`;
+  if (dx * gesture.direction > 12 && Math.abs(dx) > Math.abs(dy)) {
+    gesture.horizontal = true;
+    if (!gesture.item.hasPointerCapture(event.pointerId)) gesture.item.setPointerCapture(event.pointerId);
+  }
+  if (gesture.horizontal) {
+    event.preventDefault();
+    const travel = gesture.direction * Math.min(70, Math.max(0, dx * gesture.direction));
+    gesture.item.style.translate = `${Math.max(-gesture.leftRoom, Math.min(gesture.rightRoom, travel))}px 0`;
+  }
 });
 function finishMessageSwipe(event) {
   const gesture = messageSwipe;
-  messageSwipe = null;
   if (!gesture || gesture.pointerId !== event.pointerId) return;
+  messageSwipe = null;
   gesture.item.style.translate = "";
-  if (gesture.horizontal && Math.abs(event.clientX - gesture.x) >= 48) {
+  if (gesture.item.hasPointerCapture(event.pointerId)) gesture.item.releasePointerCapture(event.pointerId);
+  if (event.type === "pointerup" && gesture.horizontal
+      && (event.clientX - gesture.x) * gesture.direction >= 48) {
     event.preventDefault();
     const box = gesture.item.getBoundingClientRect();
     openMessageMenu(gesture.item, box.left + box.width / 2, box.bottom + 4);

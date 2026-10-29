@@ -3188,3 +3188,6 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 .privacy-preset h2{font-size:17px;margin:0 0 10px}.privacy-preset p{font-size:12px;line-height:1.7;color:#b3a7bf;margin:0 0 15px}
 .privacy-preset small{display:block;margin-top:12px;max-width:660px;color:#91869d;font-size:11px;line-height:1.7}
 .pc-network-details{border-top:1px solid #ffffff0c;padding:14px 18px;color:#998da4;font-size:11px}.pc-network-details summary{cursor:pointer}.pc-network-details .tor-circuit{font-size:10px;line-height:1.7;overflow-wrap:anywhere;white-space:pre-wrap}
+
+/* Horizontal message gestures coexist with native vertical scrolling. */
+#messages li[data-message-id] { touch-action: pan-y; }

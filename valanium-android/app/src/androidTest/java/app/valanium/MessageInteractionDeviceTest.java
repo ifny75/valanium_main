@@ -51,7 +51,7 @@ public final class MessageInteractionDeviceTest extends InstrumentationTestCase 
             AtomicInteger calls = new AtomicInteger();
             TextView bubble = new TextView(context); bubble.setText("Test message");
             SwipeMessageLayout layout = new SwipeMessageLayout(context, bubble,
-                    Arrays.asList(new SwipeMessageLayout.Action("Reply", "↩", calls::incrementAndGet)), 0xff8251dd);
+                    Arrays.asList(new SwipeMessageLayout.Action("Reply", "↩", calls::incrementAndGet)), 0xff8251dd, true);
             android.widget.FrameLayout parent = new android.widget.FrameLayout(context);
             parent.addView(layout);
             float d = context.getResources().getDisplayMetrics().density;
@@ -64,6 +64,39 @@ public final class MessageInteractionDeviceTest extends InstrumentationTestCase 
             touch(layout, true, MotionEvent.ACTION_MOVE, 150 * d, 41 * d);
             touch(layout, false, MotionEvent.ACTION_CANCEL, 150 * d, 41 * d);
             assertEquals(1, calls.get());
+        });
+    }
+
+    public void testShortIncomingAndLongOutgoingStayInsideFullRow() throws Exception {
+        Context context = getInstrumentation().getTargetContext();
+        assertEquals("app.valanium.qa", context.getPackageName());
+        getInstrumentation().runOnMainSync(() -> {
+            float d = context.getResources().getDisplayMetrics().density;
+            for (boolean outgoing : new boolean[]{false, true}) {
+                for (int bubbleWidth : new int[]{48, 300}) {
+                    AtomicInteger calls = new AtomicInteger();
+                    TextView bubble = new TextView(context);
+                    bubble.setText("АГА"); bubble.setWidth(Math.round(bubbleWidth * d));
+                    SwipeMessageLayout layout = new SwipeMessageLayout(context, bubble,
+                            Arrays.asList(new SwipeMessageLayout.Action("Reply", "↩", calls::incrementAndGet)),
+                            0xff8251dd, outgoing);
+                    android.widget.FrameLayout parent = new android.widget.FrameLayout(context);
+                    parent.addView(layout, new android.widget.FrameLayout.LayoutParams(-1, -2));
+                    parent.measure(View.MeasureSpec.makeMeasureSpec(Math.round(360 * d), View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                    parent.layout(0, 0, parent.getMeasuredWidth(), parent.getMeasuredHeight());
+                    float x = (bubble.getLeft() + bubble.getRight()) / 2f;
+                    float y = (bubble.getTop() + bubble.getBottom()) / 2f;
+                    float end = x + (outgoing ? -90 : 90) * d;
+                    touch(layout, true, MotionEvent.ACTION_DOWN, x, y);
+                    assertTrue(touch(layout, true, MotionEvent.ACTION_MOVE, end, y));
+                    assertTrue(bubble.getLeft() + bubble.getTranslationX() >= 0);
+                    assertTrue(bubble.getRight() + bubble.getTranslationX() <= layout.getWidth());
+                    assertEquals(0, calls.get());
+                    touch(layout, false, MotionEvent.ACTION_UP, end, y);
+                    assertEquals(1, calls.get());
+                }
+            }
         });
     }
 
