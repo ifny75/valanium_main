@@ -7,12 +7,18 @@ final class MessageSwipe {
     private boolean vertical;
     private final int count;
     private final float maximum;
+    private final int direction;
     float offset;
     int active = -1;
 
     MessageSwipe(int count, float maximum) {
+        this(count, maximum, -1);
+    }
+
+    MessageSwipe(int count, float maximum, int direction) {
         this.count = count;
         this.maximum = Math.max(44f, maximum);
+        this.direction = direction < 0 ? -1 : 1;
     }
 
     boolean move(float dx, float dy) {
@@ -22,13 +28,20 @@ final class MessageSwipe {
                 vertical = true;
                 return false;
             }
-            if (dx >= -12 || Math.abs(dx) <= Math.abs(dy)) return false;
+            if (dx * direction <= 12 || Math.abs(dx) <= Math.abs(dy)) return false;
             state = State.DRAGGING;
         }
-        offset = Math.max(-maximum, Math.min(0, dx));
-        active = index(-offset, count, maximum);
+        float distance = Math.max(0, Math.min(maximum, dx * direction));
+        offset = direction * distance;
+        active = index(distance, count, maximum);
         state = active < 0 ? State.DRAGGING : State.ACTION_SELECTED;
         return true;
+    }
+
+    // Selection distance is independent of visual travel. Long bubbles may have
+    // little room, but all actions must remain reachable without clipping text.
+    static float boundedOffset(float offset, float left, float right, float width) {
+        return Math.max(-Math.max(0, left), Math.min(Math.max(0, width - right), offset));
     }
 
     static int index(float distance, int count, float maximum) {

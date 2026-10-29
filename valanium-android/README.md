@@ -1,90 +1,182 @@
-# valanium-android
+<a id="top"></a>
 
-Android-клиент: Java-интерфейс поверх [valanium-core](../valanium-core) через JNI.
+<div align="center">
 
-APK собирается для `arm64-v8a` (современные физические телефоны) и использует
-то же Rust-ядро, что Windows-клиент. Проверенная portable-сборка лежит в
-`app/build/outputs/apk/debug/app-debug.apk`.
+<img src="../valanium_main.png" alt="Valanium для Android" width="100%" />
 
-## Инструменты сборки
+<h1>Valanium для Android</h1>
+
+<p>Личная переписка в нативном интерфейсе.<br />Java, Rust-ядро и встроенный Tor.</p>
+
+<p>
+  <a href="#build"><img src="docs/assets/badges/android.svg" alt="Android: 8.0+" /></a>
+  <a href="#build"><img src="docs/assets/badges/abi.svg" alt="ABI: arm64--v8a" /></a>
+  <a href="ARCHITECTURE.md"><img src="docs/assets/badges/e2ee.svg" alt="E2EE: MLS" /></a>
+  <a href="../LICENSE"><img src="docs/assets/badges/license.svg" alt="License: AGPL v3" /></a>
+</p>
+
+<p>
+  <a href="#features">Возможности</a> &nbsp; · &nbsp;
+  <a href="#build">Сборка</a> &nbsp; · &nbsp;
+  <a href="#checks">Проверки</a> &nbsp; · &nbsp;
+  <a href="ARCHITECTURE.md">Архитектура</a>
+</p>
+
+</div>
+
+<br />
+
+<a id="features"></a>
+
+## Переписка, которая всегда под рукой.
+
+<table>
+<tr>
+<td colspan="2" valign="top">
+<h3>Нативный интерфейс</h3>
+<p>Java UI, переписка, фотографии и голосовые сообщения. Жесты остаются внутри границ строки.</p>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>Локальные секреты</h3>
+<p>Случайный ключ запечатанной базы защищён <b>Android Keystore</b>.</p>
+</td>
+<td width="50%" valign="top">
+<h3>Общее ядро</h3>
+<p>MLS, очередь доставки и Tor работают в Rust. JSON-команды связывают интерфейс с ядром через JNI.</p>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <img src="../resource/valaniumChat_phone.png" alt="Визуальный концепт мобильного интерфейса Valanium" width="460" />
+</p>
+
+<p align="center"><sub>Концепт интерфейса из материалов проекта. Внешний вид зависит от сборки.</sub></p>
+
+<a id="build"></a>
+
+## Собрать Android-клиент
+
+Android 8.0/API 26 или новее; текущая конфигурация APK — `arm64-v8a`.
+Для сборки нужны JDK 17+, Android SDK 35, NDK, Rust и cargo-ndk.
 
 ```bash
-# Android SDK + NDK (через Android Studio или командные инструменты)
 sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
-
-# Мост между cargo и NDK
-cargo install cargo-ndk
-
-# Таргет Rust для телефонов
 rustup target add aarch64-linux-android
-```
-
-Без NDK сборка падает на `libsqlite3-sys`: там компилируется C, и для этого нужен Android-clang. Остальные крейты для `aarch64-linux-android` проверяются и без него.
-
-## Сборка
-
-```bash
+cargo install cargo-ndk
 ./gradlew :app:assembleDebug
 ```
 
-Gradle сам вызовет `cargo ndk` и положит `libvalanium.so` в `app/src/main/jniLibs` — см. задачу `cargoNdk` в [app/build.gradle.kts](app/build.gradle.kts).
+Gradle вызывает задачу `cargoNdk`, собирает библиотеку с `tor-embedded`
+и копирует её в `app/src/main/jniLibs`. APK появляется в
+`app/build/outputs/apk/debug/`. Наличие этого пути не означает, что сборка
+уже выполнена и проверена на устройстве.
 
-При первом запуске новой установки приложение генерирует случайный 256-битный
-ключ базы, защищает его AES-GCM-ключом из Android Keystore и больше не просит
-пароль. Старая база мигрируется одним вводом прежнего пароля. В настройках
-подключения доступны Auto, Basic, Multi-hop и Onion. Auto перебирает маршруты
-Basic → Multi-hop → Onion, пока не найдёт доступный. Для Onion нужен локальный
-SOCKS5 Tor/Orbot на `127.0.0.1:9050`; имя `.onion` передаётся в Tor и не
-разрешается через системный DNS.
+Release собирается неподписанным. Подпись и сохранение совместимой родословной
+ключей выполняются отдельно по процедуре выпуска. Не заменяйте рабочую
+установку отладочной сборкой и не удаляйте её данные ради обновления.
 
-## Устройство
+<a id="experience"></a>
 
+## В повседневном использовании
+
+Своё сообщение сдвигается влево, входящее — вправо, к центру экрана.
+Область жеста занимает всю строку; смещение пузыря ограничено её границами.
+Расстояние для выбора действия считается отдельно от видимого смещения:
+длинный пузырь не вылезает за край, короткий входящий не мешает жесту.
+Вертикальное движение остаётся прокруткой, отмена не запускает действие.
+
+В Android-копии монорепозитория расстояние свайпа выбирает действие: ответ, реакция, копирование, пересылка, редактирование своего текста или удаление. Доступные пункты зависят от типа сообщения и правил приватности.
+
+<details>
+<summary><b>Вход, восстановление личности и сеть</b></summary>
+
+Новая регистрация использует инвайт и ключи личности/устройства.
+Восстановление личности — по секретной фразе из 24 слов; она не возвращает
+историю, если утрачена локальная база. При миграции старой базы может
+потребоваться прежний локальный пароль. Это не серверный вход по паролю.
+
+Ядро поддерживает onion через SOCKS5 и встроенный Tor; доступные пункты
+маршрутизации зависят от версии интерфейса. Старые названия Basic/Multi-hop
+не доказывают, что соответствующий relay-путь работает. Анонимная доставка
+не переходит на AUTH при неудаче: конверт сохраняется и повторяется отдельно.
+Foreground-сервис помогает сохранять связь, но Doze и отсутствие сети
+по-прежнему могут задерживать сообщения.
+
+</details>
+
+<a id="checks"></a>
+
+## Проверки и структура
+
+<details>
+<summary><b>Карта исходников</b></summary>
+
+| Путь | Назначение |
+| --- | --- |
+| `app/src/main/java/app/valanium/MainActivity.java` | Экраны и строки сообщений |
+| `app/src/main/java/app/valanium/SwipeMessageLayout.java` | Область жеста и визуальные границы |
+| `app/src/main/java/app/valanium/MessageSwipe.java` | Логика направления, выбора и отмены без Android API |
+| `app/src/main/java/app/valanium/ValaniumService.java` | Жизненный цикл ядра |
+| `app/src/main/java/app/valanium/LocalSecretStore.java` | Секрет базы и Keystore |
+| `rust` | JNI-мост; JSON-команды и опрос событий |
+
+</details>
+
+```bash
+./gradlew :app:testDebugUnitTest
+# Тесты на отдельной QA-установке, а не на личной базе:
+./gradlew -PisolatedTest :app:connectedDebugAndroidTest
 ```
-rust/                        JNI-обвязка: четыре функции, ~150 строк
-app/src/main/java/app/valanium/
-  core/Core.java             мост к нативной части
-  core/Commands.java         сборка команд в JSON
-  Events.java                события из потока опроса на главный поток
-  ValaniumService.java       foreground-сервис: держит соединение живым
-  LocalSecretStore.java      ключ базы поверх Android Keystore
-  MainActivity.java          автовход → регистрация → переписка
-```
 
-Словарь команд и событий общий с Windows-клиентом — он описан в [valanium-core/README.md](../valanium-core/README.md). Новая возможность добавляется в ядре, а не здесь.
+Обе команды требуют настроенного SDK/NDK из-за задачи сборки JNI.
+`MessageSwipeTest` также можно выполнить обычным JUnit 4: ему нужен только
+`MessageSwipe.java`, без устройства. Проверка `cargo check` JNI на компьютере
+не заменяет сборку Android ABI и тесты на настоящем телефоне.
 
-### Почему опрос, а не колбэк
+<a id="ecosystem"></a>
 
-Колбэк из Rust-потока в JVM требует `AttachCurrentThread` и `GlobalRef`, и ошибка в любом из них даёт UB, который воспроизводится раз в неделю на чужом устройстве. Один фоновый поток, крутящий `nativePoll(500)`, не требует ничего: поток спит в нативной части, процессор не жжётся.
+## Часть экосистемы Valanium
 
-### Почему foreground-сервис
+<table>
+<tr>
+<td width="50%" valign="top">
+<strong><a href="https://github.com/ifny75/valanium_main">Valanium Core</a></strong><br />
+<sub>Rust-ядро, протокол и все компоненты проекта.</sub>
+</td>
+<td width="50%" valign="top">
+<strong><a href="https://github.com/ifny75/valanium_server">Valanium Server</a></strong><br />
+<sub>WebSocket-релей, очередь и развёртывание.</sub>
+</td>
+</tr>
+<tr>
+<td valign="top">
+<strong><a href="https://github.com/ifny75/valanium_android">Valanium для Android</a></strong><br />
+<sub>Java-интерфейс, JNI и встроенный Tor.</sub>
+</td>
+<td valign="top">
+<strong><a href="https://github.com/ifny75/valanium_pc">Valanium для Windows</a></strong><br />
+<sub>Tauri 2, WebView2 и общее Rust-ядро.</sub>
+</td>
+</tr>
+</table>
 
-Без него Doze прибивает WebSocket, и сообщения перестают приходить при выключенном экране. Уведомление намеренно пустое — ни имён, ни текстов: оно видно на заблокированном экране.
+Ядро подключено локально из `../valanium-core`; отдельный git-репозиторий клиента использует закреплённый SHA.
 
-### Гонка poll и close
+Копии интерфейса в монорепозитории и отдельном репозитории могут различаться.
+Изменение файлов на GitHub не заменяет установленный APK.
 
-`nativePoll` висит в нативной части до таймаута, а `close()` освобождает ту самую сессию — вызов close во время poll был бы use-after-free. Поэтому в `Core.java` poll держит read-замок, а close ждёт write-замок: закрытие произойдёт не раньше, чем poll вернётся. Сервис в `onDestroy` дополнительно ждёт поток опроса.
+<a id="license"></a>
 
-## Что проверено
+## Лицензия
 
-| | чем |
-|---|---|
-| JNI-крейт компилируется, 2 юнит-теста | `cargo test` в `rust/` |
-| Имена и сигнатуры нативных методов совпадают с Java | `tools/check-jni.sh` (нужен только JDK) |
-| Сборка команд, включая экранирование | 8 тестов в `CommandsTest`, прогнаны обычным javac |
-| Полная debug-сборка APK для `arm64-v8a` | `:app:assembleDebug` |
-| Ресурсы, Java, DEX и Android-манифест | Android Gradle Plugin 8.7.3 |
-| Подпись APK | APK Signature Scheme v2 |
+[GNU Affero General Public License v3.0](../LICENSE).
+Авторские права — [COPYRIGHT](../COPYRIGHT).
+Названия и знаки проекта — [../TRADEMARK.md](../TRADEMARK.md).
 
-`tools/check-jni.sh` стоит гонять после каждой правки нативных методов: расхождение имён не ловят ни javac, ни rustc — оно вылезает `UnsatisfiedLinkError` уже на устройстве.
-
-## Если правишь интерфейс
-
-- Логики протокола в активности нет: она шлёт команды и рисует события.
-- AndroidX не подключён намеренно — активность наследуется от `android.app.Activity`, приложению хватает системных классов. Чем меньше зависимостей у мессенджера, тем меньше поверхность supply chain.
-- `allowBackup="false"` в манифесте не случайность: автобэкап утащил бы зашифрованную базу вместе с ключами на чужие серверы.
-- Адрес устройства (64 hex-символа) — это то, что пользователь даёт собеседнику, чтобы тот написал первым.
-
-## Чего нет
-
-- Пуш-уведомлений: пока приложение должно быть запущено. Дальше — UnifiedPush или пустой FCM-будильник без содержимого.
-- Нет сверки отпечатка собеседника, вложений, списка непрочитанного, уведомлений о сообщениях.
+<div align="center">
+<sub>Valanium · Android · Windows · Rust</sub><br />
+<a href="#top">Вернуться к началу ↑</a>
+</div>

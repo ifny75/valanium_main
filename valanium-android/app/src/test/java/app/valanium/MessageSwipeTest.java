@@ -55,4 +55,40 @@ public class MessageSwipeTest {
         swipe.move(-30, 0);
         assertEquals(-1, swipe.release(false));
     }
+    @Test public void incomingShortBubbleCanSelectEveryActionBySwipingRight() {
+        MessageSwipe swipe = new MessageSwipe(6, 240, 1);
+        assertFalse(swipe.move(-80, 0));
+        for (int i = 0; i < 6; i++) {
+            assertTrue(swipe.move(44 + i * 39.2f, 1));
+            assertEquals(i, swipe.active);
+        }
+        assertEquals(5, swipe.release(false));
+    }
+    @Test public void longBubblesStayWithinRowWhileEveryActionRemainsReachable() {
+        for (int direction : new int[]{-1, 1}) {
+            MessageSwipe swipe = new MessageSwipe(6, 240, direction);
+            swipe.move(direction * 240, 0);
+            assertEquals(5, swipe.active);
+            float left = direction < 0 ? 48 : 0;
+            float right = direction < 0 ? 360 : 312;
+            float travel = MessageSwipe.boundedOffset(swipe.offset, left, right, 360);
+            assertTrue(left + travel >= 0);
+            assertTrue(right + travel <= 360);
+            assertEquals(direction * 48, travel, .001f);
+        }
+    }
+    @Test public void bubbleBoundsHoldForShortAndFullWidthMessages() {
+        for (int width : new int[]{48, 320, 600}) {
+            for (int length : new int[]{20, 40, width}) {
+                if (length > width) continue;
+                for (int left = 0; left + length <= width; left += 4) {
+                    for (int requested : new int[]{-900, -20, 0, 20, 900}) {
+                        float travel = MessageSwipe.boundedOffset(requested, left, left + length, width);
+                        assertTrue(left + travel >= 0);
+                        assertTrue(left + length + travel <= width);
+                    }
+                }
+            }
+        }
+    }
 }

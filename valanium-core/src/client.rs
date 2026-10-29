@@ -54,6 +54,7 @@ async fn open_socket(url: &str) -> Result<Socket> {
     if url.contains(".onion") && !valid_onion_host(&host) {
         return Err(CoreError::Transport("некорректный onion-адрес".into()));
     }
+    let started = std::time::Instant::now();
     let stream: Box<dyn NetworkStream> = if valid_onion_host(&host) {
         let proxy = std::env::var("VALANIUM_TOR_SOCKS").unwrap_or_else(|_| "127.0.0.1:9050".into());
         Box::new(
@@ -69,6 +70,7 @@ async fn open_socket(url: &str) -> Result<Socket> {
         )
     };
 
+    delivery_timing(if valid_onion_host(&host) { "socks_connect" } else { "tcp_connect" }, started);
     client_async_tls_with_config(request, stream, None, None)
         .await
         .map(|(socket, _)| socket)
@@ -291,12 +293,16 @@ struct Live {
     /// протухший билет приводит к новой анонимной попытке, без downgrade.
     tickets: VecDeque<[u8; proto::TICKET_LEN]>,
     anon_inflight: HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
-    anon_retry_at: Option<tokio::time::Instant>,
+    anon_retries: HashMap<[u8; ID_LEN], (tokio::time::Instant, u32)>,
+    route_cooldowns: HashMap<String, tokio::time::Instant>,
+    // Unauthenticated, single-use socket. Never shared between messages.
+    prewarm: Option<(String, tokio::time::Instant, tokio::task::JoinHandle<Result<(Socket, bool)>>)>,
     require_anonymous: bool,
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
+        if let Some((_, _, task)) = self.prewarm.take() { task.abort(); }
         for task in self.anon_inflight.values() { task.abort(); }
     }
 }
@@ -311,6 +317,7 @@ impl Drop for Live {
 /// переживает переподключение, поэтому исход, пришедший уже после разрыва
 /// связи, не потеряется — дождётся следующего захода `pump`.
 struct AnonOutcome {
+    route: String,
     client_ref: [u8; ID_LEN],
     result: std::result::Result<[u8; ID_LEN], ()>,
 }
@@ -399,6 +406,22 @@ impl Engine {
 /// connected», если про второе место забывали, — на этом и попался
 /// `recovery_code`, который нужен как раз тогда, когда клиент подключён.
 fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
+    let restricting = match command {
+        Command::PrivacyMaximize => true,
+        Command::PrivacySet { privacy } => privacy.direct_messages.scope != crate::privacy::Scope::Everyone,
+        _ => false,
+    };
+    if restricting {
+        match restrictions_ready(store) {
+            Ok(true) => {},
+            _ => {
+                fail(sink, "privacy_pass_exchange_pending",
+                    "Сначала дождитесь обмена пропусками с контактами онлайн, затем повторите включение приватности. Настройки не изменены.");
+                return true;
+            }
+        }
+    }
+
     // Account entry and discovery are seed-only. Handle legacy commands locally,
     // before either the disconnected or connected network dispatcher sees them.
     if matches!(command, Command::UsernameSet { .. } | Command::UsernameLookup { .. }
@@ -1806,6 +1829,27 @@ fn deserving(store: &Store) -> Vec<String> {
         .collect()
 }
 
+// Do not close the bootstrap channel while pass gifts still need it.
+// An already restricted account is never silently reopened on upgrade.
+fn restrictions_ready(store: &Store) -> Result<bool> {
+    // Already restricted accounts may still change transport/privacy settings;
+    // this guard must never prevent switching their primary socket to onion.
+    if load_access(store).policy == crate::access::Policy::Passes { return Ok(true); }
+    passes_ready(store)
+}
+
+fn passes_ready(store: &Store) -> Result<bool> {
+    let access = load_access(store);
+    for peer in deserving(store) {
+        let raw = hex::decode(&peer).map_err(|_| CoreError::BadFrame)?;
+        if store.conversation_with(&raw)?.is_some()
+            && (!access.granted.contains_key(&peer) || !access.held.contains_key(&peer)) {
+            return Ok(false);
+        }
+    }
+    Ok(!crate::anon_queue::load(store)?.iter().any(|item| item.kind == crate::anon_queue::Kind::Essential))
+}
+
 fn blocked(store: &Store, device: &str) -> bool {
     load_directory(store).is_blocked(device)
 }
@@ -2073,7 +2117,7 @@ async fn wait_before_retry(
             command = commands.recv() => {
                 let Some(command) = command else { return Pause::Closed };
                 if handle_local(&command, store, sink) {
-                    if matches!(command, Command::PrivacyMaximize) { return Pause::Closed; }
+                    if matches!(command, Command::PrivacyMaximize) && restrictions_ready(store).unwrap_or(false) { return Pause::Closed; }
                     continue;
                 }
                 match command {
@@ -2251,7 +2295,7 @@ async fn while_connecting<T>(future: impl std::future::Future<Output = Result<T>
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(None); };
                 if handle_local(&command, store, sink) {
-                    if matches!(command, Command::PrivacyMaximize) { return Ok(None); }
+                    if matches!(command, Command::PrivacyMaximize) && restrictions_ready(store).unwrap_or(false) { return Ok(None); }
                     continue;
                 }
                 match command {
@@ -2657,6 +2701,12 @@ async fn pump(
                         sink(Event::Disconnected { reason: err.to_string() });
                         return Ok(Outcome::Retry);
                     }
+                    if authenticated && matches!(proto::split(&data), Ok((op::ENVELOPE | op::KEYPKG, _))) {
+                        if let Err(err) = grant_missing(&mut socket, store, mls, sink, live).await {
+                            fail(sink, "pass_grant", &err.to_string());
+                        }
+                        flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
+                    }
                 }
             }
             command = commands.recv() => {
@@ -2664,7 +2714,7 @@ async fn pump(
 
                 // Локальные команды отвечают одинаково, подключены мы или нет.
                 if handle_local(&command, store, sink) {
-                    if matches!(command, Command::PrivacyMaximize) {
+                    if matches!(command, Command::PrivacyMaximize) && restrictions_ready(store).unwrap_or(false) {
                         cancel_removed_anonymous(store, live)?;
                         let _ = socket.close(None).await;
                         sink(Event::Disconnected { reason: "Профиль сохранён; подключаемся через Onion".into() });
@@ -2760,6 +2810,10 @@ async fn pump(
                         }
                     }
                     Command::AccessSet { policy } => {
+                        if policy == crate::access::Policy::Passes && !restrictions_ready(store)? {
+                            fail(sink, "privacy_pass_exchange_pending", "Дождитесь обмена пропусками с контактами онлайн и повторите.");
+                            continue;
+                        }
                         let label = match policy {
                             crate::access::Policy::Everyone => "everyone",
                             crate::access::Policy::Passes => "passes",
@@ -3234,6 +3288,9 @@ async fn pump(
                 }
                 if authenticated { flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?; }
             }
+            _ = wait_anonymous_retry(if greeting.sealed_sender && !live.tickets.is_empty() { next_anonymous_retry(live) } else { None }), if authenticated => {
+                flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
+            }
             _ = ticker.tick() => {
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
                 if authenticated {
@@ -3241,10 +3298,12 @@ async fn pump(
                 }
             }
             // An anonymous outcome is never a reason to send via AUTH.
-            Some(AnonOutcome { client_ref, result }) = anon_rx.recv() => {
+            Some(AnonOutcome { route, client_ref, result }) = anon_rx.recv() => {
                 live.anon_inflight.remove(&client_ref);
                 match result {
                     Ok(envelope_id) => {
+                        live.anon_retries.remove(&client_ref);
+                        live.route_cooldowns.remove(&route);
                         let completed = crate::anon_queue::load(store)?.into_iter()
                             .find(|item| item.client_ref == client_ref);
                         crate::anon_queue::acknowledge(store, &client_ref)?;
@@ -3262,7 +3321,10 @@ async fn pump(
                         if let Some(item) = crate::anon_queue::load(store)?.into_iter().find(|item| item.client_ref == client_ref) {
                             if let Some(id) = item.logical_id { emit_delivery(store, sink, &item.conversation, &id)?; }
                         }
-                        live.anon_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+                        let attempts = live.anon_retries.get(&client_ref).map_or(1, |(_, n)| n.saturating_add(1));
+                        let delay = Duration::from_secs((1u64 << attempts.min(3)).min(10));
+                        live.anon_retries.insert(client_ref, (tokio::time::Instant::now() + delay, attempts));
+                        live.route_cooldowns.insert(route, tokio::time::Instant::now() + Duration::from_secs(30));
                         fail(sink, "anonymous_delivery_waiting",
                             "Анонимная доставка ожидает Tor. Сообщение сохранено; обычная отправка отключена.");
                     }
@@ -4203,8 +4265,12 @@ fn queue_offline(store: &Store, sink: &EventSink, recipient: &str, body: &str) {
 /// которую sealed sender обещает (ARCHITECTURE.md §7a). Список онион-входов
 /// почти никогда не пуст — три запасных зашиты в сборку, — но défensive-`None`
 /// оставлен на случай, если это когда-нибудь перестанет быть так.
-fn pick_onion_route(store: &Store) -> Option<String> {
-    let hosts = load_onion_hosts(store);
+fn pick_onion_route(store: &Store, live: &Live) -> Option<String> {
+    let mut hosts = load_onion_hosts(store);
+    let now = tokio::time::Instant::now();
+    let healthy: Vec<_> = hosts.iter().filter(|route|
+        !live.route_cooldowns.get(*route).is_some_and(|until| *until > now)).cloned().collect();
+    if !healthy.is_empty() { hosts = healthy; }
     if hosts.is_empty() {
         return None;
     }
@@ -4236,27 +4302,50 @@ async fn send_anon_once(
     if !request.uri().host().is_some_and(valid_onion_host) {
         return Err(CoreError::Transport("анонимная доставка требует onion-маршрут".into()));
     }
-    let mut socket = open_socket(&route).await?;
+    let (socket, supports_passes) = prepare_anonymous_socket(&route).await?;
+    send_on_anonymous_socket(socket, supports_passes, client_ref, ticket, device, ciphertext, pass).await
+}
 
+// Contains no identity, recipient, ticket or message while waiting in the pool.
+async fn prepare_anonymous_socket(route: &str) -> Result<(Socket, bool)> {
+    let started = std::time::Instant::now();
+    let request = crate::edge::ws_request(route)?;
+    if !request.uri().host().is_some_and(valid_onion_host) { return Err(CoreError::BadFrame); }
+    let mut socket = open_socket(route).await?;
+    delivery_timing("socks_ws_connect", started);
+    let started = std::time::Instant::now();
     loop {
-        let message = socket
-            .next()
-            .await
+        let message = socket.next().await
             .ok_or_else(|| CoreError::Transport("closed before hello".into()))?
             .map_err(|err| CoreError::Transport(err.to_string()))?;
         if let Message::Binary(data) = message {
             let (opcode, body) = proto::split(&data)?;
             if opcode == op::HELLO {
-                if let Some(pass) = &pass {
-                    let hello: Hello = proto::parse_json(body)?;
-                    if !hello.features.sealed_sender_passes { return Err(CoreError::Rejected("anonymous_pass_unsupported".into())); }
-                    send(&mut socket, proto::pass_present_frame(&hex::encode(device), pass)?).await?;
-                }
-                break;
+                let hello: Hello = proto::parse_json(body)?;
+                if !hello.features.sealed_sender { return Err(CoreError::Rejected("anonymous_unsupported".into())); }
+                delivery_timing("ws_hello", started);
+                return Ok((socket, hello.features.sealed_sender_passes));
             }
         }
     }
+}
 
+fn delivery_timing(stage: &str, started: std::time::Instant) {
+    if std::env::var_os("VALANIUM_DELIVERY_TIMINGS").is_some() {
+        eprintln!("valanium_delivery stage={stage} elapsed_ms={}", started.elapsed().as_millis());
+    }
+}
+
+async fn send_on_anonymous_socket(
+    mut socket: Socket, supports_passes: bool,
+    client_ref: [u8; ID_LEN], ticket: [u8; proto::TICKET_LEN],
+    device: [u8; KEY_LEN], ciphertext: Vec<u8>, pass: Option<String>,
+) -> Result<[u8; ID_LEN]> {
+    if let Some(pass) = &pass {
+        if !supports_passes { return Err(CoreError::Rejected("anonymous_pass_unsupported".into())); }
+        send(&mut socket, proto::pass_present_frame(&hex::encode(device), pass)?).await?;
+    }
+    let started = std::time::Instant::now();
     send(
         &mut socket,
         proto::send_anon_frame(&client_ref, &ticket, &device, DEFAULT_TTL_SEC, &ciphertext),
@@ -4286,7 +4375,9 @@ async fn send_anon_once(
             _ => continue,
         }
     };
-    let _ = socket.close(None).await;
+    delivery_timing("server_ack", started);
+    // ACK is final; do not delay queue progress for the close handshake.
+    drop(socket);
     Ok(envelope_id)
 }
 
@@ -4305,16 +4396,23 @@ fn spawn_anon_send(
     outcomes: mpsc::UnboundedSender<AnonOutcome>,
     expires_at: Option<i64>,
     pass: Option<String>,
+    prepared: Option<(Socket, bool)>,
 ) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         let result = match tokio::time::timeout(
             expires_at.map(|at| Duration::from_millis(at.saturating_sub(now_millis()).max(0) as u64).min(ANON_SEND_TIMEOUT)).unwrap_or(ANON_SEND_TIMEOUT),
-            send_anon_once(route, client_ref, ticket, device, ciphertext, pass),
+            async {
+                match prepared {
+                    Some((socket, supports_passes)) => send_on_anonymous_socket(socket, supports_passes,
+                        client_ref, ticket, device, ciphertext, pass).await,
+                    None => send_anon_once(route.clone(), client_ref, ticket, device, ciphertext, pass).await,
+                }
+            },
         ).await {
             Ok(Ok(envelope_id)) => Ok(envelope_id),
             _ => Err(()),
         };
-        let _ = outcomes.send(AnonOutcome { client_ref, result });
+        let _ = outcomes.send(AnonOutcome { route, client_ref, result });
     }).abort_handle()
 }
 
@@ -4327,6 +4425,40 @@ fn cancel_removed_anonymous(store: &Store, live: &mut Live) -> Result<()> {
     Ok(())
 }
 
+fn maintain_anonymous_prewarm(store: &Store, live: &mut Live) {
+    if !live.require_anonymous { return; }
+    let now = tokio::time::Instant::now();
+    if live.prewarm.as_ref().is_some_and(|(route, since, _)|
+        now.duration_since(*since) > Duration::from_secs(45)
+            || live.route_cooldowns.get(route).is_some_and(|until| *until > now)) {
+        if let Some((_, _, task)) = live.prewarm.take() { task.abort(); }
+    }
+    if live.prewarm.is_none() {
+        if let Some(route) = pick_onion_route(store, live) {
+            let target = route.clone();
+            let task = tokio::spawn(async move {
+                tokio::time::timeout(ANON_SEND_TIMEOUT, prepare_anonymous_socket(&target)).await
+                    .map_err(|_| CoreError::Transport("anonymous prewarm timeout".into()))?
+            });
+            live.prewarm = Some((route, now, task));
+        }
+    }
+}
+
+// Ignore active sends: their old retry deadline must not spin the select loop.
+fn next_anonymous_retry(live: &Live) -> Option<tokio::time::Instant> {
+    if live.anon_inflight.len() >= 4 { return None; }
+    live.anon_retries.iter().filter(|(id, _)| !live.anon_inflight.contains_key(*id))
+        .map(|(_, (until, _))| *until).min()
+}
+
+async fn wait_anonymous_retry(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
 /// Retry only through anonymous onion connections; keep storage until ACK.
 async fn flush_anonymous(
     socket: &mut Socket,
@@ -4336,7 +4468,7 @@ async fn flush_anonymous(
     available: bool,
     outcomes: &mpsc::UnboundedSender<AnonOutcome>,
 ) -> Result<()> {
-    if !available || live.anon_retry_at.is_some_and(|at| at > tokio::time::Instant::now()) {
+    if !available {
         return Ok(());
     }
     crate::anon_queue::bound_legacy_lifetimes(store, now_millis(), i64::from(DEFAULT_TTL_SEC) * 1000)?;
@@ -4347,13 +4479,28 @@ async fn flush_anonymous(
         }
     }
     let queue = crate::anon_queue::prune_expired(store, now_millis())?;
+    maintain_anonymous_prewarm(store, live);
+    let queued: HashSet<_> = queue.iter().map(|item| item.client_ref).collect();
+    live.anon_retries.retain(|id, _| queued.contains(id));
     if queue.is_empty() { return Ok(()); }
     if live.tickets.len() < TICKET_LOW_WATERMARK {
         send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
     }
-    let inflight = live.anon_inflight.keys().copied().collect();
+    let now = tokio::time::Instant::now();
+    let inflight = live.anon_inflight.keys().copied().chain(live.anon_retries.iter()
+        .filter(|(_, (until, _))| *until > now).map(|(id, _)| *id)).collect();
     for envelope in crate::anon_queue::ready(&queue, &inflight, 4usize.saturating_sub(live.anon_inflight.len())) {
-        if let (Some(route), Some(ticket)) = (pick_onion_route(store), live.tickets.pop_front()) {
+        let mut prepared = None;
+        let mut route = pick_onion_route(store, live);
+        if live.prewarm.as_ref().is_some_and(|(_, _, task)| task.is_finished()) {
+            if let Some((warm_route, _, task)) = live.prewarm.take() {
+                if let Ok(Ok(socket)) = task.await {
+                    route = Some(warm_route);
+                    prepared = Some(socket);
+                }
+            }
+        }
+        if let (Some(route), Some(ticket)) = (route, live.tickets.pop_front()) {
             if envelope.kind == crate::anon_queue::Kind::Message {
                 if let Some(id) = &envelope.logical_id {
                     sink(Event::Delivery { conversation: hex::encode(&envelope.conversation), id: id.clone(), state: "sending".into() });
@@ -4361,10 +4508,11 @@ async fn flush_anonymous(
             }
             let task = spawn_anon_send(route, envelope.client_ref, ticket, envelope.device,
                 envelope.ciphertext, outcomes.clone(), envelope.expires_at,
-                load_access(store).held.get(&hex::encode(envelope.device)).cloned());
+                load_access(store).held.get(&hex::encode(envelope.device)).cloned(), prepared);
             live.anon_inflight.insert(envelope.client_ref, task);
         } else { break; }
     }
+    maintain_anonymous_prewarm(store, live);
     Ok(())
 }
 
@@ -4403,6 +4551,71 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn retry_deadline_wakes_without_heartbeat_and_ignores_active_sends() {
+        let mut live = Live::default();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(20);
+        live.anon_retries.insert([1; ID_LEN], (deadline, 1));
+        assert_eq!(next_anonymous_retry(&live), Some(deadline));
+        tokio::time::timeout(Duration::from_secs(1), wait_anonymous_retry(next_anonymous_retry(&live))).await.unwrap();
+        let task = tokio::spawn(std::future::pending::<()>());
+        live.anon_inflight.insert([1; ID_LEN], task.abort_handle());
+        assert_eq!(next_anonymous_retry(&live), None);
+    }
+
+    #[test]
+    fn restrictions_wait_for_mutual_pass_exchange_without_changing_settings() {
+        let store = TempStore::new("pass-barrier");
+        let (_, _, _, device, _) = established_pair(&store.0);
+        let peer = hex::encode(device);
+        let mut directory = load_directory(&store.0);
+        directory.set(&peer, crate::directory::Standing::Contact, now_millis());
+        save_directory(&store.0, &directory).unwrap();
+        assert!(!passes_ready(&store.0).unwrap());
+        let mut restricted = load_access(&store.0);
+        restricted.policy = crate::access::Policy::Passes;
+        save_access(&store.0, &restricted).unwrap();
+        assert!(restrictions_ready(&store.0).unwrap());
+        restricted.policy = crate::access::Policy::Everyone;
+        save_access(&store.0, &restricted).unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink: EventSink = Arc::new(move |event| captured.lock().unwrap().push(event));
+        assert!(handle_local(&Command::PrivacyMaximize, &store.0, &sink));
+        assert!(matches!(events.lock().unwrap().last(), Some(Event::Failed { code, .. }) if code == "privacy_pass_exchange_pending"));
+        assert!(store.0.load_setting(PRIVACY_KEY).unwrap().is_none());
+        let mut access = load_access(&store.0);
+        let (pass, hash) = crate::access::new_pass();
+        access.remember_grant(&peer, &hash);
+        save_access(&store.0, &access).unwrap();
+        assert!(!passes_ready(&store.0).unwrap());
+        access.hold(&peer, &pass);
+        save_access(&store.0, &access).unwrap();
+        assert!(passes_ready(&store.0).unwrap());
+    }
+
+    #[tokio::test]
+    async fn prepared_socket_sends_one_anonymous_envelope_and_never_authenticates() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let server = tokio::spawn(async move {
+            let mut observer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+            let pass = observer.next().await.unwrap().unwrap().into_data();
+            assert_eq!(proto::split(&pass).unwrap().0, op::PASS_PRESENT);
+            let data = observer.next().await.unwrap().unwrap().into_data();
+            assert_eq!(proto::split(&data).unwrap().0, op::SEND_ANON);
+            let mut body = vec![1; ID_LEN];
+            body.extend_from_slice(&[8; ID_LEN]);
+            observer.send(Message::Binary(proto::frame(op::SEND_OK, &body))).await.unwrap();
+        });
+        let result = send_on_anonymous_socket(socket, true, [1; ID_LEN], [0; proto::TICKET_LEN],
+            [2; KEY_LEN], vec![3; 256], Some(hex::encode([4; 32]))).await.unwrap();
+        assert_eq!(result, [8; ID_LEN]);
+        server.await.unwrap();
+    }
 
     #[test]
     fn retired_account_commands_are_rejected_locally_without_network_or_mutation() {
@@ -4671,7 +4884,7 @@ mod tests {
         crate::anon_queue::enqueue(&store.0, envelope.clone()).unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
         spawn_anon_send("not-a-url".into(), envelope.client_ref, [0; proto::TICKET_LEN],
-            envelope.device, envelope.ciphertext.clone(), tx, None, None);
+            envelope.device, envelope.ciphertext.clone(), tx, None, None, None);
         let outcome = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
         assert!(outcome.result.is_err());
         assert_eq!(outcome.client_ref, envelope.client_ref);

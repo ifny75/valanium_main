@@ -18,7 +18,7 @@ import { RateLimiter } from "../src/util/ratelimit.ts";
 import { TicketKey, TicketStore } from "../src/auth/tickets.ts";
 import { ConnectionCounter } from "../src/util/connections.ts";
 import { authMessage, deviceCertMessage } from "../src/auth/verify.ts";
-import { handleMessage, handleOpen, newConnData, type Deps } from "../src/ws/session.ts";
+import { handleDrain, handleMessage, handleOpen, newConnData, type Deps } from "../src/ws/session.ts";
 import { ID_LEN, OP, frame, jsonFrame } from "../src/proto/frames.ts";
 import { ascii, concat, fromHex, random, toHex } from "../src/util/bytes.ts";
 
@@ -346,5 +346,53 @@ test("допуск не переживает переподключение", ()
   const again = register(deps, store, sender, "sender");
   handleMessage(deps, again.sock, again.conn, sendFrame(recipient.devPub));
   assert.equal(again.sock.json(OP.ERROR).code, "dm_not_allowed");
+  store.close();
+});
+
+
+test("queue advances beyond 200 without duplicate batches or reconnect", () => {
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const user = makeIdentity();
+  const { sock, conn } = register(deps, store, user, "queue-user");
+  const now = deps.now();
+  for (let n = 0; n < 451; n++) store.enqueue(user.devPub, ascii(`message-${n}`), now, now + 60000);
+  handleDrain(deps, sock, conn);
+  const seen = new Set<string>();
+  let offset = 0;
+  while (store.countPending(user.devPub, now)) {
+    const batch = sock.sent.slice(offset).filter(f => f[0] === OP.ENVELOPE);
+    offset = sock.sent.length;
+    assert.ok(batch.length > 0 && batch.length <= 200);
+    // ACK out of order, then duplicate ACK: neither may resend the active batch.
+    for (const envelope of batch.reverse()) {
+      const id = envelope.subarray(1, 1 + ID_LEN);
+      assert.ok(!seen.has(toHex(id)), "duplicate queue delivery");
+      seen.add(toHex(id));
+      handleMessage(deps, sock, conn, frame(OP.ACK, id));
+      handleMessage(deps, sock, conn, frame(OP.ACK, id));
+    }
+  }
+  assert.equal(seen.size, 451);
+  assert.equal(conn.queueInflight.size, 0);
+  assert.ok(sock.has(OP.QUEUE_DONE));
+  store.close();
+});
+
+test("queue resumes after transport backpressure", () => {
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const user = makeIdentity();
+  const { sock, conn } = register(deps, store, user, "backpressure-user");
+  const now = deps.now();
+  store.enqueue(user.devPub, ascii("queued"), now, now + 60000);
+  sock.getBufferedAmount = () => 5 * 1024 * 1024;
+  handleDrain(deps, sock, conn);
+  assert.equal(sock.has(OP.ENVELOPE), false);
+  sock.getBufferedAmount = () => 0;
+  handleDrain(deps, sock, conn);
+  assert.equal(sock.has(OP.ENVELOPE), true);
+  handleMessage(deps, sock, conn, frame(OP.ACK, sock.take(OP.ENVELOPE).subarray(1, 1 + ID_LEN)));
+  assert.equal(store.countPending(user.devPub, now), 0);
   store.close();
 });

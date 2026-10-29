@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build --no-bundle",
-    "icon": "tauri icon ../resource/msg_app_icon.svg"
+    "icon": "tauri icon ../resource/msg_app_icon.svg",
+    "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
