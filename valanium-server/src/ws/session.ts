@@ -82,6 +82,8 @@ export interface ConnData {
    * отсутствия которой всё и затевалось.
    */
   admitted: Set<string>;
+  /** Queue batch awaiting ACK; transient and bounded by DRAIN_BATCH. */
+  queueInflight: Set<string>;
   /** Учтён ли этот сокет в счётчике адреса. Снимается ровно один раз. */
   counted: boolean;
   /** Числится ли он ещё среди неназвавшихся. Тоже снимается ровно один раз. */
@@ -103,6 +105,7 @@ export function newConnData(ip: string, onion = false): ConnData {
     devicePubHex: null,
     paymentRef: null,
     admitted: new Set(),
+    queueInflight: new Set(),
     counted: false,
     anonymous: false,
   };
@@ -233,7 +236,7 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
         return;
       case OP.ACK:
         requireAuth(conn);
-        onAck(deps, conn, body);
+        onAck(deps, sock, conn, body);
         return;
       case OP.KEYPKG_PUBLISH:
         requireAuth(conn);
@@ -647,7 +650,7 @@ function onAuth(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): voi
 
   sendProfile(sock, deps.store.ensureProfile(identity, now), devicePub);
 
-  drainQueue(deps, sock, devicePub, now);
+  drainQueue(deps, sock, conn, now);
 }
 
 const CHAT_CODE_RE = /^OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/;
@@ -1944,10 +1947,14 @@ function onTicketRequest(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Ar
   sock.send(ticketGrantFrame(deps.tickets.issue(count, now)), true);
 }
 
-function onAck(deps: Deps, conn: ConnData, body: Uint8Array): void {
+function onAck(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array): void {
   const id = parseAck(body);
   // Проверка владения внутри запроса: чужой конверт не удалить.
   deps.store.ack(id, conn.devicePub!);
+  if (conn.queueInflight.delete(toHex(id))
+      && conn.queueInflight.size === 0) {
+    drainQueue(deps, sock, conn, deps.now());
+  }
 }
 
 // --- MLS KeyPackages ----------------------------------------------------------
@@ -2011,12 +2018,20 @@ function onKeyPackageClaim(deps: Deps, sock: Socket, conn: ConnData, body: Uint8
   sock.send(keyPackageFrame(clientRef, keyPackage ?? null), true);
 }
 
-/** Отдаём накопившееся, пока клиент успевает читать. Остаток — по реконнекту. */
-function drainQueue(deps: Deps, sock: Socket, devicePub: Uint8Array, now: number): void {
-  const pending = deps.store.pending(devicePub, now, DRAIN_BATCH);
+/** Resume after socket backpressure without waiting for a reconnect. */
+export function handleDrain(deps: Deps, sock: Socket, conn: ConnData): void {
+  if (conn.devicePub && conn.queueInflight.size === 0) drainQueue(deps, sock, conn, deps.now());
+}
+
+/** A bounded batch; only advance after its ACKs, never resend it per ACK. */
+function drainQueue(deps: Deps, sock: Socket, conn: ConnData, now: number): void {
+  const pending = deps.store.pending(conn.devicePub!, now, DRAIN_BATCH);
   for (const row of pending) {
     if (sock.getBufferedAmount() > DRAIN_BACKPRESSURE_BYTES) return;
-    sock.send(envelopeFrame(row.id, row.created_at, row.payload), true);
+    const status = sock.send(envelopeFrame(row.id, row.created_at, row.payload), true);
+    if (status === 2) return; // uWS dropped the frame; retry on drain.
+    conn.queueInflight.add(toHex(row.id));
+    if (status === 0) return; // Accepted into the socket buffer.
   }
   if (pending.length < DRAIN_BATCH) sock.send(frame(OP.QUEUE_DONE), true);
 }

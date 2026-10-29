@@ -12,6 +12,7 @@ import {
 import { Registry, type Socket } from "./ws/registry.ts";
 import {
   handleClose,
+  handleDrain,
   handleMessage,
   handleOpen,
   newConnData,
@@ -109,6 +110,9 @@ app.ws<ConnData>("/ws", {
     handleMessage(deps, ws as unknown as Socket, ws.getUserData(), new Uint8Array(message.slice(0)));
   },
 
+  drain: (ws) => {
+    handleDrain(deps, ws as unknown as Socket, ws.getUserData());
+  },
   close: (ws) => {
     handleClose(deps, ws as unknown as Socket, ws.getUserData());
   },
