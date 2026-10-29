@@ -14,7 +14,7 @@ public final class OnionDefaultsDeviceTest extends InstrumentationTestCase {
         context.getSharedPreferences("appearance", 0).edit()
                 .putString("transport", previous).remove("onion_default_v1").commit();
         Activity activity = getInstrumentation().startActivitySync(
-                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Thread.sleep(700);
         getInstrumentation().runOnMainSync(() -> {
             assertEquals(expected, context.getSharedPreferences("appearance", 0).getString("transport", ""));

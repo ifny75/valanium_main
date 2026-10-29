@@ -50,7 +50,7 @@ public final class SettingsDeviceTest extends InstrumentationTestCase {
         assertEquals("Refusing real account", "app.valanium.qa", context.getPackageName());
         context.getSharedPreferences("appearance", 0).edit().remove("accent_color").commit();
         Activity activity = getInstrumentation().startActivitySync(
-                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Thread.sleep(1800);
         getInstrumentation().runOnMainSync(() -> {
             assertEquals(Color.rgb(151, 112, 255), call(activity, "accentColor", new Class<?>[]{}));

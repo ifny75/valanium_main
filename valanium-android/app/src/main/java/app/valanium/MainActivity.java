@@ -2709,17 +2709,23 @@ public final class MainActivity extends Activity implements Events.Listener {
             image.setImageBitmap(bitmap);
             image.setContentDescription(I18n.t("QR для проверки пары устройств"));
             image.setAdjustViewBounds(true);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             content.addView(image, new LinearLayout.LayoutParams(-1, dp(250)));
         } catch (Exception ignored) { /* Numeric verification remains available. */ }
         TextView code = new TextView(this);
         code.setText(event.optString("safety_number"));
+        code.setTextColor(getColor(R.color.valanium_white));
         code.setTextIsSelectable(true);
         code.setTextSize(18);
+        code.setGravity(Gravity.CENTER);
+        code.setTypeface(android.graphics.Typeface.MONOSPACE);
         code.setPadding(0, dp(12), 0, dp(12));
         content.addView(code);
         TextView epoch = new TextView(this);
+        epoch.setTextColor(getColor(R.color.valanium_muted));
         epoch.setText(I18n.t("Код текущей эпохи ") + event.optLong("epoch") + ":\n" + event.optString("epoch_code"));
         epoch.setTextIsSelectable(true);
+        epoch.setGravity(Gravity.CENTER);
         content.addView(epoch);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
@@ -2727,6 +2733,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 .setPositiveButton(I18n.t("Ввести код"), (dialog, which) -> {
                     EditText input = new EditText(this);
                     input.setHint(I18n.t("Код с устройства собеседника"));
+                    input.setTextColor(getColor(R.color.valanium_white));
+                    input.setHintTextColor(getColor(R.color.valanium_muted));
                     input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
                     new AlertDialog.Builder(this).setTitle(I18n.t("Сверка кода")).setView(input)
                             .setPositiveButton(I18n.t("Сверить"), (d, w) -> confirmVerification(peer, input.getText().toString()))
@@ -2967,7 +2975,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             findViewById(R.id.privacy_maximize).setEnabled(true);
         }
         if ("anonymous_delivery_waiting".equals(code)) {
-            toast(event.optString("message"));
+            toast(I18n.coreMessage(code, event.optString("message")));
             return;
         }
         // Transport failures must allow retry too, not only invalid names/invites.
@@ -2992,7 +3000,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             entrySubmit.setEnabled(true);
             entrySubmit.setText(R.string.register);
         }
-        toast(code + ": " + event.optString("message"));
+        toast(code + ": " + I18n.coreMessage(code, event.optString("message")));
     }
 
     private void onConversations(JSONArray items) {

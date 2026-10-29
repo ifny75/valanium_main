@@ -33,7 +33,7 @@ public final class NodeAddressVisibilityDeviceTest extends InstrumentationTestCa
                 .commit();
 
         Activity activity = getInstrumentation().startActivitySync(new Intent(context,
-                MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         getInstrumentation().waitForIdleSync();
         getInstrumentation().runOnMainSync(() -> call(activity, "renderConnectionOverview"));
 

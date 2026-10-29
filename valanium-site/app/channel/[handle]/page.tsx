@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { LanguageSwitcher } from '../../components/language-provider';
 import { notFound } from 'next/navigation';
 
 import { AndroidIcon, WindowsIcon } from '../../components/icons';
@@ -81,7 +82,7 @@ export default async function ChannelPage({ params }: Props) {
               <small>Private access</small>
             </span>
           </a>
-          <div className="nav-links">
+          <div className="nav-links"><LanguageSwitcher />
             <a href="/messenger#server">Что видит сервер</a>
             <a href="/messenger#download">Скачать</a>
           </div>
@@ -90,13 +91,13 @@ export default async function ChannelPage({ params }: Props) {
 
       <section className="shell channel-page">
         <p className="eyebrow">Открытый канал</p>
-        <h1 className="channel-handle">@{name}</h1>
+        <h1 data-no-translate className="channel-handle">@{name}</h1>
         <p className="hero-lead">
           Канал открывается в Valanium. Скопируйте ссылку и вставьте её в приложении
           в поле поиска — канал откроется во вкладке «Публичные».
         </p>
 
-        <p className="channel-link">{link}</p>
+        <p data-no-translate className="channel-link">{link}</p>
 
         <div className="actions">
           <a className="button primary" href={RELEASES.windows.file}>

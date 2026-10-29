@@ -2405,7 +2405,7 @@ const handlers = {
 
   failed(event) {
     if (event.code === "privacy_preset") { maximumPrivacyPending = false; $("privacy-maximize").disabled = false; }
-    if (event.code === "anonymous_delivery_waiting") { toast(event.message); return; }
+    if (event.code === "anonymous_delivery_waiting") { toast(getLanguage() === "en" ? "Anonymous delivery is pending. The app will retry through Tor." : event.message); return; }
     if (event.code === "pin_not_pending" || (event.code === "storage" && state.pendingPinAction)) {
       state.pendingPinAction = null;
       toast(tr("Новый ключ не подтверждён: действие остановлено"));
@@ -2428,7 +2428,7 @@ const handlers = {
       $("entry-submit").disabled = false;
       $("entry-submit").textContent = tr("Зарегистрироваться");
     } else {
-      toast(`${event.code}: ${event.message}`);
+      toast(`${event.code}: ${getLanguage() === "en" && /[А-Яа-яЁё]/.test(event.message ?? "") ? "Operation failed. Check the connection and try again." : event.message}`);
     }
   },
 };
@@ -3732,9 +3732,7 @@ const PRIVACY_GROUPS = [
       {
         key: "direct_messages",
         label: tr("Личные сообщения"),
-        hint: tr("Кто может вам написать. Проверяет сервер: постороннему конверт не ")
-          + tr("поставят в очередь вовсе. Тем, кому вы разрешили, пропуска выдаются ")
-          + tr("сами при следующем подключении — включение настройки никого не отрезает."),
+        hint: tr("Кто может вам написать. Сервер не ставит конверты посторонних в очередь. Перед ограничением входящих дождитесь обмена пропусками: оба устройства должны быть подключены."),
         scopes: ["everyone", "approved", "contacts", "nobody"],
       },
     ],

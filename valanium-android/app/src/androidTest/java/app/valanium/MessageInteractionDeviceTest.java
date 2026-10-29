@@ -110,7 +110,7 @@ public final class MessageInteractionDeviceTest extends InstrumentationTestCase 
         Context context = getInstrumentation().getTargetContext();
         assertEquals("app.valanium.qa", context.getPackageName());
         Activity activity = getInstrumentation().startActivitySync(new Intent(context, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         getInstrumentation().runOnMainSync(() -> {
             try {
                 Method show = MainActivity.class.getDeclaredMethod("show", View.class); show.setAccessible(true);

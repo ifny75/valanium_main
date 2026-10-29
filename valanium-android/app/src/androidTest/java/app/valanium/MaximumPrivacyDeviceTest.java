@@ -39,7 +39,7 @@ public final class MaximumPrivacyDeviceTest extends InstrumentationTestCase {
         context.getSharedPreferences("appearance", 0).edit().putString("transport", "basic")
                 .putBoolean("onion_default_v1", true).putBoolean("screen_privacy", false).commit();
         Activity activity = getInstrumentation().startActivitySync(
-                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         long deadline = System.currentTimeMillis() + 15000;
         while (!ValaniumService.core().isOpen() && System.currentTimeMillis() < deadline) Thread.sleep(100);
         assertTrue(ValaniumService.core().isOpen());

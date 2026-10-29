@@ -37,7 +37,7 @@ public final class DeliveryAndVerificationDeviceTest extends InstrumentationTest
         Context context=getInstrumentation().getTargetContext();
         assertEquals("Refusing real account","app.valanium.qa",context.getPackageName());
         context.getSharedPreferences("appearance",0).edit().putBoolean("screen_privacy",false).commit();
-        Activity activity=getInstrumentation().startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Activity activity=getInstrumentation().startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Thread.sleep(1400);
         String peer=String.format("%064x",2);
         String other=String.format("%064x",3);

@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 
+import { LanguageSwitcher } from './language-provider';
+
 export type LegalSection = { title: string; paragraphs?: string[]; items?: string[] };
 
 export function LegalPage({ eyebrow, title, intro, sections }: { eyebrow: string; title: string; intro: string; sections: LegalSection[] }) {
@@ -7,7 +9,7 @@ export function LegalPage({ eyebrow, title, intro, sections }: { eyebrow: string
     <main className="legal-shell">
       <header className="legal-nav">
         <a className="brand" href="/"><img src="/logos/brand.svg" alt="" /><b>Valanium</b></a>
-        <a href="/">На главную</a>
+        <LanguageSwitcher /><a href="/">На главную</a>
       </header>
       <article className="legal-document">
         <div className="legal-hero"><span>{eyebrow}</span><h1>{title}</h1><p>{intro}</p><small>Редакция от 30 августа 2026 года</small></div>

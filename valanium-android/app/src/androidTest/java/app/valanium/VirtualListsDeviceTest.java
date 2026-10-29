@@ -49,7 +49,7 @@ public final class VirtualListsDeviceTest extends InstrumentationTestCase {
         Context context = getInstrumentation().getTargetContext();
         assertEquals("Refusing real account", "app.valanium.qa", context.getPackageName());
         Activity activity = getInstrumentation().startActivitySync(new Intent(context,
-                MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         Thread.sleep(1200);
 
         getInstrumentation().runOnMainSync(() -> {

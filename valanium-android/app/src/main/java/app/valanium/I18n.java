@@ -43,6 +43,12 @@ public final class I18n {
         configuration.setLocale(locale(context));
         return context.createConfigurationContext(configuration);
     }
+    public static String coreMessage(String code, String message) {
+        if (!en) return message;
+        if ("anonymous_delivery_waiting".equals(code)) return "Anonymous delivery is pending. The app will retry through Tor.";
+        if ("privacy_pass_exchange_pending".equals(code)) return "Keep both devices connected to exchange contact passes, then try again.";
+        return message.matches("(?s).*[А-Яа-яЁё].*") ? "Operation failed. Check the connection and try again." : message;
+    }
     public static String t(String value) {
         if (value == null) return "";
         String key = value.replaceAll("\\s+", " ").trim();

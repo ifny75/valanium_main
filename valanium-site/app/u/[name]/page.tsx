@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { LanguageSwitcher } from '../../components/language-provider';
 import { notFound } from 'next/navigation';
 
 import { AndroidIcon, WindowsIcon } from '../../components/icons';
@@ -65,7 +66,7 @@ export default async function UserPage({ params }: Props) {
               <small>Private access</small>
             </span>
           </a>
-          <div className="nav-links">
+          <div className="nav-links"><LanguageSwitcher />
             <a href="/messenger#server">Что видит сервер</a>
             <a href="/messenger#download">Скачать</a>
           </div>
@@ -74,13 +75,13 @@ export default async function UserPage({ params }: Props) {
 
       <section className="shell channel-page">
         <p className="eyebrow">Личная ссылка</p>
-        <h1 className="channel-handle">@{name}</h1>
+        <h1 data-no-translate className="channel-handle">@{name}</h1>
         <p className="hero-lead">
           Чтобы написать, нужен Valanium. Скопируйте ссылку и вставьте её в приложении
           в поле поиска — диалог откроется сам.
         </p>
 
-        <p className="channel-link">valanium.com/u/{name}</p>
+        <p data-no-translate className="channel-link">valanium.com/u/{name}</p>
 
         <div className="actions">
           <a className="button primary" href={RELEASES.windows.file}>

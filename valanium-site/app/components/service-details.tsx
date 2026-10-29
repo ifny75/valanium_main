@@ -1,8 +1,11 @@
 'use client';
+import { useLanguage } from './language-provider';
 import { useId } from 'react';
 import type { PublicService } from '../network-status';
 const LABELS = { operational: 'Работает', degraded: 'Есть замечания', outage: 'Недоступна' };
 export function ServiceDetails({ service, failed }: { service: PublicService; failed: boolean }) {
+  const { language } = useLanguage();
+  const locale = language === 'en' ? 'en-US' : 'ru-RU';
   const id = useId();
   return <details className="network-node-details network-service-details">
     <summary aria-controls={id}>
@@ -17,7 +20,7 @@ export function ServiceDetails({ service, failed }: { service: PublicService; fa
     </summary>
     <div className="node-detail-body" id={id}>
       <p className="service-description">{service.role}</p>
-      <dl><div><dt>Последняя проверка службы</dt><dd>{!failed && service.checkedAt ? new Date(service.checkedAt).toLocaleString('ru-RU') : 'Нет свежих данных'}</dd></div>
+      <dl><div><dt>Последняя проверка службы</dt><dd>{!failed && service.checkedAt ? new Date(service.checkedAt).toLocaleString(locale) : 'Нет свежих данных'}</dd></div>
         <div><dt>Время ответа проверки</dt><dd>{!failed && service.latency > 0 ? `${service.latency} мс` : 'Не измеряется'}</dd></div></dl>
     </div>
   </details>;

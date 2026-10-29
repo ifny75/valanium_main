@@ -1,9 +1,12 @@
 'use client';
+import { useLanguage } from './language-provider';
 import { useNetworkStatus } from './use-network-status';
 import { NodeDetails } from './node-details';
 import { ServiceDetails } from './service-details';
 const LABELS = { operational: 'Все системы работают', degraded: 'Частичное ухудшение', outage: 'Есть недоступные системы' } as const;
 export function StatusDashboard() {
+  const { language } = useLanguage();
+  const locale = language === 'en' ? 'en-US' : 'ru-RU';
   const { data, failed, busy, refresh } = useNetworkStatus();
   const overall = failed ? 'unknown' : data?.overall ?? 'unknown';
   return <>
@@ -29,6 +32,6 @@ export function StatusDashboard() {
       {!data && <p className="network-empty">{failed ? 'Не удалось получить состояние служб' : 'Проверяем службы…'}</p>}
     </section>
     <div className="status-note"><span>i</span><p>Нажмите на сервер или службу для подробностей. При потере связи данные помечаются как недоступные. IP-адреса и число пользователей не публикуются.</p>
-      <time>{data ? `Обновлено ${new Date(data.checkedAt).toLocaleTimeString('ru-RU')}` : ''}</time></div>
+      <time>{data ? `Обновлено ${new Date(data.checkedAt).toLocaleTimeString(locale)}` : ''}</time></div>
   </>;
 }

@@ -13,7 +13,7 @@ public final class LogoutDeviceTest extends InstrumentationTestCase {
     public void testLogoutPreservesOldDatabaseAndReopensFreshSession() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         assertEquals("Refusing to touch the real account", "app.valanium.qa", context.getPackageName());
-        Intent intent = new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent intent = new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         Activity activity = getInstrumentation().startActivitySync(intent);
         long deadline = System.currentTimeMillis() + 15000;
         while (!ValaniumService.core().isOpen() && System.currentTimeMillis() < deadline) Thread.sleep(100);

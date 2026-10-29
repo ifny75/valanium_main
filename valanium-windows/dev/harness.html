@@ -256,13 +256,12 @@
   }
   document.body.innerHTML = parsed.body.innerHTML;
   document.body.className = parsed.body.className;
-  // Обычным тегом, а не import(): в настоящем приложении main.js — классический
-  // скрипт, и всё его содержимое глобально. Загрузка модулем прятала бы функции
-  // в область модуля, и стенд проверял бы не то, что работает у пользователя.
+  // Match the production module entry point and its localization imports.
   await new Promise((resolve, reject) => {
     const script = document.createElement("script");
     // Без cache-buster WebView может оставить старый main.js после правки и
     // визуальный стенд будет проверять не тот код, который лежит на диске.
+    script.type = "module";
     script.src = `main.js?v=${Date.now()}`;
     script.onload = resolve;
     script.onerror = reject;
