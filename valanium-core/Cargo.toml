@@ -28,6 +28,7 @@ hex = "0.4"
 zeroize = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["tls", "socks-proxy"] }
 thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
@@ -48,7 +49,7 @@ tor-proto = { version = "0.30.0", features = ["stream-ctrl"], optional = true }
 tor-linkspec = { version = "0.30.0", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "net", "io-util", "test-util"] }
 
 # Проба встроенного Tor. Собирается только под своим флагом, поэтому обычная
 # сборка её не видит и не тянет ничего лишнего.

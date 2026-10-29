@@ -71,6 +71,7 @@ h1, h2, h3 { text-wrap: balance; }
 .download-button small { font-size: 8px; font-weight: 700; }
 .download-button b { font-size: 15px; white-space: nowrap; }
 .phone-stage { height: 610px; position: relative; display: grid; place-items: center; }
+.phone-stage.messenger-emblem-stage > img { width: min(85%, 480px); height: auto; max-height: 90%; object-fit: contain; }
 .phone-stage img { position: relative; z-index: 1; width: min(124%, 700px); max-width: none; height: 100%; object-fit: contain; transform: translateX(2%) scale(1.04); filter: drop-shadow(0 42px 74px #000); animation: laptop-float 6s ease-in-out infinite; }
 @keyframes laptop-float { 0%,100% { transform: translateX(2%) scale(1.04) translateY(0); } 50% { transform: translateX(2%) scale(1.04) translateY(-9px); } }
 .phone-glow { position: absolute; width: 60%; height: 65%; border-radius: 50%; background: #29005d; filter: blur(120px); opacity: .5; }

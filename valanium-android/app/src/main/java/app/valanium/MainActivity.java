@@ -77,6 +77,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
     private ConnectivityManager.NetworkCallback networkCallback;
+    private static Network lastKnownNetwork;
     private volatile boolean networkWasLost;
 
     private static final String SERVER_BASIC_URL = "wss://valanium.com/ws";
@@ -637,6 +638,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onStart() {
         super.onStart();
+        if(appUpdates!=null)appUpdates.resume();
         if(currentPeer!=null)refreshPeerActivity();
         try {
             if (ValaniumService.isSigningOut()) return;
@@ -658,6 +660,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onStop() {
+        if(appUpdates!=null)appUpdates.pause();
         if (networkCallback != null) {
             ConnectivityManager manager = getSystemService(ConnectivityManager.class);
             if (manager != null) manager.unregisterNetworkCallback(networkCallback);
@@ -1926,6 +1929,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==AppUpdates.INSTALL_PERMISSION_REQUEST){
+            if(appUpdates!=null && getPackageManager().canRequestPackageInstalls())appUpdates.install();
+            return;
+        }
         if (requestCode == VERIFICATION_IMAGE_REQUEST) {
             String peer = verificationImagePeer;
             verificationImagePeer = null;
@@ -2298,7 +2305,9 @@ public final class MainActivity extends Activity implements Events.Listener {
                 networkCallback = new ConnectivityManager.NetworkCallback() {
                     @Override public void onLost(Network network) { networkWasLost = true; }
                     @Override public void onAvailable(Network network) {
-                        if (!networkWasLost) return;
+                        boolean changed=lastKnownNetwork!=null&&!lastKnownNetwork.equals(network);
+                        lastKnownNetwork=network;
+                        if (!networkWasLost&&!changed) return;
                         networkWasLost = false;
                         ui.post(() -> {
                             if (!foregroundAuthorized || myDeviceHex.isEmpty()) return;
@@ -2466,62 +2475,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         checkForUpdates(false);
     }
 
+    private AppUpdates appUpdates;
     private void checkForUpdates(boolean manual) {
-        if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))
-                || (myDeviceHex.isEmpty() && ((Switch) findViewById(R.id.entry_tor_only)).isChecked())) {
-            if (manual) toast(I18n.t("В режиме только Tor обычные HTTPS-проверки обновлений отключены."));
-            return;
-        }
-        if (manual) toast(I18n.t("Проверяем обновления…"));
-        new Thread(() -> {
-            HttpURLConnection connection = null;
-            try {
-                connection = (HttpURLConnection) new URL(RELEASES_URL).openConnection();
-                connection.setConnectTimeout(5000);
-                connection.setReadTimeout(5000);
-                connection.setRequestProperty("Accept", "application/json");
-                try (InputStream stream = connection.getInputStream();
-                     ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
-                    byte[] chunk = new byte[4096];
-                    int count;
-                    while ((count = stream.read(chunk)) != -1) bytes.write(chunk, 0, count);
-                    JSONObject outer = new JSONObject(bytes.toString("UTF-8"));
-                    String manifestText = outer.getString("manifest");
-                    String signature = outer.getString("signature");
-                    if (!ValaniumService.core().verifyRelease(manifestText, signature)) throw new java.io.IOException("Invalid signature");
-                    JSONObject manifest = new JSONObject(manifestText);
-                    if (manifest.getInt("v") != 1) throw new java.io.IOException("Unknown manifest");
-                    JSONObject release = manifest.getJSONObject("android");
-                    String latest = release.getString("version");
-                    String url = release.getString("url");
-                    String sha256 = release.getString("sha256");
-                    long expectedBytes = release.getLong("bytes");
-                    Uri download = Uri.parse(url);
-                    if (!"https".equals(download.getScheme())
-                            || !"valanium.com".equals(download.getHost())
-                            || download.getPath() == null
-                            || !download.getPath().startsWith("/downloads/")
-                            || !sha256.matches("^[0-9a-f]{64}$")
-                            || expectedBytes <= 0) throw new java.io.IOException("Invalid download");
-                    if (compareVersions(latest, appVersion()) > 0) {
-                        runOnUiThread(() -> new AlertDialog.Builder(this)
-                                .setTitle(I18n.t("Доступно обновление ") + latest)
-                                .setMessage(I18n.t("Скачать новую Public Beta? Установка начнётся только после подтверждения Android."))
-                                .setPositiveButton(I18n.t("Скачать"), (dialog, which) ->
-                                        startActivity(new Intent(Intent.ACTION_VIEW, download)))
-                                .setNegativeButton(I18n.t("Позже"), null)
-                                .show());
-                    } else if (manual) {
-                        runOnUiThread(() -> toast(I18n.t("Установлена актуальная версия: ") + appVersion()));
-                    }
-                }
-            } catch (Exception ignored) {
-                // Проверка не должна мешать запуску и работе офлайн.
-                if (manual) runOnUiThread(() -> toast(I18n.t("Не удалось проверить обновления. Повторите позже.")));
-            } finally {
-                if (connection != null) connection.disconnect();
-            }
-        }, "valanium-update-check").start();
+        if(appUpdates==null)appUpdates=new AppUpdates(this);
+        appUpdates.check(manual);
     }
 
     /**

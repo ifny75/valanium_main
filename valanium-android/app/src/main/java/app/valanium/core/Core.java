@@ -35,6 +35,7 @@ public final class Core {
 
     private static native String nativeStartTor(String dataDir);
     public static native String torCircuit();
+    public static native String downloadUpdate(boolean onion, String currentVersion, String directory);
 
     /**
      * Поднимает встроенный Tor и возвращает адрес его локального SOCKS5.

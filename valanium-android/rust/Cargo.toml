@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 valanium-core = { path = "../../valanium-core" }
 jni = "0.21"
 hex = "0.4"
+serde_json = "1"
 # Нужен только для встроенного Tor: он поднимается в своей среде выполнения.
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 

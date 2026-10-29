@@ -2246,7 +2246,7 @@ async fn connect_once(
         onion::PUBLIC_KEY,
         sink,
     );
-    let heartbeat = if hello.heartbeat_sec == 0 { FALLBACK_HEARTBEAT_SEC } else { hello.heartbeat_sec };
+    let heartbeat = if hello.heartbeat_sec == 0 { FALLBACK_HEARTBEAT_SEC } else { hello.heartbeat_sec.clamp(5, 60) };
 
     let nonce = hex::decode(&hello.nonce).map_err(|_| CoreError::BadFrame)?;
     let Some(handshake) = while_connecting(handshake(&mut socket, credentials, entry, nonce, sink), store, sink, commands).await? else {
@@ -2298,9 +2298,17 @@ async fn expect_hello(socket: &mut Socket, sink: &EventSink) -> Result<Hello> {
 /// durable storage, or make local privacy controls wait for a network timeout.
 async fn while_connecting<T>(future: impl std::future::Future<Output = Result<T>>, store: &Store,
     sink: &EventSink, commands: &mut mpsc::UnboundedReceiver<Command>) -> Result<Option<T>> {
+    while_connecting_with_timeout(future, store, sink, commands, Duration::from_secs(60)).await
+}
+
+async fn while_connecting_with_timeout<T>(future: impl std::future::Future<Output = Result<T>>, store: &Store,
+    sink: &EventSink, commands: &mut mpsc::UnboundedReceiver<Command>, timeout: Duration) -> Result<Option<T>> {
     tokio::pin!(future);
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
     loop {
         tokio::select! {
+            _ = &mut deadline => return Err(CoreError::Transport("Connection timed out; trying another route".into())),
             result = &mut future => return result.map(Some),
             command = commands.recv() => {
                 let Some(command) = command else { return Ok(None); };
@@ -2557,12 +2565,18 @@ async fn pump(
 
     let mut ticker = tokio::time::interval(Duration::from_secs(greeting.heartbeat_sec));
     ticker.tick().await; // первый тик срабатывает сразу — пропускаем
+    let idle_timeout = Duration::from_secs((greeting.heartbeat_sec * 3).clamp(30, 180));
+    let mut last_received = tokio::time::Instant::now();
 
     loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(last_received + idle_timeout) => {
+                return Err(CoreError::Transport("Server stopped responding; reconnecting".into()));
+            }
             incoming = socket.next() => {
                 let Some(message) = incoming else { return Ok(Outcome::Retry) };
                 let message = message.map_err(|err| CoreError::Transport(err.to_string()))?;
+                last_received = tokio::time::Instant::now();
 
                 // Закрытие сервером надо заметить здесь. Дальше сокет только
                 // выглядит живым: отправка в него вернёт «sending after
@@ -4563,9 +4577,9 @@ async fn send_envelope(socket: &mut Socket, store: &Store, device: &[u8; KEY_LEN
 }
 
 async fn send(socket: &mut Socket, frame: Vec<u8>) -> Result<()> {
-    socket
-        .send(Message::Binary(frame))
+    tokio::time::timeout(Duration::from_secs(30), socket.send(Message::Binary(frame)))
         .await
+        .map_err(|_| CoreError::Transport("Server write timed out; reconnecting".into()))?
         .map_err(|err| CoreError::Transport(err.to_string()))
 }
 
@@ -4583,6 +4597,37 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn silent_open_socket_is_reconnected_instead_of_staying_online() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=Store::open(":memory:",b"idle-test").unwrap();
+        let credentials=Credentials::generate();store.save_credentials(&credentials).unwrap();
+        let mut mls=load_or_create_mls(&store,&credentials).unwrap();
+        let (pipe,peer)=tokio::io::duplex(65536);
+        let transport: Box<dyn NetworkStream>=Box::new(pipe);
+        let socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let _silent_server=WebSocketStream::from_raw_socket(peer,Role::Server,None).await;
+        let (_commands,mut rx)=mpsc::unbounded_channel();
+        let (anon_tx,mut anon_rx)=mpsc::unbounded_channel();
+        let mut live=Live::default();let sink:EventSink=Arc::new(|_|{});
+        let greeting=Greeting{heartbeat_sec:5,invite_entry:true,ton_entry:false,profiles:false,decor:false,devices:false,sealed_sender:false};
+        let handshake=Handshake::Authenticated{key_packages:Some(KEY_PACKAGES_PER_CONNECT),device_id:hex::encode(credentials.device_pub()),admin:false};
+        let result=tokio::time::timeout(Duration::from_secs(35),pump(socket,&store,&mut mls,&sink,&mut rx,greeting,handshake,&mut live,anon_tx,&mut anon_rx)).await.unwrap();
+        assert!(matches!(result,Err(CoreError::Transport(ref reason)) if reason.contains("stopped responding")));
+    }
+
+    #[tokio::test]
+    async fn stalled_connection_has_a_deadline_and_still_accepts_disconnect() {
+        let store=Store::open(":memory:",b"timeout-test").unwrap();
+        let sink: EventSink=Arc::new(|_|{});
+        let (tx,mut rx)=mpsc::unbounded_channel();
+        let outcome=while_connecting_with_timeout(std::future::pending::<Result<()>>(),&store,&sink,&mut rx,Duration::from_millis(20)).await;
+        assert!(matches!(outcome,Err(CoreError::Transport(_))));
+        tx.send(Command::Disconnect).unwrap();
+        let outcome=while_connecting_with_timeout(std::future::pending::<Result<()>>(),&store,&sink,&mut rx,Duration::from_secs(60)).await;
+        assert!(matches!(outcome,Ok(None)));
+    }
 
     #[test]
     fn incoming_call_checks_obey_approval_and_explicit_privacy_blocks() {

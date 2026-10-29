@@ -38,3 +38,4 @@ pub mod totp;
 pub use error::{CoreError, Result};
 
 pub mod calls;
+pub mod updates;

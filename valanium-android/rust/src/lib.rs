@@ -24,6 +24,22 @@ use valanium_core::store::Store;
 const RELEASE_PUBLIC_KEY: &str =
     "a14e480c6926a1379f0d5bb4362f2c7bf214643b016edf6a7b008db0752388ec";
 
+#[no_mangle]
+pub extern "system" fn Java_app_valanium_core_Core_downloadUpdate(
+    mut env: JNIEnv, _class: JClass, onion: jboolean, current: JString, directory: JString,
+) -> jstring {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let current: String = env.get_string(&current).map_err(|_| "Invalid version")?.into();
+        let directory: String = env.get_string(&directory).map_err(|_| "Invalid cache")?.into();
+        match valanium_core::updates::download(onion != JNI_FALSE,"android",&current,std::path::Path::new(&directory))? {
+            Some((release,path)) => Ok(serde_json::json!({"ready":true,"version":release.version,"path":path,"bytes":release.bytes,"sha256":release.sha256})),
+            None => Ok(serde_json::json!({"ready":false})),
+        }
+    })).unwrap_or_else(|_| Err("Update check failed".to_string()));
+    let value=match result { Ok(value)=>value, Err(error)=>serde_json::json!({"error":error}) };
+    env.new_string(value.to_string()).map(|s|s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
 fn verify_release(manifest: &str, signature: &str) -> bool {
     let (Ok(signature), Ok(public)) = (
         hex::decode(signature.trim()), hex::decode(RELEASE_PUBLIC_KEY),

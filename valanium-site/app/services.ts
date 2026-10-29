@@ -23,12 +23,14 @@ export type Service = {
   ready: boolean;
 };
 
+export const MESSENGER_LOGO = '/logos/messenger.svg?v=flat-lock-2';
+
 export const SERVICES: Service[] = [
   {
     id: 'messenger',
     name: 'Valanium Messenger',
     short: 'Мессенджер',
-    logo: '/logos/messenger.svg',
+    logo: MESSENGER_LOGO,
     badge: 'Public Beta',
     tagline: 'Переписка остаётся на ваших устройствах',
     about:

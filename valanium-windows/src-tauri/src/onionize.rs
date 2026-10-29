@@ -27,6 +27,7 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::os::windows::process::CommandExt;
+use std::os::windows::io::AsRawHandle;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -41,6 +42,28 @@ use crate::CREATE_NO_WINDOW;
 const ALLOWED_PREFIX: &str = "https://github.com/valanium-project/valanium-onionize/releases/download/";
 const MANIFEST_URL: &str = "https://valanium.com/downloads/onionize.json";
 static CIRCUIT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+// The OS closes this handle even if the client crashes or is terminated.
+// Arti children must not outlive their owning client and retain state locks.
+struct TorJob(isize);
+impl Drop for TorJob {
+    fn drop(&mut self) { unsafe { let _ = windows::Win32::Foundation::CloseHandle(windows::Win32::Foundation::HANDLE(self.0 as *mut _)); } }
+}
+fn assign_lifetime(child: &Child) -> Result<(), String> {
+    use windows::Win32::{Foundation::{CloseHandle, HANDLE}, System::JobObjects::*};
+    static JOB: OnceLock<Result<TorJob, String>> = OnceLock::new();
+    let job = JOB.get_or_init(|| unsafe {
+        let handle = CreateJobObjectW(None, None).map_err(|err| err.to_string())?;
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Err(err) = SetInformationJobObject(handle, JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const _, std::mem::size_of_val(&limits) as u32) {
+            let _ = CloseHandle(handle); return Err(err.to_string());
+        }
+        Ok(TorJob(handle.0 as isize))
+    }).as_ref().map_err(Clone::clone)?;
+    unsafe { AssignProcessToJobObject(HANDLE(job.0 as *mut _), HANDLE(child.as_raw_handle())).map_err(|err| err.to_string()) }
+}
 
 fn trusted_build(payload: &str) -> Result<serde_json::Value, String> {
     let envelope: serde_json::Value = serde_json::from_str(payload).map_err(|_| "неверный формат манифеста")?;
@@ -225,6 +248,11 @@ fn start_blocking() -> Result<String, String> {
         .spawn()
         .map_err(|err| err.to_string())?;
 
+    if let Err(error) = assign_lifetime(&child) {
+        let _ = child.kill(); let _ = child.wait();
+        return Err(format!("Tor process ownership: {error}"));
+    }
+
     let stdout = child.stdout.take().ok_or("нет stdout у процесса")?;
 
     // Читаем в отдельном потоке: ждать строку готовности прямо здесь значило бы
@@ -254,6 +282,7 @@ fn start_blocking() -> Result<String, String> {
         }
         Err(_) => {
             let _ = child.kill();
+            let _ = child.wait();
             Err("Tor не поднялся за отведённое время".into())
         }
     }

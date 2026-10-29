@@ -6,6 +6,7 @@ import { RibbonShader } from '../components/ribbon-shader';
 import { RouteSelector } from '../components/route-selector';
 import { SupportDialog } from '../components/support-dialog';
 import { RELEASES } from '../releases';
+import { MESSENGER_LOGO } from '../services';
 import { OnionButton } from '../components/onion-button';
 import { AnimatedHeading, ButtonArrow } from '../components/animated-heading';
 
@@ -107,9 +108,9 @@ export default function Home() {
           <div className="hero-onion"><OnionButton prominent /><span>Сайт доступен напрямую в сети Tor</span></div>
           <small>MLS (RFC 9420) · AGPL-3.0 · сервер можно поднять свой</small>
         </div>
-        <div className="phone-stage" aria-hidden="true">
+        <div className="phone-stage messenger-emblem-stage" aria-hidden="true">
           <span className="phone-glow" />
-          <img src="/media/valanium-laptop.png" alt="" />
+          <img src={MESSENGER_LOGO} alt="" />
         </div>
       </section>
 

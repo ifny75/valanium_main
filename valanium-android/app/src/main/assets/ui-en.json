@@ -185,5 +185,15 @@
   "Нет ответа на проверку звонка. Проверьте сеть, версию приложения и разрешение звонков у собеседника.": "No response to the call check. Check connectivity, app versions and the contact’s call permissions.",
   "Кто может проверять поддержку звонков. Звуковые вызовы ещё недоступны.": "Who can check call support. Audio calls are not available yet.",
   "Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания.": "A call check is already in progress. Wait for the response or timeout.",
-  "Сначала начните личную переписку с этим человеком.": "Start a direct conversation with this person first."
+  "Сначала начните личную переписку с этим человеком.": "Start a direct conversation with this person first.",
+  "Проверяем и скачиваем обновления…": "Checking and downloading updates…",
+  "Обновление уже проверяется или скачивается": "An update is already being checked or downloaded",
+  "Обновление готово": "Update ready",
+  "Новая версия скачана внутри приложения. Подпись и файл проверены. Установить обновление с сохранением аккаунта?": "The new version was downloaded in the app. Its signature and file have been verified. Install the update and keep your account?",
+  "Разрешите установку обновлений для Valanium": "Allow Valanium to install updates",
+  "Файл обновления повреждён. Проверьте обновления ещё раз.": "The update file is damaged. Check for updates again.",
+  "Установлена актуальная версия": "You are up to date",
+  "Перезапустить и обновить": "Restart and update",
+  "Не удалось установить обновление. Проверьте обновления ещё раз.": "Could not install the update. Check for updates again.",
+  "Valanium автоматически скачивает новые версии внутри приложения и проверяет подпись и SHA-256. В режиме Tor обновления идут через onion. Перезапуск — по вашему нажатию, аккаунт и переписка сохраняются.": "Valanium downloads new versions in the app and verifies their signature and SHA-256. In Tor mode, updates use onion routing. Restart when you choose; your account and chats are preserved."
 }

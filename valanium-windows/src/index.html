@@ -17,7 +17,7 @@
       рамки их тоже нет.
     -->
     <div class="titlebar" data-tauri-drag-region>
-      <img class="titlebar-logo" src="assets/msg_icon.svg" alt="" data-tauri-drag-region />
+      <i class="titlebar-logo messenger-mark" data-tauri-drag-region  aria-hidden="true"></i>
       <span id="window-title" class="titlebar-title" data-tauri-drag-region>Valanium</span>
       <div class="titlebar-actions">
         <button id="window-minimize" class="window-button" type="button" aria-label="Свернуть">
@@ -33,7 +33,7 @@
     </div>
     <section id="screen-boot" class="screen centered-screen">
       <div class="boot-card">
-        <div class="large-logo"><img src="assets/msg_icon.svg" alt="" /></div>
+        <div class="large-logo"><i  class="messenger-mark" aria-hidden="true"></i></div>
         <h1>Valanium</h1>
         <p id="boot-status">Защищаем локальное хранилище…</p>
         <span class="loader" aria-hidden="true"></span>
@@ -42,7 +42,7 @@
 
     <section id="screen-locked" class="screen centered-screen hidden">
       <div class="entry-card">
-        <div class="large-logo"><img src="assets/msg_icon.svg" alt="" /></div>
+        <div class="large-logo"><i  class="messenger-mark" aria-hidden="true"></i></div>
         <p class="eyebrow">Пароль при запуске</p>
         <h1>Переписка закрыта</h1>
         <p class="lead">Ключ базы зашифрован этим паролем. Он нигде не хранится, поэтому подобрать его не у кого — и восстановить тоже: забыли пароль, останется только завести базу заново.</p>
@@ -57,7 +57,7 @@
 
     <section id="screen-migrate" class="screen centered-screen hidden">
       <div class="entry-card">
-        <div class="large-logo"><img src="assets/msg_icon.svg" alt="" /></div>
+        <div class="large-logo"><i  class="messenger-mark" aria-hidden="true"></i></div>
         <p class="eyebrow">Однократное обновление</p>
         <h1>Защитить существующую базу</h1>
         <p class="lead">Введите прежний пароль один раз. Windows зашифрует его через DPAPI, и следующие входы станут автоматическими.</p>
@@ -122,7 +122,7 @@
       <div id="onboarding-landing" class="landing-scroll">
         <section class="landing-hero" aria-label="Valanium public beta">
           <div class="language-brand">
-            <img src="assets/msg_icon.svg" alt="" />
+            <i  class="messenger-mark" aria-hidden="true"></i>
             <strong>Valanium</strong>
             <span>public beta</span>
           </div>
@@ -154,7 +154,7 @@
 
     <section id="screen-route" class="screen onboarding-screen onboarding-grid hidden">
       <div class="onboarding-copy route-copy">
-        <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
+        <div class="onboarding-brand"><i  class="messenger-mark" aria-hidden="true"></i><b>Valanium</b><span>public beta</span></div>
         <h1 id="route-title">Valanium server</h1>
         <p id="route-text">Выберите, как приложение будет соединяться с сетью. Настройку всегда можно изменить позже.</p>
         <div class="route-list">
@@ -170,7 +170,7 @@
 
     <section id="screen-entry" class="screen onboarding-screen onboarding-grid hidden">
       <div class="onboarding-copy account-copy">
-        <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
+        <div class="onboarding-brand"><i  class="messenger-mark" aria-hidden="true"></i><b>Valanium</b><span>public beta</span></div>
         <h1 id="entry-title">Начните с Valanium</h1>
         <p id="entry-lead">Аккаунт без логина и пароля. Для восстановления сохраните сид-фразу из 24 слов.</p>
         <button id="entry-connection" class="entry-connection" type="button"><span>Подключение</span><b>Tor</b><i>Изменить →</i></button>
@@ -191,7 +191,7 @@
 
     <section id="screen-recover" class="screen onboarding-screen onboarding-grid hidden">
       <div class="onboarding-copy recovery-copy">
-        <div class="onboarding-brand"><img src="assets/msg_icon.svg" alt="" /><b>Valanium</b><span>public beta</span></div>
+        <div class="onboarding-brand"><i  class="messenger-mark" aria-hidden="true"></i><b>Valanium</b><span>public beta</span></div>
         <h1 id="recover-title">Recovery phrase</h1>
         <p id="recover-lead">Введите 24 слова в том же порядке. За один шаг показываются восемь слов.</p>
 
@@ -213,7 +213,7 @@
         <div class="sidebar-top">
           <div class="brand-row">
             <div class="brand">
-              <div class="brand-logo"><img src="assets/msg_icon.svg" alt="" /></div>
+              <div class="brand-logo"><i  class="messenger-mark" aria-hidden="true"></i></div>
               <div class="brand-copy"><strong>Valanium</strong><span>public beta</span></div>
             </div>
             <div class="brand-actions">
@@ -367,7 +367,7 @@
         <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">
           <label class="settings-search-label" for="settings-search">Поиск настроек</label><input id="settings-search" type="search" placeholder="Найти настройку…" autocomplete="off" aria-controls="settings-search-results" /><div id="settings-search-results" aria-live="polite"></div>
           <div class="settings-nav-head" aria-hidden="true">
-            <span class="settings-nav-logo"><img src="assets/msg_icon.svg" alt="" /></span>
+            <span class="settings-nav-logo"><i  class="messenger-mark" aria-hidden="true"></i></span>
             <span><small>Valanium</small><b>Настройки</b></span>
           </div>
           <button type="button" data-section="profile" class="active"><span class="ui-icon icon-profile"></span>Мой профиль</button>
@@ -635,15 +635,12 @@
             <div class="settings-card">
               <div class="setting-block">
                 <b>Версия приложения</b>
-                <small>Valanium сам проверяет свежую Public Beta. Установка запускается только после вашего нажатия. Список версий подписан ключом, которого на сервере нет: неподтверждённое обновление окно не предложит.</small>
+                <small>Valanium автоматически скачивает новые версии внутри приложения и проверяет подпись и SHA-256. В режиме Tor обновления идут через onion. Перезапуск — по вашему нажатию, аккаунт и переписка сохраняются.</small>
                 <p id="update-status" class="storage-report">Проверяем обновления…</p>
                 <div class="setting-actions">
                   <button id="update-check" class="ghost-button" type="button">Проверить обновления</button>
-                  <button id="update-download" class="ghost-button hidden" type="button" data-url="https://valanium.com/downloads/Valanium-Setup.exe">Скачать новую версию</button>
-                  <button id="update-verify" class="ghost-button hidden" type="button">Сверить скачанный файл</button>
+                  <button id="update-download" class="ghost-button hidden" type="button">Перезапустить и обновить</button>
                 </div>
-                <p id="update-hash" class="storage-report"></p>
-                <input id="update-file" type="file" accept=".exe,application/octet-stream" class="hidden" />
               </div>
               <div class="setting-block">
                 <b>Локальная база</b>

@@ -11,6 +11,7 @@
 
 mod badge;
 mod onionize;
+mod updates;
 
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -897,6 +898,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn main() {
+    if updates::apply_pending() { return; }
     tauri::Builder::default()
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
@@ -943,6 +945,8 @@ fn main() {
             set_unread,
             app_version,
             verify_release,
+            updates::prepare_update,
+            updates::install_update,
             onionize::onionize_status,
             onionize::onionize_install,
             onionize::onionize_start,
@@ -953,8 +957,11 @@ fn main() {
             save_account_export,
             open_update
         ])
-        .run(tauri::generate_context!())
-        .expect("не удалось запустить окно");
+        .build(tauri::generate_context!())
+        .expect("не удалось запустить окно")
+        .run(|_,event| {
+            if matches!(event,tauri::RunEvent::Exit) { let _=onionize::onionize_stop(); }
+        });
 }
 
 /// Разрешает WebView2 микрофон и запрещает всё остальное.

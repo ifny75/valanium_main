@@ -2,7 +2,7 @@
 import type { Metadata } from 'next';
 import { DynamicHeader } from './components/dynamic-header';
 import { SupportDialog } from './components/support-dialog';
-import { SERVICES } from './services';
+import { SERVICES, MESSENGER_LOGO } from './services';
 import { LiveNetwork } from './components/live-network';
 import { AnimatedHeading, ButtonArrow } from './components/animated-heading';
 
@@ -154,7 +154,7 @@ export default function Home() {
         </div>
         <div className="service-rail-list">
           <a className="rail-item rail-item-ready" href="/messenger">
-            <span>01</span><img src="/logos/messenger.svg" alt="" /><div><small>УЖЕ ДОСТУПЕН</small><h2>Messenger</h2></div><p>Сквозное шифрование, сообщества и личные сообщения — без номера телефона.</p><b>Открыть <i>↗</i></b>
+            <span>01</span><img src={MESSENGER_LOGO} alt="" /><div><small>УЖЕ ДОСТУПЕН</small><h2>Messenger</h2></div><p>Сквозное шифрование, сообщества и личные сообщения — без номера телефона.</p><b>Открыть <i>↗</i></b>
           </a>
           <a className="rail-item" href="/mail">
             <span>02</span><img src="/logos/mail.svg" alt="" /><div><small>В РАЗРАБОТКЕ</small><h2>Mail</h2></div><p>Почта с вашим именем, в которой нет места рекламному наблюдению.</p><b>Узнать <i>↗</i></b>
@@ -199,7 +199,7 @@ export default function Home() {
           <div className="closing-actions">
             <div className="actions actions-centered">
               <a className="download-button download-button-light" href="/messenger">
-                <img className="platform-svg service-logo" src="/logos/messenger.svg" alt="" />
+                <img className="platform-svg service-logo" src={MESSENGER_LOGO} alt="" />
                 <span><small>Открыть</small><b>Мессенджер</b></span>
               </a>
             </div>

@@ -1,3 +1,4 @@
+import { createUpdater } from "./updater.js";
 import { tr, trTemplate, getLanguage, getLocale, setLanguage } from "./i18n.js";
 /*
   Адреса onion-входов здесь нет намеренно.
@@ -24,7 +25,6 @@ function serverUrl() {
 // Хардкод в окне уже расходился с собранным бинарём, и клиент вечно
 // предлагал обновиться на версию, которая на нём и стояла.
 let appVersion = "…";
-const RELEASES_URL = "https://valanium.com/v1/releases/latest";
 const { invoke } = window.__TAURI__.core;
 
 /**
@@ -4428,94 +4428,21 @@ function compareVersions(left, right) {
   обновиться, потому что подменённый клиент обесценивает и шифрование, и
   замок, и всё остальное разом.
 */
-async function checkForUpdates(showFailure = false) {
-  if (preferences.transport === "onion") {
-    if (showFailure) toast(tr("В режиме только Tor обычные HTTPS-проверки обновлений отключены."));
-    return;
-  }
-  const status = $("update-status");
-  const download = $("update-download");
-  appVersion = await invoke("app_version").catch(() => appVersion);
-  if (status) status.textContent = trTemplate`Версия ${appVersion} · проверяем обновления…`;
-
-  try {
-    const response = await fetch(RELEASES_URL, { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    if (typeof payload.manifest !== "string" || typeof payload.signature !== "string") {
-      throw new Error(tr("ответ без подписи"));
-    }
-    const trusted = await invoke("verify_release", {
-      manifest: payload.manifest,
-      signature: payload.signature,
-    });
-    if (!trusted) throw new Error(tr("подпись не сходится"));
-
-    const release = JSON.parse(payload.manifest).windows;
-    const available = Boolean(release) && compareVersions(release.version, appVersion) > 0;
-    if (status) {
-      status.textContent = available
-        ? trTemplate`Доступна версия ${release.version}`
-        : trTemplate`Версия ${appVersion} · установлена последняя`;
-    }
-    if (download) {
-      download.classList.toggle("hidden", !available);
-      if (release?.url) download.dataset.url = release.url;
-      if (release?.sha256) download.dataset.sha256 = release.sha256;
-    }
-    $("update-verify").classList.toggle("hidden", !available);
-    $("update-hash").textContent = available ? trTemplate`Ожидаемый SHA-256: ${release.sha256}` : "";
-    if (available) toast(trTemplate`Доступно обновление Valanium ${release.version}`);
-  } catch (error) {
-    const reason = String(error?.message ?? error);
-    if (status) status.textContent = trTemplate`Версия ${appVersion} · не подтвердить: ${reason}`;
-    if (showFailure) toast(trTemplate`Обновления: ${reason}`);
-    $("update-verify").classList.add("hidden");
-    $("update-hash").textContent = "";
-    download?.classList.add("hidden");
-  }
-}
-
-/*
-  Сверка скачанного файла.
-
-  Скачивание идёт браузером, и подсунуть туда проверку мы не можем. Зато можем
-  проверить то, что уже лежит на диске: человек указывает файл, окно считает
-  SHA-256 и сравнивает с подписанным. Это и есть то место, где подпись
-  превращается в защиту, а не в надпись.
-*/
-$("update-verify").addEventListener("click", () => $("update-file").click());
-
-$("update-file").addEventListener("change", async () => {
-  const file = $("update-file").files?.[0];
-  $("update-file").value = "";
-  if (!file) return;
-
-  const expected = $("update-download").dataset.sha256;
-  if (!expected) {
-    toast(tr("Сначала проверьте обновления"));
-    return;
-  }
-  $("update-hash").textContent = tr("Считаем хеш…");
-  try {
-    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-    const actual = [...new Uint8Array(digest)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
-    const same = actual === expected;
-    $("update-hash").textContent = same
-      ? trTemplate`Файл совпадает с подписанным: ${actual}`
-      : trTemplate`НЕ совпадает. Ожидали ${expected}, получили ${actual}`;
-    toast(same ? tr("Файл подтверждён") : tr("Файл не тот — запускать нельзя"));
-  } catch (error) {
-    $("update-hash").textContent = trTemplate`Не удалось посчитать хеш: ${String(error)}`;
-  }
+const updater = createUpdater({
+  invoke, version: () => invoke("app_version"), isOnion: () => preferences.transport === "onion",
+  prepareTor: ensureOnionize, status: $("update-status"), button: $("update-download"), notify: toast, tr,
+});
+$("update-check").addEventListener("click", () => updater.check(true));
+setTimeout(() => updater.check(false), 1800);
+setInterval(() => updater.check(false), 60000);
+window.addEventListener("focus", () => updater.check(false));
+window.addEventListener("online", () => { void connectSelectedRoute({ disconnect: true }); });
+window.addEventListener("offline", () => {
+  ++connectionGeneration;
+  setConnection("offline", tr("переподключаемся…"));
+  void submit({ type: "disconnect" });
 });
 
-$("update-check").addEventListener("click", () => checkForUpdates(true));
-$("update-download").addEventListener("click", () =>
-  windowCommand("open_update", { url: $("update-download").dataset.url }));
-setTimeout(() => checkForUpdates(false), 1800);
 
 // Края тянутся системной рамкой: она у окна осталась, даже когда перестала
 // рисоваться. Свои полоски поверх неё только перехватывали бы нажатия.

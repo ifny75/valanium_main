@@ -191,7 +191,7 @@ public final class ValaniumService extends Service {
         return builder
                 .setContentTitle(getString(R.string.app_name))
                 .setContentText(getString(R.string.notification_connected))
-                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                .setSmallIcon(R.drawable.ic_messenger_status)
                 .setOngoing(true)
                 .build();
     }
@@ -214,7 +214,7 @@ public final class ValaniumService extends Service {
                     ? new Notification.Builder(this, MESSAGE_CHANNEL)
                     : new Notification.Builder(this);
             Notification notification = builder
-                    .setSmallIcon(android.R.drawable.stat_notify_chat)
+                    .setSmallIcon(R.drawable.ic_messenger_status)
                     .setContentTitle(getString(R.string.notification_new_message))
                     .setContentText(preview)
                     .setStyle(new Notification.BigTextStyle().bigText(preview))

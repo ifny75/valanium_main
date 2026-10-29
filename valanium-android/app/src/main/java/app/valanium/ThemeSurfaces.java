@@ -62,6 +62,7 @@ final class ThemeSurfaces {
         }
         if(view instanceof ImageView) {
             ImageView image=(ImageView)view;Object original=image.getTag(R.id.theme_icon_tag);
+            if("messenger_brand".equals(view.getTag()))image.setImageTintList(ColorStateList.valueOf(accent));
             if(original==null&&image.getImageTintList()!=null){original=image.getImageTintList().getDefaultColor();image.setTag(R.id.theme_icon_tag,original);}
             if(original instanceof Integer&&((Integer)original==view.getContext().getColor(R.color.valanium_icon)||violet((Integer)original)))image.setImageTintList(ColorStateList.valueOf(accent));
         }

@@ -9,8 +9,8 @@
     <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
         android:background="@drawable/entry_tablet_art" android:orientation="vertical" android:gravity="center"
         android:padding="32dp" android:importantForAccessibility="noHideDescendants">
-        <ImageView android:layout_width="220dp" android:layout_height="260dp" android:src="@drawable/valanium_logo"
-            android:contentDescription="@null" android:scaleType="fitCenter" android:tint="#C599FF" />
+        <ImageView android:layout_width="220dp" android:layout_height="260dp" android:src="@drawable/messenger_logo" android:tag="messenger_brand"
+            android:contentDescription="@null" android:scaleType="fitCenter" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="32dp"
             android:fontFamily="@font/unbounded_semibold" android:text="@string/tablet_private"
             android:textColor="#F6EEFF" android:textSize="26sp" android:gravity="center" />
