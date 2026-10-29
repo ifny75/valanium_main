@@ -7,7 +7,7 @@ const start = source.indexOf('async function connectSelectedRoute(');
 const end = source.indexOf('\n/*', start);
 function context(transport, ready = async () => {}) {
   const calls = [], statuses = [];
-  const scope = vm.createContext({ connectionGeneration: 0, state: { device: 'qa-device' },
+  const scope = vm.createContext({ tr: value => value, trTemplate: (parts,...values) => parts.reduce((out,part,i)=>out+part+(i<values.length?values[i]:""),""), getLocale:()=>"ru-RU",  connectionGeneration: 0, state: { device: 'qa-device' },
     preferences: { transport }, SERVER_URLS: { auto: 'valanium://auto', onion: 'valanium://onion' },
     setConnection: (...args) => statuses.push(args), ensureOnionize: ready,
     invoke: async () => ({ installed: true }), submit: async command => { calls.push(command); return true; } });
@@ -42,7 +42,7 @@ test('Auto connects without waiting for Tor, while preparing the installed fallb
 test('local account opens the chat UI before waiting on the network', () => {
   const a = source.indexOf('  status(event) {'), b = source.indexOf('\n  },', a);
   const screens = [], events = [];
-  const scope = vm.createContext({ state: {}, $: () => ({}), short: x => x,
+  const scope = vm.createContext({ tr: value => value, trTemplate: (parts,...values) => parts.reduce((out,part,i)=>out+part+(i<values.length?values[i]:""),""), getLocale:()=>"ru-RU",  state: {}, $: () => ({}), short: x => x,
     showScreen: id => screens.push(id), submit: e => events.push(e), setConnection() {},
     connectSelectedRoute: () => { events.push('network'); return new Promise(() => {}); } });
   vm.runInContext('function ' + source.slice(a,b + 4).trim().replace(/,$/, ''), scope);

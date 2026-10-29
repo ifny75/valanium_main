@@ -10,14 +10,14 @@ final class Calculator {
 
     private Calculator(String source) {
         expression = source.toLowerCase(java.util.Locale.ROOT).replace(',', '.').replaceAll("\\s+", "");
-        if (expression.isEmpty() || expression.length() > 120) throw new IllegalArgumentException("Проверьте выражение");
+        if (expression.isEmpty() || expression.length() > 120) throw new IllegalArgumentException(I18n.t("Проверьте выражение"));
     }
 
     static String evaluate(String source) {
         Calculator parser = new Calculator(source);
         double value = parser.sum();
         if (parser.at != parser.expression.length() || !Double.isFinite(value))
-            throw new IllegalArgumentException("Проверьте выражение");
+            throw new IllegalArgumentException(I18n.t("Проверьте выражение"));
         return BigDecimal.valueOf(value).round(new MathContext(12))
                 .stripTrailingZeros().toPlainString();
     }
@@ -58,14 +58,14 @@ final class Calculator {
             if (op != '*' && op != '/') break;
             at++;
             double right = factor();
-            if (op == '/' && right == 0) throw new IllegalArgumentException("Деление на ноль");
+            if (op == '/' && right == 0) throw new IllegalArgumentException(I18n.t("Деление на ноль"));
             value = op == '*' ? value * right : value / right;
         }
         return value;
     }
 
     private double factor() {
-        if (at >= expression.length()) throw new IllegalArgumentException("Проверьте выражение");
+        if (at >= expression.length()) throw new IllegalArgumentException(I18n.t("Проверьте выражение"));
         char ch = expression.charAt(at);
         if (ch == '+' || ch == '-') {
             at++;
@@ -75,7 +75,7 @@ final class Calculator {
             at++;
             double value = sum();
             if (at >= expression.length() || expression.charAt(at++) != ')')
-                throw new IllegalArgumentException("Проверьте скобки");
+                throw new IllegalArgumentException(I18n.t("Проверьте скобки"));
             return value;
         }
         if (ch >= 'a' && ch <= 'z') {
@@ -84,7 +84,7 @@ final class Calculator {
                     && expression.charAt(at) <= 'z') at++;
             String name = expression.substring(start, at);
             if (at >= expression.length() || expression.charAt(at++) != '(')
-                throw new IllegalArgumentException("Проверьте функцию");
+                throw new IllegalArgumentException(I18n.t("Проверьте функцию"));
             java.util.ArrayList<Double> args = new java.util.ArrayList<>();
             args.add(sum());
             while (at < expression.length() && expression.charAt(at) == ';') {
@@ -92,7 +92,7 @@ final class Calculator {
                 args.add(sum());
             }
             if (at >= expression.length() || expression.charAt(at++) != ')')
-                throw new IllegalArgumentException("Проверьте скобки");
+                throw new IllegalArgumentException(I18n.t("Проверьте скобки"));
             if ((name.equals("max") || name.equals("min")) && args.size() >= 2) {
                 double value = args.get(0);
                 for (int i = 1; i < args.size(); i++) value = name.equals("max")
@@ -105,13 +105,13 @@ final class Calculator {
                 if (name.equals("sqrt")) return Math.sqrt(value);
                 if (name.equals("log")) return Math.log10(value);
             }
-            throw new IllegalArgumentException("Проверьте функцию");
+            throw new IllegalArgumentException(I18n.t("Проверьте функцию"));
         }
         int begin = at;
         while (at < expression.length() && (Character.isDigit(expression.charAt(at))
                 || expression.charAt(at) == '.')) at++;
-        if (begin == at) throw new IllegalArgumentException("Проверьте выражение");
+        if (begin == at) throw new IllegalArgumentException(I18n.t("Проверьте выражение"));
         try { return Double.parseDouble(expression.substring(begin, at)); }
-        catch (NumberFormatException error) { throw new IllegalArgumentException("Проверьте выражение"); }
+        catch (NumberFormatException error) { throw new IllegalArgumentException(I18n.t("Проверьте выражение")); }
     }
 }

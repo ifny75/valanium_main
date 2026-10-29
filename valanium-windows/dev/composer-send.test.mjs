@@ -12,7 +12,7 @@ function fixture() {
     closest:()=>({style:{setProperty(){}}}), addEventListener(type,fn){this[type]=fn;}
   }]));
   const sent=[],appended=[];
-  const scope=vm.createContext({ $:id=>elements[id], state:{current:'test-device'},
+  const scope=vm.createContext({ tr: value => value, trTemplate: (parts,...values) => parts.reduce((out,part,i)=>out+part+(i<values.length?values[i]:""),""), getLocale:()=>"ru-RU",  $:id=>elements[id], state:{current:'test-device'},
     editing:null, replyingTo:null, preferences:{sendKey:'enter'},
     isGroupKey:()=>false, logicalId:()=> 'logical-qa', conversationOf:()=> 'test-conversation',
     encodeContent:value=>JSON.stringify(value), submit:async command=>{sent.push(command);return true;},

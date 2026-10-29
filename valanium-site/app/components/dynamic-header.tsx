@@ -5,6 +5,7 @@ import { GithubIcon } from './icons';
 import { SupportDialog } from './support-dialog';
 import { SERVICES } from '../services';
 import { OnionButton } from './onion-button';
+import { LanguageSwitcher } from './language-provider';
 
 /**
  * Одинаковая навигация на всех страницах; текущий раздел меняет только подсветку.
@@ -76,6 +77,7 @@ export function DynamicHeader({ page = 'hub' }: { page?: HeaderPage }) {
         </div>
 
         <div className="nav-actions">
+          <LanguageSwitcher />
           <OnionButton />
           <a className="status-mobile-link" href="/apps">Приложения</a>
           <SupportDialog variant="header" />

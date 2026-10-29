@@ -425,4 +425,8 @@
     <string name="hop_switched">Второй узел: %1$s</string>
     <string name="hop_switched_auto">Второй узел выбирается сам</string>
     <string name="profile_account_title">Мой аккаунт</string>
+    <string name="language">Язык</string>
+    <string name="language_auto">Язык устройства</string>
+    <string name="tablet_private">Пространство\nдля личного.</string>
+    <string name="tablet_keys">Ваши ключи. Ваши разговоры.</string>
 </resources>

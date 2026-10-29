@@ -33,6 +33,8 @@ function run({ transport, installed, running }) {
     getClientRects: () => [],
   });
   const context = {
+    tr: value => value,
+    trTemplate: (parts,...values) => parts.reduce((out,part,i)=>out+part+(i<values.length?values[i]:""),""),
     renderEntryConnection() {},
     preferences: { transport },
     $: () => element(),

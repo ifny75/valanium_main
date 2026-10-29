@@ -3187,4 +3187,5 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 .privacy-preset{padding:20px;border:1px solid #b58ad328;border-radius:16px;background:linear-gradient(135deg,#8a43d10b,#ffffff02);margin:20px 0}
 .privacy-preset h2{font-size:17px;margin:0 0 10px}.privacy-preset p{font-size:12px;line-height:1.7;color:#b3a7bf;margin:0 0 15px}
 .privacy-preset small{display:block;margin-top:12px;max-width:660px;color:#91869d;font-size:11px;line-height:1.7}
+.ui-language-choice{display:grid;gap:9px;margin:20px 12px;color:#a89ab4;font-size:11px}.ui-language-choice select{width:100%;padding:10px 12px;border:1px solid #ffffff18;border-radius:10px;background:#151019;color:#eae1f3;font:inherit}
 .pc-network-details{border-top:1px solid #ffffff0c;padding:14px 18px;color:#998da4;font-size:11px}.pc-network-details summary{cursor:pointer}.pc-network-details .tor-circuit{font-size:10px;line-height:1.7;overflow-wrap:anywhere;white-space:pre-wrap}

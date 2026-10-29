@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter, Unbounded } from 'next/font/google';
 import './globals.css';
 import { RevealObserver } from './components/reveal-observer';
+import { LanguageProvider } from './components/language-provider';
 
 /**
  * Гарнитуры те же, что в приложении: Unbounded на заголовках, Inter в тексте.
@@ -117,7 +118,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
         />
       </head>
-      <body className={`${inter.variable} ${unbounded.variable}`}><RevealObserver />{children}</body>
+      <body className={`${inter.variable} ${unbounded.variable}`}><LanguageProvider><RevealObserver />{children}</LanguageProvider></body>
     </html>
   );
 }

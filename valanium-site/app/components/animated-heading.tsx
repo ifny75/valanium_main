@@ -1,9 +1,13 @@
+'use client';
 import { Fragment, type CSSProperties } from 'react';
+import { translate, useLanguage } from './language-provider';
 
 export type HeadingLine = { text: string; accent?: boolean };
 
 /** Word wrappers preserve natural wrapping; one accessible label avoids spelling out letters. */
 export function AnimatedHeading({ lines, className = '' }: { lines: HeadingLine[]; className?: string }) {
+  const { language } = useLanguage();
+  lines = lines.map(line => ({ ...line, text: translate(line.text, language) }));
   let letterIndex = 0;
   return <h1 className={`animated-heading ${className}`} aria-label={lines.map(line => line.text).join(' ')}>
     {lines.map((line, lineIndex) => <span key={lineIndex} className={`heading-line${line.accent ? ' heading-accent' : ''}`} aria-hidden="true">

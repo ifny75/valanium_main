@@ -92,22 +92,22 @@ final class PhotoEditor {
 
         if (ratio == 0) root.addView(ratioRow());
         root.addView(toolRow());
-        root.addView(slider("Яркость", 50, 160, brightness, value -> {
+        root.addView(slider(I18n.t("Яркость"), 50, 160, brightness, value -> {
             brightness = value;
             view.invalidate();
             updateEstimate();
         }));
-        root.addView(slider("Контраст", 50, 160, contrast, value -> {
+        root.addView(slider(I18n.t("Контраст"), 50, 160, contrast, value -> {
             contrast = value;
             view.invalidate();
             updateEstimate();
         }));
-        root.addView(slider("Насыщенность", 0, 200, saturation, value -> {
+        root.addView(slider(I18n.t("Насыщенность"), 0, 200, saturation, value -> {
             saturation = value;
             view.invalidate();
             updateEstimate();
         }));
-        root.addView(slider("Качество", 40, 95, quality, value -> {
+        root.addView(slider(I18n.t("Качество"), 40, 95, quality, value -> {
             quality = value;
             updateEstimate();
         }));
@@ -119,10 +119,10 @@ final class PhotoEditor {
         root.addView(size);
 
         AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle(ratio == 1 ? "Аватар" : "Фото")
+                .setTitle(ratio == 1 ? I18n.t("Аватар") : I18n.t("Фото"))
                 .setView(root)
-                .setPositiveButton("Отправить", null)
-                .setNegativeButton("Отмена", null)
+                .setPositiveButton(I18n.t("Отправить"), null)
+                .setNegativeButton(I18n.t("Отмена"), null)
                 .create();
 
         dialog.setOnShowListener(d -> {
@@ -241,12 +241,12 @@ final class PhotoEditor {
     private void updateEstimate() {
         Rendered rendered = render();
         if (rendered == null) {
-            size.setText("не помещается — уменьшите кадр");
+            size.setText(I18n.t("не помещается — уменьшите кадр"));
             if (send != null) send.setEnabled(false);
             return;
         }
         int kb = Math.round(rendered.base64.length() * 0.75f / 1024);
-        size.setText(rendered.width + "×" + rendered.height + " · " + kb + " КБ");
+        size.setText(rendered.width + "×" + rendered.height + " · " + kb + I18n.t(" КБ"));
         if (send != null) send.setEnabled(true);
     }
 
@@ -260,7 +260,7 @@ final class PhotoEditor {
         params.topMargin = dp(9);
         row.setLayoutParams(params);
 
-        String[][] options = {{"Свободно", "0"}, {"1:1", "1"}, {"4:3", "1.3333"}, {"16:9", "1.7778"}};
+        String[][] options = {{I18n.t("Свободно"), "0"}, {"1:1", "1"}, {"4:3", "1.3333"}, {"16:9", "1.7778"}};
         for (String[] option : options) {
             Button button = new Button(activity, null, 0, R.style.Valanium_Button_Dark_Small);
             button.setText(option[0]);
@@ -288,20 +288,20 @@ final class PhotoEditor {
         params.topMargin = dp(5);
         row.setLayoutParams(params);
 
-        row.addView(tool("Повернуть", () -> {
+        row.addView(tool(I18n.t("Повернуть"), () -> {
             rotation = (rotation + 90) % 360;
             rebuildWork();
             resetCrop();
             view.invalidate();
             updateEstimate();
         }, 0));
-        row.addView(tool("Отразить", () -> {
+        row.addView(tool(I18n.t("Отразить"), () -> {
             flipped = !flipped;
             rebuildWork();
             view.invalidate();
             updateEstimate();
         }, dp(4)));
-        row.addView(tool("Сбросить", () -> {
+        row.addView(tool(I18n.t("Сбросить"), () -> {
             rotation = 0;
             flipped = false;
             brightness = contrast = saturation = 100;

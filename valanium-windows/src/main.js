@@ -1,3 +1,4 @@
+import { tr, trTemplate, getLanguage, getLocale, setLanguage } from "./i18n.js";
 /*
   Адреса onion-входов здесь нет намеренно.
 
@@ -37,7 +38,7 @@ const { invoke } = window.__TAURI__.core;
 function windowCommand(name, args) {
   // Ошибку показываем, а не глотаем: кнопка, которая молча не работает, —
   // ровно то, с чего этот код начался.
-  invoke(name, args).catch((error) => toast(`Окно: ${error}`));
+  invoke(name, args).catch((error) => toast(trTemplate`Окно: ${error}`));
 }
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
@@ -133,7 +134,7 @@ function applyRead(ids) {
     document.querySelectorAll(`[data-message-id="${CSS.escape(id)}"]`).forEach((node) => {
       node.classList.add("read");
       const status = node.querySelector(".delivery");
-      if (status) status.textContent = "✓✓ прочитано";
+      if (status) status.textContent = tr("✓✓ прочитано");
     });
   }
 }
@@ -184,10 +185,10 @@ function toast(text) {
 }
 
 function notificationText(content) {
-  if (content.type === "text") return content.text || "Новое сообщение";
-  if (content.type === "image") return content.caption ? `Фото · ${content.caption}` : "Отправлено фото";
-  if (content.type === "voice") return "Голосовое сообщение";
-  return "Новое сообщение";
+  if (content.type === "text") return content.text || tr("Новое сообщение");
+  if (content.type === "image") return content.caption ? trTemplate`Фото · ${content.caption}` : tr("Отправлено фото");
+  if (content.type === "voice") return tr("Голосовое сообщение");
+  return tr("Новое сообщение");
 }
 
 function showDesktopNotification({ title, text, device = null, avatarOf = null }) {
@@ -218,7 +219,7 @@ function showDesktopNotification({ title, text, device = null, avatarOf = null }
       radius: preferences?.radius ?? 13,
       squareAvatars: preferences?.squareAvatars ?? false,
     },
-  }).catch((error) => toast(`Уведомление: ${error}`));
+  }).catch((error) => toast(trTemplate`Уведомление: ${error}`));
 }
 
 /**
@@ -236,10 +237,10 @@ function setConnection(kind, text) {
   connectionKind = kind;
   const networkStatus = $("connection-route-state");
   if (networkStatus) { networkStatus.textContent = text; networkStatus.dataset.state = kind; }
-  if (kind === "offline" && was !== "offline") toast(`Связь потеряна: ${text}`);
+  if (kind === "offline" && was !== "offline") toast(trTemplate`Связь потеряна: ${text}`);
   // О возвращении говорим только тем, кто видел обрыв: при первом входе
   // «связь восстановлена» сообщало бы о том, чего не случалось.
-  if (kind === "online" && was === "offline") toast("Связь восстановлена");
+  if (kind === "online" && was === "offline") toast(tr("Связь восстановлена"));
 }
 
 function short(hex) {
@@ -255,7 +256,7 @@ function copyText(text, success) {
   if (!text) return;
   navigator.clipboard.writeText(text).then(
     () => toast(success),
-    () => toast("Не удалось скопировать"),
+    () => toast(tr("Не удалось скопировать")),
   );
 }
 
@@ -269,7 +270,7 @@ $("form-migrate").addEventListener("submit", async (event) => {
   try {
     await invoke("unlock_existing", { password: $("migration-password").value });
     $("migration-password").value = "";
-    showBoot("Восстанавливаем защищённый сеанс…");
+    showBoot(tr("Восстанавливаем защищённый сеанс…"));
     await submit({ type: "status" });
   } catch (error) {
     $("migration-error").textContent = String(error);
@@ -280,8 +281,8 @@ $("form-migrate").addEventListener("submit", async (event) => {
 
 $("reset-legacy").addEventListener("click", async () => {
   const confirmed = window.confirm(
-    "Создать новую базу? Старый аккаунт и переписка исчезнут из приложения. "
-      + "Исходные файлы останутся в резервной папке.",
+    tr("Создать новую базу? Старый аккаунт и переписка исчезнут из приложения. ")
+      + tr("Исходные файлы останутся в резервной папке."),
   );
   if (!confirmed) return;
 
@@ -291,7 +292,7 @@ $("reset-legacy").addEventListener("click", async () => {
   try {
     await invoke("reset_legacy_database");
     $("migration-password").value = "";
-    showBoot("Создаём новую защищённую базу…");
+    showBoot(tr("Создаём новую защищённую базу…"));
     await submit({ type: "status" });
   } catch (error) {
     $("migration-error").textContent = String(error);
@@ -302,8 +303,7 @@ $("reset-legacy").addEventListener("click", async () => {
 
 const ONBOARDING_LANGUAGE = "valanium.onboarding.language";
 const ONBOARDING_COMPLETE = "valanium.onboarding.complete";
-let onboardingLanguage = localStorage.getItem(ONBOARDING_LANGUAGE)
-  || (navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en");
+let onboardingLanguage = getLanguage();
 let chosenTransport = "onion";
 
 const onboardingCopy = {
@@ -387,7 +387,7 @@ for (const button of document.querySelectorAll("[data-language]")) {
   button.addEventListener("click", () => {
     onboardingLanguage = button.dataset.language;
     localStorage.setItem(ONBOARDING_LANGUAGE, onboardingLanguage);
-    applyOnboardingLanguage();
+    setLanguage(onboardingLanguage);
   });
 }
 const landing = $("onboarding-landing");
@@ -626,7 +626,7 @@ $("form-entry").addEventListener("submit", async (event) => {
   $("entry-error").textContent = "";
   state.registrationPending = true;
   button.disabled = true;
-  button.textContent = "Подключаем…";
+  button.textContent = tr("Подключаем…");
   const torOnly = preferences.transport === "onion";
   // Freeze the route before asynchronous bootstrap: UI changes must not downgrade this request.
   const registrationUrl = torOnly ? "valanium://onion" : serverUrl();
@@ -634,14 +634,14 @@ $("form-entry").addEventListener("submit", async (event) => {
     preferences.transport = "onion";
     savePreferences();
     try {
-      button.textContent = "Подготавливаем Tor…";
+      button.textContent = tr("Подготавливаем Tor…");
       await ensureOnionize();
     } catch (error) {
-      $("entry-error").textContent = `Регистрация через Tor не началась: ${error.message ?? error}`;
+      $("entry-error").textContent = trTemplate`Регистрация через Tor не началась: ${error.message ?? error}`;
 
       state.registrationPending = false;
       button.disabled = false;
-      button.textContent = "Зарегистрироваться";
+      button.textContent = tr("Зарегистрироваться");
       return;
     }
   }
@@ -650,7 +650,7 @@ $("form-entry").addEventListener("submit", async (event) => {
 
     state.registrationPending = false;
     button.disabled = false;
-    button.textContent = "Зарегистрироваться";
+    button.textContent = tr("Зарегистрироваться");
   }
 });
 
@@ -682,7 +682,7 @@ function renderRecoveryPage() {
     label.append(marker, input);
     grid.append(label);
   }
-  $("recover-page-label").textContent = `Слова ${recoveryPage * 8 + 1}–${recoveryPage * 8 + 8} из 24`;
+  $("recover-page-label").textContent = trTemplate`Слова ${recoveryPage * 8 + 1}–${recoveryPage * 8 + 8} из 24`;
   $("recover-progress-bar").style.width = `${(recoveryPage + 1) * 33.333}%`;
   $("recover-prev").disabled = recoveryPage === 0;
   $("recover-next").classList.toggle("hidden", recoveryPage === 2);
@@ -716,15 +716,15 @@ $("form-recover-code").addEventListener("submit", (event) => {
   event.preventDefault();
   storeRecoveryPage();
   if (recoveryWords.some((word) => !word)) {
-    $("recover-error").textContent = "Заполните все 24 слова";
+    $("recover-error").textContent = tr("Заполните все 24 слова");
     return;
   }
   $("recover-code").value = recoveryWords.join(" ");
   runRecovery(
     $("form-recover-code"),
     { type: "recover", url: serverUrl(), code: $("recover-code").value.trim() },
-    "Проверяем код…",
-    "Восстановить",
+    tr("Проверяем код…"),
+    tr("Восстановить"),
   );
 });
 
@@ -753,20 +753,20 @@ $("recovery-word-grid").addEventListener("paste", (event) => {
 function resetRecoveryButtons() {
   const button = $("recover-submit");
   button.disabled = false;
-  button.textContent = "Восстановить →";
+  button.textContent = tr("Восстановить →");
 }
 
 async function boot() {
-  showBoot("Защищаем локальное хранилище…");
+  showBoot(tr("Защищаем локальное хранилище…"));
   try {
     await listen("valanium:event", ({ payload }) => {
       try {
         const event = JSON.parse(payload);
         const handler = handlers[event.type];
         if (handler) handler(event);
-        else console.debug("необработанное событие", event);
+        else console.debug(tr("необработанное событие"), event);
       } catch (error) {
-        console.error("не разобрать событие ядра", error);
+        console.error(tr("не разобрать событие ядра"), error);
       }
     });
 
@@ -781,10 +781,10 @@ async function boot() {
       showScreen("screen-migrate");
       return;
     }
-    showBoot("Входим в аккаунт…");
+    showBoot(tr("Входим в аккаунт…"));
     await submit({ type: "status" });
   } catch (error) {
-    $("boot-status").textContent = `Не удалось запустить: ${String(error)}`;
+    $("boot-status").textContent = trTemplate`Не удалось запустить: ${String(error)}`;
     console.error(error);
   }
 }
@@ -849,7 +849,7 @@ $("form-omni").addEventListener("submit", (event) => {
   const chatCode = raw.toUpperCase();
   if (/^OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/.test(chatCode)) {
     if (!state.profilesSupported) {
-      toast("Сервер ещё не обновлён для кодов чата");
+      toast(tr("Сервер ещё не обновлён для кодов чата"));
       return;
     }
     state.pendingChatCode = chatCode;
@@ -857,11 +857,11 @@ $("form-omni").addEventListener("submit", (event) => {
     return;
   }
   if (!/^[0-9a-f]{64}$/.test(peer)) {
-    toast("Введите код OBS-ABCDE-23456 или полный адрес устройства");
+    toast(tr("Введите код OBS-ABCDE-23456 или полный адрес устройства"));
     return;
   }
   if (peer === state.device) {
-    toast("Это адрес вашего устройства");
+    toast(tr("Это адрес вашего устройства"));
     return;
   }
   $("omni").value = "";
@@ -882,7 +882,7 @@ function displayName(device) {
   const known = directory.get(device);
   if (profile?.chat_code) return profile.chat_code;
   if (known?.display_name) return known.display_name;
-  return `Пользователь ${initials(device)}`;
+  return trTemplate`Пользователь ${initials(device)}`;
 }
 
 /**
@@ -898,10 +898,10 @@ const EMBLEMS = [
 ];
 
 const PROFILE_COLORS = [
-  ["none", "Без цвета", "var(--muted)"], ["white", "Белый", "#f4f4f4"], ["blue", "Синий", "#70a8ff"],
-  ["violet", "Фиолетовый", "#a98cff"], ["green", "Зелёный", "#67d4a3"],
-  ["coral", "Коралловый", "#ed8674"], ["amber", "Янтарный", "#e7b75f"],
-  ["teal", "Бирюзовый", "#5fd0c7"], ["rose", "Розовый", "#ee8ab4"],
+  ["none", tr("Без цвета"), "var(--muted)"], ["white", tr("Белый"), "#f4f4f4"], ["blue", tr("Синий"), "#70a8ff"],
+  ["violet", tr("Фиолетовый"), "#a98cff"], ["green", tr("Зелёный"), "#67d4a3"],
+  ["coral", tr("Коралловый"), "#ed8674"], ["amber", tr("Янтарный"), "#e7b75f"],
+  ["teal", tr("Бирюзовый"), "#5fd0c7"], ["rose", tr("Розовый"), "#ee8ab4"],
 ];
 
 function emblemGlyph(key) {
@@ -1084,16 +1084,16 @@ function renderConversations() {
     const copy = document.createElement("span");
     copy.className = "conversation-copy";
     const name = document.createElement("b");
-    name.textContent = group.title || "Без названия";
+    name.textContent = group.title || tr("Без названия");
     const tag = document.createElement("span");
     tag.className = "kind-tag";
     // «Закрытый» — чтобы не спутать с публичным каналом на вкладке рядом:
     // там содержимое лежит у сервера открытым, здесь — зашифровано.
-    tag.textContent = group.kind === "channel" ? "закрытый канал" : "группа";
+    tag.textContent = group.kind === "channel" ? tr("закрытый канал") : tr("группа");
     name.appendChild(tag);
     const preview = document.createElement("span");
     const count = group.members?.length ?? 0;
-    preview.textContent = group.preview || (count > 0 ? `участников: ${count}` : "пока только вы");
+    preview.textContent = group.preview || (count > 0 ? trTemplate`участников: ${count}` : tr("пока только вы"));
     copy.append(name, preview);
     button.append(avatar, copy);
 
@@ -1143,7 +1143,7 @@ function renderConversations() {
     const name = document.createElement("b");
     paintName(name, peer);
     const preview = document.createElement("span");
-    preview.textContent = entry.preview || (entry.conversation ? "Сообщений пока нет" : "Новое устройство");
+    preview.textContent = entry.preview || (entry.conversation ? tr("Сообщений пока нет") : tr("Новое устройство"));
     copy.append(name, preview);
     button.append(avatar, copy);
 
@@ -1167,7 +1167,7 @@ function renderConversations() {
   if (visible === 0) {
     const empty = document.createElement("li");
     empty.className = "empty-list";
-    empty.textContent = query ? "Ничего не найдено" : "Пока нет диалогов";
+    empty.textContent = query ? tr("Ничего не найдено") : tr("Пока нет диалогов");
     list.appendChild(empty);
   }
 
@@ -1196,7 +1196,7 @@ function selectConversation(peer) {
   if (entry) entry.unread = 0;
   if (group) {
     group.unread = 0;
-    $("peer-device").textContent = group.title || "Без названия";
+    $("peer-device").textContent = group.title || tr("Без названия");
     $("peer-device").style.color = "";
     $("peer-device").title = group.title;
     $("peer-avatar").textContent = group.kind === "channel" ? "◈" : "◇";
@@ -1229,7 +1229,7 @@ function selectConversation(peer) {
   for (const id of ["composer", "send", "attach-image", "record-voice", "emoji-open"]) {
     $(id).disabled = readOnly;
   }
-  $("composer").placeholder = readOnly ? "В этот канал пишет только владелец" : "Сообщение…";
+  $("composer").placeholder = readOnly ? tr("В этот канал пишет только владелец") : tr("Сообщение…");
   renderConversations();
 
   // Через conversationOf, а не через entry: у группы записи в state.conversations
@@ -1275,7 +1275,7 @@ $("messages").addEventListener("click", (event) => {
   if (!image) return;
   $("image-viewer-photo").src = image.src;
   $("image-viewer-photo").alt = image.alt;
-  const caption = image.alt === "Фото" ? "" : image.alt;
+  const caption = image.alt === tr("Фото") ? "" : image.alt;
   $("image-viewer-caption").textContent = caption;
   $("image-viewer-caption").classList.toggle("hidden", !caption);
   $("image-viewer").classList.remove("hidden");
@@ -1383,10 +1383,10 @@ $("composer").addEventListener("keydown", (event) => {
  * чат: заново разбирать base64 фотографии на каждое переключение незачем.
  */
 function deliveryLabel(value, read = false) {
-  if (read) return "✓✓ прочитано";
-  return ({ queued: "в очереди · ожидает Tor", sending: "анонимная отправка…",
-    accepted: "✓ принято сервером", delivered: "✓✓ доставлено", expired: "срок доставки истёк",
-    failed: "не сохранено · повторите отправку", unknown: "статус неизвестен" })[value] ?? "сохраняется…";
+  if (read) return tr("✓✓ прочитано");
+  return ({ queued: tr("в очереди · ожидает Tor"), sending: tr("анонимная отправка…"),
+    accepted: tr("✓ принято сервером"), delivered: tr("✓✓ доставлено"), expired: tr("срок доставки истёк"),
+    failed: tr("не сохранено · повторите отправку"), unknown: tr("статус неизвестен") })[value] ?? tr("сохраняется…");
 }
 
 function buildMessage({ outgoing, body, created_at, delivery: evidence }, peer, deliveryConversation = conversationOf(peer)) {
@@ -1407,7 +1407,7 @@ function buildMessage({ outgoing, body, created_at, delivery: evidence }, peer, 
     const quote = document.createElement("div");
     quote.className = "reply-quote";
     const who = document.createElement("b");
-    who.textContent = "В ответ на";
+    who.textContent = tr("В ответ на");
     quote.append(who, document.createTextNode(content.reply.text));
     text.appendChild(quote);
   }
@@ -1426,7 +1426,7 @@ function buildMessage({ outgoing, body, created_at, delivery: evidence }, peer, 
     const image = document.createElement("img");
     image.className = "message-image";
     image.src = `data:${content.mime};base64,${content.data}`;
-    image.alt = content.caption || "Фото";
+    image.alt = content.caption || tr("Фото");
     text.appendChild(image);
     if (content.caption) text.append(document.createTextNode(content.caption));
   } else {
@@ -1435,7 +1435,7 @@ function buildMessage({ outgoing, body, created_at, delivery: evidence }, peer, 
     text.append(...linkify(content.text ?? body));
   }
   const time = document.createElement("time");
-  time.textContent = new Date(created_at).toLocaleTimeString("ru-RU", {
+  time.textContent = new Date(created_at).toLocaleTimeString(getLocale(), {
     hour: "2-digit",
     minute: "2-digit",
     hour12: preferences.clock === "12",
@@ -1524,7 +1524,7 @@ function linkNode(found) {
   link.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    invoke("open_link", { url: href }).catch(() => toast("Не удалось открыть ссылку"));
+    invoke("open_link", { url: href }).catch(() => toast(tr("Не удалось открыть ссылку")));
   });
   return link;
 }
@@ -1622,13 +1622,13 @@ function dayLabel(at) {
   const day = new Date(at);
   const today = new Date();
   const same = (a, b) => a.toDateString() === b.toDateString();
-  if (same(day, today)) return "Сегодня";
+  if (same(day, today)) return tr("Сегодня");
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  if (same(day, yesterday)) return "Вчера";
+  if (same(day, yesterday)) return tr("Вчера");
 
   const thisYear = day.getFullYear() === today.getFullYear();
-  return day.toLocaleDateString("ru-RU", {
+  return day.toLocaleDateString(getLocale(), {
     day: "numeric",
     month: "long",
     ...(thisYear ? {} : { year: "numeric" }),
@@ -1676,7 +1676,7 @@ function unreadDivider() {
   const item = document.createElement("li");
   item.className = "unread-divider";
   const label = document.createElement("span");
-  label.textContent = "Непрочитанные";
+  label.textContent = tr("Непрочитанные");
   item.appendChild(label);
   return item;
 }
@@ -1722,7 +1722,7 @@ function voiceBubble(content) {
   play.type = "button";
   play.className = "voice-play";
   play.textContent = "▶";
-  play.setAttribute("aria-label", "Проиграть голосовое");
+  play.setAttribute("aria-label", tr("Проиграть голосовое"));
 
   const track = document.createElement("div");
   track.className = "voice-track";
@@ -1734,7 +1734,7 @@ function voiceBubble(content) {
   time.textContent = clock(content.duration ?? 0);
 
   play.addEventListener("click", () => {
-    if (audio.paused) audio.play().catch((error) => toast(`Не удалось проиграть: ${error}`));
+    if (audio.paused) audio.play().catch((error) => toast(trTemplate`Не удалось проиграть: ${error}`));
     else audio.pause();
   });
   audio.addEventListener("play", () => (play.textContent = "❚❚"));
@@ -1780,7 +1780,7 @@ $("record-voice").addEventListener("click", async () => {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (error) {
-    toast(`Микрофон недоступен: ${error}`);
+    toast(trTemplate`Микрофон недоступен: ${error}`);
     return;
   }
 
@@ -1788,7 +1788,7 @@ $("record-voice").addEventListener("click", async () => {
     .find((candidate) => MediaRecorder.isTypeSupported(candidate));
   if (!mime) {
     stream.getTracks().forEach((track) => track.stop());
-    toast("Этот WebView не умеет записывать звук");
+    toast(tr("Этот WebView не умеет записывать звук"));
     return;
   }
 
@@ -1816,7 +1816,7 @@ $("record-voice").addEventListener("click", async () => {
 
     try {
       const data = await blobToBase64(new Blob(chunks, { type: mime }));
-      if (data.length > 700000) throw new Error("запись слишком длинная");
+      if (data.length > 700000) throw new Error(tr("запись слишком длинная"));
       const body = encodeContent({
         type: "voice",
         id: logicalId(),
@@ -1828,7 +1828,7 @@ $("record-voice").addEventListener("click", async () => {
         appendMessage({ outgoing: true, body, created_at: Date.now() }, conversationOf(state.current));
       }
     } catch (error) {
-      toast(`Не удалось отправить голосовое: ${error}`);
+      toast(trTemplate`Не удалось отправить голосовое: ${error}`);
     }
   });
 
@@ -1885,7 +1885,7 @@ const handlers = {
     if (!event.has_identity) {
       showScreen(localStorage.getItem(ONBOARDING_COMPLETE) === "1" ? "screen-entry" : "screen-language");
       $("entry-submit").disabled = false;
-      $("entry-submit").textContent = "Зарегистрироваться";
+      $("entry-submit").textContent = tr("Зарегистрироваться");
       return;
     }
 
@@ -1903,7 +1903,7 @@ const handlers = {
     submit({ type: "privacy_get" });
     submit({ type: "directory_list" });
     submit({ type: "access_get" });
-    setConnection("connecting", "подключаемся…");
+    setConnection("connecting", tr("подключаемся…"));
     void connectSelectedRoute();
   },
 
@@ -1911,7 +1911,7 @@ const handlers = {
     state.decorSupported = Boolean(event.decor);
     renderDecor();
     state.profilesSupported = Boolean(event.profiles);
-    setConnection("connecting", "проверяем ключи…");
+    setConnection("connecting", tr("проверяем ключи…"));
   },
 
   support(event) {
@@ -1927,7 +1927,7 @@ const handlers = {
   },
 
   devices_revoked(event) {
-    toast(`Другие устройства отключены: ${Number(event.count || 0)}`);
+    toast(trTemplate`Другие устройства отключены: ${Number(event.count || 0)}`);
   },
 
   account_exported(event) {
@@ -1936,17 +1936,17 @@ const handlers = {
     // windowCommand ошибку проглатывает и возвращает undefined.
     invoke("save_account_export", { contents: event.data })
       .then((path) => {
-        $("export-status").textContent = `Файл на ${event.messages} сообщений: ${path}`;
-        toast("Файл переноса сохранён");
+        $("export-status").textContent = trTemplate`Файл на ${event.messages} сообщений: ${path}`;
+        toast(tr("Файл переноса сохранён"));
       })
       .catch((error) => {
-        $("export-status").textContent = `Не удалось сохранить: ${error}`;
+        $("export-status").textContent = trTemplate`Не удалось сохранить: ${error}`;
       });
   },
 
   account_imported(event) {
-    $("export-status").textContent = `Перенесено сообщений: ${event.messages}`;
-    toast(`Аккаунт перенесён · сообщений: ${event.messages}`);
+    $("export-status").textContent = trTemplate`Перенесено сообщений: ${event.messages}`;
+    toast(trTemplate`Аккаунт перенесён · сообщений: ${event.messages}`);
     // База сменилась целиком — перечитываем то, что показано на экране.
     submit({ type: "status" });
     submit({ type: "conversations" });
@@ -1965,7 +1965,7 @@ const handlers = {
         renderChannelList();
         openChannelFeed(report.found.id);
       } else {
-        toast(`Канала @${report.query} нет`);
+        toast(trTemplate`Канала @${report.query} нет`);
       }
     }
     if (report.closed) {
@@ -1976,7 +1976,7 @@ const handlers = {
         showChannelPanel(false);
         $("chat-empty").classList.remove("hidden");
         $("chat-header").classList.remove("hidden");
-        toast(report.handle ? `Канал @${report.handle} закрыт` : "Канал закрыт");
+        toast(report.handle ? trTemplate`Канал @${report.handle} закрыт` : tr("Канал закрыт"));
       }
     }
     if (report.updated) {
@@ -2007,7 +2007,7 @@ const handlers = {
       openChannelFeed(openChannel);
       return;
     }
-    toast(`@${report.handle}: новый пост`);
+    toast(trTemplate`@${report.handle}: новый пост`);
   },
 
   group(event) {
@@ -2045,7 +2045,7 @@ const handlers = {
     // Вкладка «Сервер» появляется только у владельца, и решает это сервер.
     $("nav-server").hidden = !state.admin;
     if (state.admin) submit({ type: "admin_get", offset: 0 });
-    setConnection("online", event.queued > 0 ? `в сети · в очереди ${event.queued}` : "в сети");
+    setConnection("online", event.queued > 0 ? trTemplate`в сети · в очереди ${event.queued}` : tr("в сети"));
     // Экран с фразой не смахиваем: AUTH_OK приходит сразу за регистрацией, и
     // без этой проверки человек увидел бы свои 24 слова на долю секунды.
     if (!backupWizardOpen()) showScreen("screen-main");
@@ -2159,15 +2159,15 @@ const handlers = {
     // диалог B, иначе правильный код получает неправильную подпись.
     if (event.peer_device !== state.current) return;
     $("safety-number").textContent = event.safety_number;
-    $("verification-state").textContent = event.verified ? "✓ Устройство проверено" : "Устройство ещё не проверено";
+    $("verification-state").textContent = event.verified ? tr("✓ Устройство проверено") : tr("Устройство ещё не проверено");
     $("verification-proof").value = "";
-    $("epoch-code").textContent = `${event.epoch_code} · эпоха ${event.epoch}`;
+    $("epoch-code").textContent = trTemplate`${event.epoch_code} · эпоха ${event.epoch}`;
     $("verification").classList.remove("hidden");
   },
 
   verification_checked(event) {
     if (event.peer_device !== state.current) return;
-    toast(event.verified ? "Ключи совпали. Устройство проверено." : "Коды не совпадают. Проверка не пройдена.");
+    toast(event.verified ? tr("Ключи совпали. Устройство проверено.") : tr("Коды не совпадают. Проверка не пройдена."));
     submit({ type: "verify", peer_device: event.peer_device });
   },
 
@@ -2184,7 +2184,7 @@ const handlers = {
 
   anomaly(event) {
     const banner = $("anomaly");
-    banner.textContent = `Возможное вмешательство · ${event.kind}: ${event.detail}`;
+    banner.textContent = trTemplate`Возможное вмешательство · ${event.kind}: ${event.detail}`;
     banner.classList.remove("hidden");
   },
 
@@ -2264,14 +2264,14 @@ const handlers = {
     if (invite && invite.query.toUpperCase() === event.chat_code) {
       state.pendingGroupInvite = null;
       submit({ type: "group_invite", group: invite.group, members: [event.device] });
-      toast("Приглашение отправлено");
+      toast(tr("Приглашение отправлено"));
       return;
     }
     if (state.pendingChatCode === event.chat_code) {
       state.pendingChatCode = null;
       $("omni").value = "";
       if (event.device === state.device) {
-        toast("Это ваш собственный код");
+        toast(tr("Это ваш собственный код"));
       } else {
         if (!state.conversations.has(event.device)) {
           state.conversations.set(event.device, { conversation: null, unread: 0 });
@@ -2338,7 +2338,7 @@ const handlers = {
     } else if (event.conversation === conversationOf(state.current)) {
       $("messages").replaceChildren();
     }
-    toast(event.forgotten ? "Чат удалён" : "Переписка очищена");
+    toast(event.forgotten ? tr("Чат удалён") : tr("Переписка очищена"));
   },
 
   access(event) {
@@ -2357,7 +2357,7 @@ const handlers = {
       savePreferences();
       applyPreferences();
       void connectSelectedRoute({ disconnect: true });
-      toast("Профиль сохранён. Серверные ограничения обновятся при подключении через Onion.");
+      toast(tr("Профиль сохранён. Серверные ограничения обновятся при подключении через Onion."));
     }
     if (ownEcho) {
       // Подтверждение собственной записи: на экране всё уже так и есть,
@@ -2371,19 +2371,19 @@ const handlers = {
   },
 
   queue_done() {
-    setConnection("online", "в сети");
+    setConnection("online", tr("в сети"));
   },
 
   disconnected(event) {
-    state.lastDisconnectReason = event.reason || "соединение прервано";
-    setConnection("offline", "переподключаемся…");
+    state.lastDisconnectReason = event.reason || tr("соединение прервано");
+    setConnection("offline", tr("переподключаемся…"));
     if (state.device && $("screen-entry").classList.contains("hidden") && !backupWizardOpen()) {
       showScreen("screen-main");
     }
     if (!$("screen-entry").classList.contains("hidden")) {
-      $("entry-error").textContent = `Не удалось подключиться: ${event.reason}`;
+      $("entry-error").textContent = trTemplate`Не удалось подключиться: ${event.reason}`;
       $("entry-submit").disabled = false;
-      $("entry-submit").textContent = "Повторить";
+      $("entry-submit").textContent = tr("Повторить");
     }
   },
 
@@ -2400,7 +2400,7 @@ const handlers = {
     $("recovery-code-box").classList.remove("hidden");
     $("copy-recovery-code").classList.remove("hidden");
     $("recovery-code-text").textContent = event.words;
-    $("show-recovery-code").textContent = "Скрыть";
+    $("show-recovery-code").textContent = tr("Скрыть");
   },
 
   failed(event) {
@@ -2408,7 +2408,7 @@ const handlers = {
     if (event.code === "anonymous_delivery_waiting") { toast(event.message); return; }
     if (event.code === "pin_not_pending" || (event.code === "storage" && state.pendingPinAction)) {
       state.pendingPinAction = null;
-      toast("Новый ключ не подтверждён: действие остановлено");
+      toast(tr("Новый ключ не подтверждён: действие остановлено"));
       return;
     }
     const friendly = FRIENDLY_ERRORS[event.code];
@@ -2426,7 +2426,7 @@ const handlers = {
       showScreen("screen-entry");
       $("entry-error").textContent = message;
       $("entry-submit").disabled = false;
-      $("entry-submit").textContent = "Зарегистрироваться";
+      $("entry-submit").textContent = tr("Зарегистрироваться");
     } else {
       toast(`${event.code}: ${event.message}`);
     }
@@ -2436,30 +2436,30 @@ const handlers = {
 /** Отказы восстановления показываются на своём экране, а не в общем тосте. */
 function recoveryError(event) {
   const known = {
-    bad_recovery_code: "Код набран с ошибкой — проверьте символы",
-    recovery_rate_limited: "Слишком много попыток. Попробуйте через час",
-    identity_exists: "На этом устройстве уже есть аккаунт",
-    recover: "Не удалось восстановить доступ",
+    bad_recovery_code: tr("Код набран с ошибкой — проверьте символы"),
+    recovery_rate_limited: tr("Слишком много попыток. Попробуйте через час"),
+    identity_exists: tr("На этом устройстве уже есть аккаунт"),
+    recover: tr("Не удалось восстановить доступ"),
   };
   return known[event.code];
 }
 
 /** Понятные причины отказа вместо машинных кодов. */
 const FRIENDLY_ERRORS = {
-  dm_not_allowed: "Этот человек не принимает сообщения от незнакомых. Нужна его ссылка-приглашение.",
-  passes_full: "Слишком много выпущенных приглашений. Отзовите ненужные.",
-  username_taken: "Это имя уже занято.",
-  bad_username: "Имя не подходит: латиница, цифры и подчёркивание, от 3 до 20 символов, не с цифры.",
-  search_rate_limited: "Слишком много поисков подряд. Подождите минуту.",
+  dm_not_allowed: tr("Этот человек не принимает сообщения от незнакомых. Нужна его ссылка-приглашение."),
+  passes_full: tr("Слишком много выпущенных приглашений. Отзовите ненужные."),
+  username_taken: tr("Это имя уже занято."),
+  bad_username: tr("Имя не подходит: латиница, цифры и подчёркивание, от 3 до 20 символов, не с цифры."),
+  search_rate_limited: tr("Слишком много поисков подряд. Подождите минуту."),
 };
 
 function entryError(event) {
   const known = {
-    entry_required: "Для этого устройства нужен новый инвайт-код",
-    invite_invalid: "Инвайт не найден, уже использован или просрочен",
-    handle_taken: "Это имя уже занято",
-    bad_handle: "Имя: 3–20 символов из a-z, 0-9 и _",
-    device_conflict: "Ключ устройства уже связан с другой личностью",
+    entry_required: tr("Для этого устройства нужен новый инвайт-код"),
+    invite_invalid: tr("Инвайт не найден, уже использован или просрочен"),
+    handle_taken: tr("Это имя уже занято"),
+    bad_handle: tr("Имя: 3–20 символов из a-z, 0-9 и _"),
+    device_conflict: tr("Ключ устройства уже связан с другой личностью"),
   };
   return known[event.code];
 }
@@ -2471,29 +2471,29 @@ $("my-device").addEventListener("click", () => {
   settingsPage.classList.remove("hidden");
   syncWindowTitle();
 });
-$("copy-fingerprint").addEventListener("click", () => copyText(state.fingerprint, "Отпечаток скопирован"));
-$("profile-device").addEventListener("click", () => copyText(state.device, "Адрес устройства скопирован"));
-$("profile-chat-code").addEventListener("click", () => copyText(state.chatCode, "Код для чата скопирован"));
+$("copy-fingerprint").addEventListener("click", () => copyText(state.fingerprint, tr("Отпечаток скопирован")));
+$("profile-device").addEventListener("click", () => copyText(state.device, tr("Адрес устройства скопирован")));
+$("profile-chat-code").addEventListener("click", () => copyText(state.chatCode, tr("Код для чата скопирован")));
 
 $("logout-account").addEventListener("click", async () => {
   const confirmed = window.confirm(
-    "Выйти из профиля на этом компьютере?\n\n"
-      + "Локальные ключи и переписка исчезнут из приложения, но останутся на этом компьютере. "
-      + "Сам аккаунт на сервере не удалится. Для повторного входа понадобятся 24 слова или логин и пароль.",
+    tr("Выйти из профиля на этом компьютере?\n\n")
+      + tr("Локальные ключи и переписка исчезнут из приложения, но останутся на этом компьютере. ")
+      + tr("Сам аккаунт на сервере не удалится. Для повторного входа понадобятся 24 слова или логин и пароль."),
   );
   if (!confirmed) return;
 
   const button = $("logout-account");
   button.disabled = true;
-  button.textContent = "Выходим…";
+  button.textContent = tr("Выходим…");
   try {
     await invoke("logout_local_account");
     localStorage.removeItem("valanium.preferences");
     window.location.reload();
   } catch (error) {
     button.disabled = false;
-    button.textContent = "Выйти";
-    toast(`Не удалось выйти: ${String(error)}`);
+    button.textContent = tr("Выйти");
+    toast(trTemplate`Не удалось выйти: ${String(error)}`);
   }
 });
 
@@ -2553,7 +2553,7 @@ $("backup-written").addEventListener("change", () => {
 });
 
 $("backup-words-copy").addEventListener("click", () =>
-  copyText(state.recoveryWords, "Фраза скопирована — вставьте в надёжное место и очистите буфер"));
+  copyText(state.recoveryWords, tr("Фраза скопирована — вставьте в надёжное место и очистите буфер")));
 
 $("backup-next").addEventListener("click", () => finishBackupWizard());
 
@@ -2565,14 +2565,14 @@ $("show-recovery-code").addEventListener("click", () => {
     $("copy-recovery-code").classList.add("hidden");
     $("recovery-code-text").textContent = "—";
     state.recoveryWords = "";
-      $("show-recovery-code").textContent = "Показать фразу";
+      $("show-recovery-code").textContent = tr("Показать фразу");
     return;
   }
   submit({ type: "recovery_code" });
 });
 
 $("copy-recovery-code").addEventListener("click", () =>
-  copyText(state.recoveryWords, "Фраза скопирована — вставьте в надёжное место и очистите буфер"),
+  copyText(state.recoveryWords, tr("Фраза скопирована — вставьте в надёжное место и очистите буфер")),
 );
 
 $("avatar-upload").addEventListener("click", () => $("avatar-file").click());
@@ -2785,7 +2785,7 @@ function syncUnread() {
 }
 
 function syncWindowTitle() {
-  $("window-title").textContent = settingsPage.classList.contains("hidden") ? "Valanium" : "Valanium — Настройки";
+  $("window-title").textContent = settingsPage.classList.contains("hidden") ? "Valanium" : tr("Valanium — Настройки");
 }
 
 $("appearance-open").addEventListener("click", () => {
@@ -2907,7 +2907,7 @@ $("autostart-toggle").addEventListener("click", async () => {
   try {
     await invoke("set_autostart", { enabled: next });
   } catch (error) {
-    toast(`Автозапуск: ${error}`);
+    toast(trTemplate`Автозапуск: ${error}`);
   } finally {
     button.disabled = false;
     // Перечитываем, а не верим себе: если реестр отказал, галочка обязана
@@ -2923,7 +2923,7 @@ $("notification-sound-toggle").addEventListener("click", () => {
 });
 
 $("notification-test").addEventListener("click", () => {
-  showDesktopNotification({ title: "Valanium", text: "Так будет выглядеть новое сообщение" });
+  showDesktopNotification({ title: "Valanium", text: tr("Так будет выглядеть новое сообщение") });
 });
 
 /** Сбрасывает собранные пузыри, оставляя список бесед на месте. */
@@ -2971,7 +2971,7 @@ $("settings-reset").addEventListener("click", () => {
   preferences = { ...preferenceDefaults };
   applyPreferences();
   savePreferences();
-  toast("Оформление сброшено");
+  toast(tr("Оформление сброшено"));
 });
 applyPreferences();
 
@@ -3217,8 +3217,8 @@ function updateEstimate() {
   const { data, width, height, tooBig } = renderPhoto(editorLimit(), Number($("editor-quality").value) / 100);
   const kb = Math.round((data.length * 0.75) / 1024);
   $("editor-size").textContent = tooBig
-    ? "не помещается — уменьшите кадр"
-    : `${width}×${height} · ${kb} КБ`;
+    ? tr("не помещается — уменьшите кадр")
+    : trTemplate`${width}×${height} · ${kb} КБ`;
   $("editor-send").disabled = tooBig;
 }
 
@@ -3235,7 +3235,7 @@ async function openEditor(file, target) {
   try {
     editor.source = await createImageBitmap(file);
   } catch {
-    toast("Не удалось прочитать изображение");
+    toast(tr("Не удалось прочитать изображение"));
     return;
   }
   editor.target = target;
@@ -3251,8 +3251,8 @@ async function openEditor(file, target) {
   syncEditorOutputs();
   $("editor-caption").value = "";
   $("editor-caption").classList.toggle("hidden", square);
-  $("editor-title").textContent = target === "avatar" ? "Аватар"
-    : target === "channel-icon" ? "Значок канала" : "Фото";
+  $("editor-title").textContent = target === "avatar" ? tr("Аватар")
+    : target === "channel-icon" ? tr("Значок канала") : tr("Фото");
   // У аватара кадр всегда квадратный — выбор соотношения только запутывал бы.
   $("editor-ratios").classList.toggle("hidden", square);
   for (const button of $("editor-ratios").querySelectorAll("button")) {
@@ -3415,7 +3415,7 @@ $("editor-send").addEventListener("click", async () => {
   if (editor.target === "channel-icon") {
     const { data, tooBig } = renderPhoto(AVATAR_MAX_BASE64, quality);
     if (tooBig) {
-      toast("Значок не помещается — уменьшите кадр");
+      toast(tr("Значок не помещается — уменьшите кадр"));
       return;
     }
     closeEditor();
@@ -3424,19 +3424,19 @@ $("editor-send").addEventListener("click", async () => {
       channel: openChannel,
       icon: { mime: "image/jpeg", base64: data },
     });
-    toast("Значок канала загружается…");
+    toast(tr("Значок канала загружается…"));
     return;
   }
 
   if (editor.target === "avatar") {
     const { data, tooBig } = renderPhoto(AVATAR_MAX_BASE64, quality);
     if (tooBig) {
-      toast("Аватар не помещается — уменьшите кадр");
+      toast(tr("Аватар не помещается — уменьшите кадр"));
       return;
     }
     closeEditor();
     await submit({ type: "profile_set", avatar_mime: "image/jpeg", avatar_base64: data });
-    toast("Аватар загружается…");
+    toast(tr("Аватар загружается…"));
     return;
   }
 
@@ -3447,7 +3447,7 @@ $("editor-send").addEventListener("click", async () => {
   }
   const { data, width, height, tooBig } = renderPhoto(PHOTO_MAX_BASE64, quality);
   if (tooBig) {
-    toast("Фото не помещается — уменьшите кадр");
+    toast(tr("Фото не помещается — уменьшите кадр"));
     return;
   }
 
@@ -3492,7 +3492,7 @@ async function connectSelectedRoute({ disconnect = false } = {}) {
   const url = SERVER_URLS[mode] || SERVER_URLS.onion;
   if (disconnect) await submit({ type: "disconnect" });
   if (!state.device || generation !== connectionGeneration) return;
-  setConnection("connecting", mode === "onion" ? "Подготавливаем Tor…" : "Подключаемся через Auto…");
+  setConnection("connecting", mode === "onion" ? tr("Подготавливаем Tor…") : tr("Подключаемся через Auto…"));
   if (mode === "onion") {
     try { await ensureOnionize(); }
     catch (error) {
@@ -3523,19 +3523,19 @@ async function connectSelectedRoute({ disconnect = false } = {}) {
 */
 let onionizeError = "";
 $("entry-install-tor")?.addEventListener("click", () => {
-  confirmAction("Скачать Tor?", "Установщик обратится к valanium.com и GitHub по обычному HTTPS. Они увидят сетевой адрес этого запроса. Данные регистрации не отправляются. После установки регистрация пойдёт только через Tor.", async () => {
+  confirmAction(tr("Скачать Tor?"), tr("Установщик обратится к valanium.com и GitHub по обычному HTTPS. Они увидят сетевой адрес этого запроса. Данные регистрации не отправляются. После установки регистрация пойдёт только через Tor."), async () => {
     const button = $("entry-install-tor");
     button.disabled = true;
-    button.textContent = "Скачиваем и проверяем подпись…";
+    button.textContent = tr("Скачиваем и проверяем подпись…");
     try {
       await invoke("onionize_install");
-      button.textContent = "Tor установлен — можно регистрироваться";
+      button.textContent = tr("Tor установлен — можно регистрироваться");
       button.dataset.installed = "true";
       renderEntryConnection();
       void prewarmOnionize();
     } catch (error) {
       $("entry-error").textContent = String(error.message ?? error);
-      button.textContent = "Повторить установку Tor (HTTPS)";
+      button.textContent = tr("Повторить установку Tor (HTTPS)");
     } finally { button.disabled = false; }
   });
 });
@@ -3566,30 +3566,30 @@ async function refreshOnionize() {
   const circuit = state.circuit;
   if (circuit && Array.isArray(circuit.hops)) {
     const rows = circuit.hops.slice(0, 8).map((ips, index) =>
-      `  ${index + 1}. ${index === 0 ? "Входной узел" : "Узел Tor"}: ${Array.isArray(ips) ? ips.join(", ") : "IP недоступен"}`);
-    circuitView.textContent = `${circuit.active ? "Активная цепочка" : "Последняя цепочка (соединение закрыто)"}\nЭто устройство\n${rows.join("\n")}\n  → ${String(circuit.destination ?? "")}\nСерверная часть onion-цепочки скрыта. Геолокация не запрашивается.`;
+      `  ${index + 1}. ${index === 0 ? tr("Входной узел") : tr("Узел Tor")}: ${Array.isArray(ips) ? ips.join(", ") : tr("IP недоступен")}`);
+    circuitView.textContent = trTemplate`${circuit.active ? tr("Активная цепочка") : tr("Последняя цепочка (соединение закрыто)")}\nЭто устройство\n${rows.join("\n")}\n  → ${String(circuit.destination ?? "")}\nСерверная часть onion-цепочки скрыта. Геолокация не запрашивается.`;
   } else {
-    circuitView.textContent = "IP появятся после onion-соединения. Для просмотра цепочки нужен Onionize 0.1.1 или новее.";
+    circuitView.textContent = tr("IP появятся после onion-соединения. Для просмотра цепочки нужен Onionize 0.1.1 или новее.");
   }
   $("onionize-install").classList.toggle("hidden", state.installed);
   $("onionize-start").classList.toggle("hidden", !state.installed || state.running || onionizeWarming || Boolean(onionizeStartup));
   $("onionize-stop").classList.toggle("hidden", !state.running);
 
   if (onionizeError) {
-    note.textContent = "Не удалось подготовить Tor";
+    note.textContent = tr("Не удалось подготовить Tor");
     hint.textContent = onionizeError;
   } else if (onionizeWarming || onionizeStartup) {
-    note.textContent = "Строим цепь Tor заранее, чтобы Onion не заставлял ждать.";
-    hint.textContent = "Первый раз это занимает около минуты. Приложением можно пользоваться.";
+    note.textContent = tr("Строим цепь Tor заранее, чтобы Onion не заставлял ждать.");
+    hint.textContent = tr("Первый раз это занимает около минуты. Приложением можно пользоваться.");
   } else if (state.running) {
-    note.textContent = "Tor работает внутри приложения. Onion ходит через него, ставить ничего не нужно.";
-    hint.textContent = `Локальный вход: ${state.socks ?? "—"}`;
+    note.textContent = tr("Tor работает внутри приложения. Onion ходит через него, ставить ничего не нужно.");
+    hint.textContent = trTemplate`Локальный вход: ${state.socks ?? "—"}`;
   } else if (state.installed) {
-    note.textContent = "Tor установлен, но выключен. Включите — и Onion заработает без Tor Browser.";
-    hint.textContent = "Первый запуск строит цепь около минуты, дальше примерно десять секунд.";
+    note.textContent = tr("Tor установлен, но выключен. Включите — и Onion заработает без Tor Browser.");
+    hint.textContent = tr("Первый запуск строит цепь около минуты, дальше примерно десять секунд.");
   } else {
-    note.textContent = "Чтобы Onion работал без Tor Browser и Orbot, нужен небольшой отдельный файл. Он подписан тем же ключом, что и обновления, и проверяется до запуска.";
-    hint.textContent = "Первый запуск строит цепь Tor примерно минуту — это нормально и происходит один раз.";
+    note.textContent = tr("Чтобы Onion работал без Tor Browser и Orbot, нужен небольшой отдельный файл. Он подписан тем же ключом, что и обновления, и проверяется до запуска.");
+    hint.textContent = tr("Первый запуск строит цепь Tor примерно минуту — это нормально и происходит один раз.");
   }
 }
 
@@ -3612,7 +3612,7 @@ function ensureOnionize() {
   if (onionizeStartup) return onionizeStartup;
   onionizeStartup = (async () => {
     const state = await invoke("onionize_status");
-    if (!state?.installed) throw new Error("Tor не установлен. Установите его в настройках подключения; загрузка требует обычного HTTPS-соединения.");
+    if (!state?.installed) throw new Error(tr("Tor не установлен. Установите его в настройках подключения; загрузка требует обычного HTTPS-соединения."));
     return invoke("onionize_start");
   })().finally(() => { onionizeStartup = null; });
   return onionizeStartup;
@@ -3642,13 +3642,13 @@ $("onionize-install")?.addEventListener("click", async () => {
   button.disabled = true;
   const previous = button.textContent;
   onionizeError = "";
-  button.textContent = "Скачиваем и проверяем…";
+  button.textContent = tr("Скачиваем и проверяем…");
   try {
     await invoke("onionize_install");
-    toast("Tor установлен");
+    toast(tr("Tor установлен"));
   } catch (error) {
     onionizeError = String(error.message ?? error);
-    toast(`Не удалось установить Tor: ${error.message ?? error}`);
+    toast(trTemplate`Не удалось установить Tor: ${error.message ?? error}`);
   } finally {
     button.disabled = false;
     button.textContent = previous;
@@ -3668,15 +3668,15 @@ $("onionize-start")?.addEventListener("click", async () => {
   button.disabled = true;
   const previous = button.textContent;
   // Честный текст вместо крутилки: минута молчания читается как поломка.
-  button.textContent = "Строим цепь Tor…";
+  button.textContent = tr("Строим цепь Tor…");
   onionizeError = "";
   try {
     const socks = await invoke("onionize_start");
-    toast("Tor готов");
+    toast(tr("Tor готов"));
     if (state.device) void connectSelectedRoute({ disconnect: true });
   } catch (error) {
     onionizeError = String(error.message ?? error);
-    toast(`Tor не запустился: ${error}`);
+    toast(trTemplate`Tor не запустился: ${error}`);
   } finally {
     button.disabled = false;
     button.textContent = previous;
@@ -3689,7 +3689,7 @@ $("onionize-stop")?.addEventListener("click", async () => {
   if (preferences.transport === "onion") {
     ++connectionGeneration;
     await submit({ type: "disconnect" });
-    setConnection("offline", "Tor остановлен");
+    setConnection("offline", tr("Tor остановлен"));
   }
   await invoke("onionize_stop").catch((error) => toast(`Tor: ${error}`));
   refreshOnionize();
@@ -3727,67 +3727,67 @@ function openSettingsSection(name) {
  */
 const PRIVACY_GROUPS = [
   {
-    title: "Кто может обращаться",
+    title: tr("Кто может обращаться"),
     rules: [
       {
         key: "direct_messages",
-        label: "Личные сообщения",
-        hint: "Кто может вам написать. Проверяет сервер: постороннему конверт не "
-          + "поставят в очередь вовсе. Тем, кому вы разрешили, пропуска выдаются "
-          + "сами при следующем подключении — включение настройки никого не отрезает.",
+        label: tr("Личные сообщения"),
+        hint: tr("Кто может вам написать. Проверяет сервер: постороннему конверт не ")
+          + tr("поставят в очередь вовсе. Тем, кому вы разрешили, пропуска выдаются ")
+          + tr("сами при следующем подключении — включение настройки никого не отрезает."),
         scopes: ["everyone", "approved", "contacts", "nobody"],
       },
     ],
   },
   {
-    title: "Что мне можно присылать",
+    title: tr("Что мне можно присылать"),
     rules: [
-      { key: "media", label: "Фото и видео", hint: "Вложения от незнакомых людей не будут показаны и сохранены." },
-      { key: "voice", label: "Голосовые сообщения", hint: "" },
-      { key: "files", label: "Файлы", hint: "" },
-      { key: "calls", label: "Звонки", hint: "Звонков пока нет; правило начнёт действовать вместе с ними." },
+      { key: "media", label: tr("Фото и видео"), hint: tr("Вложения от незнакомых людей не будут показаны и сохранены.") },
+      { key: "voice", label: tr("Голосовые сообщения"), hint: "" },
+      { key: "files", label: tr("Файлы"), hint: "" },
+      { key: "calls", label: tr("Звонки"), hint: tr("Звонков пока нет; правило начнёт действовать вместе с ними.") },
       {
         key: "link_previews",
-        label: "Превью ссылок",
-        hint: "Чтобы показать превью, нужно сходить на чужой сайт — и он увидит, что ссылку открыли именно вы. Поэтому по умолчанию выключено.",
+        label: tr("Превью ссылок"),
+        hint: tr("Чтобы показать превью, нужно сходить на чужой сайт — и он увидит, что ссылку открыли именно вы. Поэтому по умолчанию выключено."),
         scopes: ["everyone", "contacts", "nobody"],
       },
     ],
   },
   {
-    title: "Что видно обо мне",
+    title: tr("Что видно обо мне"),
     rules: [
-      { key: "presence", label: "Сейчас в сети", hint: "", scopes: ["everyone", "contacts", "nobody"] },
+      { key: "presence", label: tr("Сейчас в сети"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
       {
         key: "last_seen",
-        label: "Последняя активность",
-        hint: "По времени появления восстанавливают распорядок дня. По умолчанию — никому.",
+        label: tr("Последняя активность"),
+        hint: tr("По времени появления восстанавливают распорядок дня. По умолчанию — никому."),
         scopes: ["everyone", "contacts", "nobody"],
       },
       {
         key: "read_receipts",
-        label: "Отчёты о прочтении",
-        hint: "Если выключить, собеседник по-прежнему видит «отправлено», но не «прочитано».",
+        label: tr("Отчёты о прочтении"),
+        hint: tr("Если выключить, собеседник по-прежнему видит «отправлено», но не «прочитано»."),
         scopes: ["everyone", "contacts", "nobody"],
       },
-      { key: "typing", label: "Индикатор набора текста", hint: "", scopes: ["everyone", "contacts", "nobody"] },
-      { key: "voice_recording_hint", label: "Показывать запись голосового", hint: "", scopes: ["everyone", "contacts", "nobody"] },
+      { key: "typing", label: tr("Индикатор набора текста"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
+      { key: "voice_recording_hint", label: tr("Показывать запись голосового"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
     ],
   },
   {
-    title: "Профиль и поиск",
+    title: tr("Профиль и поиск"),
     rules: [
-      { key: "profile_avatar", label: "Аватар", hint: "", scopes: ["everyone", "contacts", "nobody"] },
-      { key: "profile_name", label: "Имя профиля", hint: "", scopes: ["everyone", "contacts", "nobody"] },
+      { key: "profile_avatar", label: tr("Аватар"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
+      { key: "profile_name", label: tr("Имя профиля"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
     ],
   },
 ];
 
 const SCOPE_LABELS = {
-  everyone: "Все",
-  approved: "Одобренные",
-  contacts: "Контакты",
-  nobody: "Никто",
+  everyone: tr("Все"),
+  approved: tr("Одобренные"),
+  contacts: tr("Контакты"),
+  nobody: tr("Никто"),
 };
 
 const DEFAULT_SCOPES = ["everyone", "approved", "contacts", "nobody"];
@@ -3801,8 +3801,8 @@ const DEFAULT_SCOPES = ["everyone", "approved", "contacts", "nobody"];
  */
 const CLIENT_ONLY_RULES = new Set();
 
-const CLIENT_ONLY_NOTE = "Проверяется на этом устройстве. Сервер о правиле пока не знает: "
-  + "сообщение всё равно доедет, но показано не будет.";
+const CLIENT_ONLY_NOTE = tr("Проверяется на этом устройстве. Сервер о правиле пока не знает: ")
+  + tr("сообщение всё равно доедет, но показано не будет.");
 
 /** Текущий документ правил. Приходит из ядра, туда же и уезжает. */
 let privacy = null;
@@ -3919,7 +3919,7 @@ function privacyRow(spec) {
   const open = document.createElement("button");
   open.type = "button";
   open.className = "ghost-button";
-  open.textContent = "Исключения";
+  open.textContent = tr("Исключения");
   open.addEventListener("click", () => openExceptions(spec));
   foot.appendChild(open);
 
@@ -3942,9 +3942,9 @@ function updatePrivacyCounts() {
 
 function exceptionSummary(rule) {
   const parts = [];
-  if (rule.allow.length) parts.push(`всегда разрешено: ${rule.allow.length}`);
-  if (rule.deny.length) parts.push(`никогда: ${rule.deny.length}`);
-  return parts.length ? parts.join(" · ") : "исключений нет";
+  if (rule.allow.length) parts.push(trTemplate`всегда разрешено: ${rule.allow.length}`);
+  if (rule.deny.length) parts.push(trTemplate`никогда: ${rule.deny.length}`);
+  return parts.length ? parts.join(" · ") : tr("исключений нет");
 }
 
 // --- окно исключений -----------------------------------------------------------
@@ -3961,7 +3961,7 @@ function openExceptions(spec) {
   exceptionsFor = spec;
   $("exceptions-title").textContent = spec.label;
   $("exceptions-hint").textContent =
-    "Запрет сильнее разрешения, а разрешение сильнее выбранного круга.";
+    tr("Запрет сильнее разрешения, а разрешение сильнее выбранного круга.");
   renderExceptions();
   $("exceptions-modal").classList.remove("hidden");
   $("exceptions-close").focus();
@@ -3978,7 +3978,7 @@ function renderExceptions() {
   if (peers.size === 0) {
     const empty = document.createElement("p");
     empty.className = "exceptions-empty";
-    empty.textContent = "Пока некого добавить: список появится вместе с диалогами.";
+    empty.textContent = tr("Пока некого добавить: список появится вместе с диалогами.");
     host.appendChild(empty);
     return;
   }
@@ -4003,7 +4003,7 @@ function renderExceptions() {
     const choice = document.createElement("div");
     choice.className = "exception-choice";
     const currently = rule.deny.includes(peer) ? "deny" : rule.allow.includes(peer) ? "allow" : "none";
-    for (const [value, caption] of [["allow", "Всегда"], ["none", "По кругу"], ["deny", "Никогда"]]) {
+    for (const [value, caption] of [["allow", tr("Всегда")], ["none", tr("По кругу")], ["deny", tr("Никогда")]]) {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.choice = value;
@@ -4070,17 +4070,17 @@ function renderStorage(event) {
     : bytes < 1024 * 1024
       ? `${Math.round(bytes / 1024)} KB`
       : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  $("storage-report").textContent = `База: ${size(event.database_bytes ?? 0)}\n`
-    + `Переписок: ${event.conversations ?? 0}\n`
-    + `Сообщений: ${event.messages ?? 0}`;
+  $("storage-report").textContent = trTemplate`База: ${size(event.database_bytes ?? 0)}\n`
+    + trTemplate`Переписок: ${event.conversations ?? 0}\n`
+    + trTemplate`Сообщений: ${event.messages ?? 0}`;
 }
 
 $("storage-refresh").addEventListener("click", () => submit({ type: "storage" }));
 
 $("wipe-conversations").addEventListener("click", () => {
   confirmAction(
-    "Стереть все переписки?",
-    "История всех бесед исчезнет с этого устройства. У собеседников их копии останутся: они нам не принадлежат. Отменить это нечем.",
+    tr("Стереть все переписки?"),
+    tr("История всех бесед исчезнет с этого устройства. У собеседников их копии останутся: они нам не принадлежат. Отменить это нечем."),
     () => {
       for (const [, entry] of state.conversations) {
         if (entry.conversation) {
@@ -4093,13 +4093,13 @@ $("wipe-conversations").addEventListener("click", () => {
 });
 
 $("data-path").addEventListener("click", () => {
-  toast("База лежит в каталоге данных приложения и открывается только паролем этого устройства");
+  toast(tr("База лежит в каталоге данных приложения и открывается только паролем этого устройства"));
 });
 
 const EMBLEM_LABELS = {
-  none: "Без значка", star: "Звезда", moon: "Луна", leaf: "Лист",
-  flame: "Пламя", drop: "Капля", bolt: "Молния", heart: "Сердце",
-  anchor: "Якорь", crown: "Корона", orbit: "Орбита", shield: "Щит",
+  none: tr("Без значка"), star: tr("Звезда"), moon: tr("Луна"), leaf: tr("Лист"),
+  flame: tr("Пламя"), drop: tr("Капля"), bolt: tr("Молния"), heart: tr("Сердце"),
+  anchor: tr("Якорь"), crown: tr("Корона"), orbit: tr("Орбита"), shield: tr("Щит"),
 };
 
 $("profile-emblem").addEventListener("change", (event) => {
@@ -4139,14 +4139,14 @@ function renderDecor() {
 // --- панель владельца сервера ---------------------------------------------------
 
 const ADMIN_LABELS = {
-  users: "Аккаунтов",
-  devices: "Устройств",
-  profiles: "Профилей",
-  usernames: "Юзернеймов занято",
-  recoveries: "Настроено восстановлений",
-  blocked: "Заблокировано",
-  queued: "В очереди доставки",
-  seenDay: "Заходило за сутки",
+  users: tr("Аккаунтов"),
+  devices: tr("Устройств"),
+  profiles: tr("Профилей"),
+  usernames: tr("Юзернеймов занято"),
+  recoveries: tr("Настроено восстановлений"),
+  blocked: tr("Заблокировано"),
+  queued: tr("В очереди доставки"),
+  seenDay: tr("Заходило за сутки"),
 };
 
 /** С какого места списка показан текущий разворот. */
@@ -4159,7 +4159,7 @@ function renderAdminUsers(report) {
   if (users.length === 0) {
     const empty = document.createElement("p");
     empty.className = "admin-empty";
-    empty.textContent = "Пока никого.";
+    empty.textContent = tr("Пока никого.");
     host.appendChild(empty);
   }
 
@@ -4172,11 +4172,11 @@ function renderAdminUsers(report) {
     // Код чата — то, чем владелец узнаёт человека. Ключ личности показываем
     // сокращённо: полностью он нужен разве что для .env, и там его берут из
     // своего профиля.
-    title.textContent = user.chatCode ?? "без кода";
+    title.textContent = user.chatCode ?? tr("без кода");
     const details = document.createElement("small");
-    const seen = user.lastSeen ? new Date(user.lastSeen).toLocaleString() : "не заходил";
-    details.textContent = `устройств: ${user.devices} · заходил: ${seen}`
-      + (user.hasUsername ? " · юзернейм занят" : "");
+    const seen = user.lastSeen ? new Date(user.lastSeen).toLocaleString() : tr("не заходил");
+    details.textContent = trTemplate`устройств: ${user.devices} · заходил: ${seen}`
+      + (user.hasUsername ? tr(" · юзернейм занят") : "");
     const key = document.createElement("code");
     key.textContent = short(user.identity);
     key.title = user.identity;
@@ -4185,13 +4185,13 @@ function renderAdminUsers(report) {
     const action = document.createElement("button");
     action.type = "button";
     action.className = user.blocked ? "ghost-button" : "ghost-button danger";
-    action.textContent = user.blocked ? "Открыть вход" : "Закрыть вход";
+    action.textContent = user.blocked ? tr("Открыть вход") : tr("Закрыть вход");
     action.addEventListener("click", () => {
       const verb = user.blocked ? "unblock" : "block";
       const detail = user.blocked
-        ? "Человек снова сможет входить на сервер."
-        : "Человек перестанет входить на сервер. Переписки это не касается: она у собеседников на устройствах, и прочитать её нельзя.";
-      confirmAction(user.blocked ? "Открыть вход?" : "Закрыть вход?", detail,
+        ? tr("Человек снова сможет входить на сервер.")
+        : tr("Человек перестанет входить на сервер. Переписки это не касается: она у собеседников на устройствах, и прочитать её нельзя.");
+      confirmAction(user.blocked ? tr("Открыть вход?") : tr("Закрыть вход?"), detail,
         () => submit({ type: "admin_action", action: verb, reference: user.identity }));
     });
 
@@ -4218,7 +4218,7 @@ function renderAdmin(report) {
   }
   const online = document.createElement("div");
   const onlineLabel = document.createElement("span");
-  onlineLabel.textContent = "Устройств на связи";
+  onlineLabel.textContent = tr("Устройств на связи");
   const onlineValue = document.createElement("b");
   onlineValue.textContent = String(report.online ?? 0);
   online.append(onlineLabel, onlineValue);
@@ -4228,7 +4228,7 @@ function renderAdmin(report) {
 
   if (report.done) {
     $("admin-status").textContent = report.done === "block"
-      ? "Вход закрыт." : "Вход открыт.";
+      ? tr("Вход закрыт.") : tr("Вход открыт.");
     $("admin-reference").value = "";
   }
 }
@@ -4262,7 +4262,7 @@ function renderSupport(report) {
   if (threads.length === 0) {
     const empty = document.createElement("p");
     empty.className = "admin-empty";
-    empty.textContent = "Писем пока нет.";
+    empty.textContent = tr("Писем пока нет.");
     host.appendChild(empty);
   }
   for (const thread of threads) {
@@ -4274,13 +4274,13 @@ function renderSupport(report) {
     title.textContent = thread.subject;
     const who = document.createElement("small");
     who.textContent = `${thread.address} · ${new Date(thread.updatedAt).toLocaleString()}`
-      + (thread.closed ? " · закрыта" : "");
+      + (thread.closed ? tr(" · закрыта") : "");
     copy.append(title, who);
 
     const open = document.createElement("button");
     open.type = "button";
     open.className = "ghost-button";
-    open.textContent = "Открыть";
+    open.textContent = tr("Открыть");
     open.addEventListener("click", () => submit({ type: "support_get", thread: thread.id }));
 
     row.append(copy, open);
@@ -4305,7 +4305,7 @@ function renderSupportThread(report) {
   const back = document.createElement("button");
   back.type = "button";
   back.className = "ghost-button";
-  back.textContent = "К списку";
+  back.textContent = tr("К списку");
   back.addEventListener("click", () => {
     supportOpen = null;
     submit({ type: "support_get", offset: supportOffset });
@@ -4331,7 +4331,7 @@ function renderSupportThread(report) {
   // отвечают обычным «ответить» в почтовом клиенте.
   const note = document.createElement("p");
   note.className = "admin-empty";
-  note.textContent = `Отвечать — из своего почтового ящика: копия письма от ${report.thread.address} лежит там.`;
+  note.textContent = trTemplate`Отвечать — из своего почтового ящика: копия письма от ${report.thread.address} лежит там.`;
   wrap.appendChild(note);
 
   const actions = document.createElement("div");
@@ -4339,7 +4339,7 @@ function renderSupportThread(report) {
   const close = document.createElement("button");
   close.type = "button";
   close.className = "ghost-button";
-  close.textContent = report.thread.closed ? "Открыть заново" : "Пометить решённым";
+  close.textContent = report.thread.closed ? tr("Открыть заново") : tr("Пометить решённым");
   close.addEventListener("click", () =>
     submit({ type: "support_mark", thread: report.thread.id, closed: !report.thread.closed }));
   actions.appendChild(close);
@@ -4417,33 +4417,33 @@ function compareVersions(left, right) {
 */
 async function checkForUpdates(showFailure = false) {
   if (preferences.transport === "onion") {
-    if (showFailure) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
+    if (showFailure) toast(tr("В режиме только Tor обычные HTTPS-проверки обновлений отключены."));
     return;
   }
   const status = $("update-status");
   const download = $("update-download");
   appVersion = await invoke("app_version").catch(() => appVersion);
-  if (status) status.textContent = `Версия ${appVersion} · проверяем обновления…`;
+  if (status) status.textContent = trTemplate`Версия ${appVersion} · проверяем обновления…`;
 
   try {
     const response = await fetch(RELEASES_URL, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     if (typeof payload.manifest !== "string" || typeof payload.signature !== "string") {
-      throw new Error("ответ без подписи");
+      throw new Error(tr("ответ без подписи"));
     }
     const trusted = await invoke("verify_release", {
       manifest: payload.manifest,
       signature: payload.signature,
     });
-    if (!trusted) throw new Error("подпись не сходится");
+    if (!trusted) throw new Error(tr("подпись не сходится"));
 
     const release = JSON.parse(payload.manifest).windows;
     const available = Boolean(release) && compareVersions(release.version, appVersion) > 0;
     if (status) {
       status.textContent = available
-        ? `Доступна версия ${release.version}`
-        : `Версия ${appVersion} · установлена последняя`;
+        ? trTemplate`Доступна версия ${release.version}`
+        : trTemplate`Версия ${appVersion} · установлена последняя`;
     }
     if (download) {
       download.classList.toggle("hidden", !available);
@@ -4451,12 +4451,12 @@ async function checkForUpdates(showFailure = false) {
       if (release?.sha256) download.dataset.sha256 = release.sha256;
     }
     $("update-verify").classList.toggle("hidden", !available);
-    $("update-hash").textContent = available ? `Ожидаемый SHA-256: ${release.sha256}` : "";
-    if (available) toast(`Доступно обновление Valanium ${release.version}`);
+    $("update-hash").textContent = available ? trTemplate`Ожидаемый SHA-256: ${release.sha256}` : "";
+    if (available) toast(trTemplate`Доступно обновление Valanium ${release.version}`);
   } catch (error) {
     const reason = String(error?.message ?? error);
-    if (status) status.textContent = `Версия ${appVersion} · не подтвердить: ${reason}`;
-    if (showFailure) toast(`Обновления: ${reason}`);
+    if (status) status.textContent = trTemplate`Версия ${appVersion} · не подтвердить: ${reason}`;
+    if (showFailure) toast(trTemplate`Обновления: ${reason}`);
     $("update-verify").classList.add("hidden");
     $("update-hash").textContent = "";
     download?.classList.add("hidden");
@@ -4480,10 +4480,10 @@ $("update-file").addEventListener("change", async () => {
 
   const expected = $("update-download").dataset.sha256;
   if (!expected) {
-    toast("Сначала проверьте обновления");
+    toast(tr("Сначала проверьте обновления"));
     return;
   }
-  $("update-hash").textContent = "Считаем хеш…";
+  $("update-hash").textContent = tr("Считаем хеш…");
   try {
     const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
     const actual = [...new Uint8Array(digest)]
@@ -4491,11 +4491,11 @@ $("update-file").addEventListener("change", async () => {
       .join("");
     const same = actual === expected;
     $("update-hash").textContent = same
-      ? `Файл совпадает с подписанным: ${actual}`
-      : `НЕ совпадает. Ожидали ${expected}, получили ${actual}`;
-    toast(same ? "Файл подтверждён" : "Файл не тот — запускать нельзя");
+      ? trTemplate`Файл совпадает с подписанным: ${actual}`
+      : trTemplate`НЕ совпадает. Ожидали ${expected}, получили ${actual}`;
+    toast(same ? tr("Файл подтверждён") : tr("Файл не тот — запускать нельзя"));
   } catch (error) {
-    $("update-hash").textContent = `Не удалось посчитать хеш: ${String(error)}`;
+    $("update-hash").textContent = trTemplate`Не удалось посчитать хеш: ${String(error)}`;
   }
 });
 
@@ -4515,7 +4515,7 @@ document.querySelector(".titlebar")?.addEventListener("mousedown", (event) => {
 });
 
 $("profile-identity").addEventListener("click", () => {
-  if (state.identity) copyText(state.identity, "Ключ личности скопирован");
+  if (state.identity) copyText(state.identity, tr("Ключ личности скопирован"));
 });
 
 /**
@@ -4528,19 +4528,19 @@ $("profile-identity").addEventListener("click", () => {
 $("new-group").addEventListener("click", () => {
   const modal = document.createElement("div");
   modal.className = "modal";
-  modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2>Новая группа</h2></div>`
+  modal.innerHTML = trTemplate`<div class="modal-card"><div class="modal-header"><h2>Новая группа</h2></div>`
     + `<div class="group-form">`
-    + `<input data-title type="text" placeholder="Название" maxlength="60" />`
+    + trTemplate`<input data-title type="text" placeholder="Название" maxlength="60" />`
     + `<div class="kinds">`
-    + `<button type="button" data-kind="chat" class="active"><b>Группа</b><small>пишут все участники</small></button>`
-    + `<button type="button" data-kind="channel"><b>Канал</b><small>пишет только владелец</small></button>`
+    + trTemplate`<button type="button" data-kind="chat" class="active"><b>Группа</b><small>пишут все участники</small></button>`
+    + trTemplate`<button type="button" data-kind="channel"><b>Канал</b><small>пишет только владелец</small></button>`
     + `</div>`
-    + `<input data-members type="text" placeholder="Кого позвать: OBS-код или адрес" />`
+    + trTemplate`<input data-members type="text" placeholder="Кого позвать: OBS-код или адрес" />`
     + `</div>`
-    + `<p class="modal-copy">Состав знает только ваше устройство и устройства участников. Серверу группа не видна: он по-прежнему возит конверты между устройствами.</p>`
+    + trTemplate`<p class="modal-copy">Состав знает только ваше устройство и устройства участников. Серверу группа не видна: он по-прежнему возит конверты между устройствами.</p>`
     + `<div class="setting-actions peer-actions">`
-    + `<button class="ghost-button" data-no>Отмена</button>`
-    + `<button class="ghost-button" data-yes>Создать</button></div></div>`;
+    + trTemplate`<button class="ghost-button" data-no>Отмена</button>`
+    + trTemplate`<button class="ghost-button" data-yes>Создать</button></div></div>`;
 
   let kind = "chat";
   for (const button of modal.querySelectorAll("[data-kind]")) {
@@ -4584,11 +4584,11 @@ $("invite-to-group").addEventListener("click", () => {
   const modal = document.createElement("div");
   modal.className = "modal";
   modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2 data-group-title></h2></div>`
-    + `<div class="group-form"><input data-query type="text" placeholder="OBS-код или адрес устройства" /></div>`
-    + `<p class="modal-copy">Приглашённый получит ключи группы и сможет читать то, что будет написано дальше. Прежние сообщения ему не откроются.</p>`
-    + `<div class="setting-actions peer-actions"><button class="ghost-button" data-no>Отмена</button>`
-    + `<button class="ghost-button" data-yes>Позвать</button></div></div>`;
-  modal.querySelector("[data-group-title]").textContent = `Позвать в «${group.title}»`;
+    + trTemplate`<div class="group-form"><input data-query type="text" placeholder="OBS-код или адрес устройства" /></div>`
+    + trTemplate`<p class="modal-copy">Приглашённый получит ключи группы и сможет читать то, что будет написано дальше. Прежние сообщения ему не откроются.</p>`
+    + trTemplate`<div class="setting-actions peer-actions"><button class="ghost-button" data-no>Отмена</button>`
+    + trTemplate`<button class="ghost-button" data-yes>Позвать</button></div></div>`;
+  modal.querySelector("[data-group-title]").textContent = trTemplate`Позвать в «${group.title}»`;
   const close = () => modal.remove();
   modal.querySelector("[data-no]").addEventListener("click", close);
   modal.querySelector("[data-yes]").addEventListener("click", () => {
@@ -4605,8 +4605,8 @@ $("leave-group").addEventListener("click", () => {
   const group = currentGroup();
   if (!group) return;
   confirmAction(
-    "Забыть группу?",
-    "Группа и её переписка исчезнут с этого устройства. Остальные участники ничего не заметят: сказать им об уходе нечем.",
+    tr("Забыть группу?"),
+    tr("Группа и её переписка исчезнут с этого устройства. Остальные участники ничего не заметят: сказать им об уходе нечем."),
     () => submit({ type: "group_forget", group: groupIdOf(state.current) }),
   );
 });
@@ -4619,7 +4619,7 @@ for (const [id, action] of [["admin-block", "block"], ["admin-unblock", "unblock
   $(id).addEventListener("click", () => {
     const reference = $("admin-reference").value.trim();
     if (!reference) {
-      $("admin-status").textContent = "Укажите код чата, адрес устройства или ключ личности.";
+      $("admin-status").textContent = tr("Укажите код чата, адрес устройства или ключ личности.");
       return;
     }
     submit({ type: "admin_action", action, reference });
@@ -4644,7 +4644,7 @@ function completePinnedAction(action) {
   if (action.kind === "group_invite") {
     submit({ type: "group_invite", group: action.group, members: [action.device] });
     hideSearchResult();
-    toast(`@${action.query} приглашён`);
+    toast(trTemplate`@${action.query} приглашён`);
     return;
   }
   if (!state.conversations.has(action.device)) {
@@ -4692,10 +4692,10 @@ function renderSearchHit(event) {
   if (changed) {
     const alarm = document.createElement("p");
     alarm.className = "warning-strip";
-    alarm.textContent = "У этого имени другой ключ устройства, чем прежде."
-      + " Так бывает, когда человек переставил систему или сменил телефон —"
-      + " и так же выглядит подмена. Спросите его любым другим способом,"
-      + " прежде чем продолжать.";
+    alarm.textContent = tr("У этого имени другой ключ устройства, чем прежде.")
+      + tr(" Так бывает, когда человек переставил систему или сменил телефон —")
+      + tr(" и так же выглядит подмена. Спросите его любым другим способом,")
+      + tr(" прежде чем продолжать.");
     card.appendChild(alarm);
   }
 
@@ -4704,7 +4704,7 @@ function renderSearchHit(event) {
   const start = document.createElement("button");
   start.type = "button";
   start.className = "ghost-button";
-  start.textContent = changed ? "Это правда он — продолжить" : "Отправить запрос";
+  start.textContent = changed ? tr("Это правда он — продолжить") : tr("Отправить запрос");
   start.addEventListener("click", () => {
     const action = {
       kind: event.after_pin?.kind ?? "chat",
@@ -4716,7 +4716,7 @@ function renderSearchHit(event) {
       if (state.pendingPinAction) return;
       state.pendingPinAction = action;
       start.disabled = true;
-      start.textContent = "Сохраняем новый ключ…";
+      start.textContent = tr("Сохраняем новый ключ…");
       submit({ type: "pin_accept", name: event.query, device: event.device });
       return;
     }
@@ -4725,7 +4725,7 @@ function renderSearchHit(event) {
   const dismiss = document.createElement("button");
   dismiss.type = "button";
   dismiss.className = "ghost-button";
-  dismiss.textContent = "Скрыть";
+  dismiss.textContent = tr("Скрыть");
   dismiss.addEventListener("click", hideSearchResult);
   actions.append(start, dismiss);
   card.appendChild(actions);
@@ -4753,7 +4753,7 @@ function renderDirectory() {
   if (pending.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty-list";
-    empty.textContent = "Запросов нет";
+    empty.textContent = tr("Запросов нет");
     list.appendChild(empty);
     return;
   }
@@ -4791,9 +4791,9 @@ function requestCard(device, entry) {
   const actions = document.createElement("div");
   actions.className = "setting-actions";
   for (const [caption, standing, danger] of [
-    ["Принять", "approved", false],
-    ["Отклонить", null, false],
-    ["Заблокировать", "blocked", true],
+    [tr("Принять"), "approved", false],
+    [tr("Отклонить"), null, false],
+    [tr("Заблокировать"), "blocked", true],
   ]) {
     const button = document.createElement("button");
     button.type = "button";
@@ -4856,7 +4856,7 @@ function renderChannelList() {
   if (channels.size === 0) {
     const empty = document.createElement("li");
     empty.className = "empty-list";
-    empty.textContent = "Публичных каналов пока нет. Заведите свой или найдите чужой по имени.";
+    empty.textContent = tr("Публичных каналов пока нет. Заведите свой или найдите чужой по имени.");
     list.appendChild(empty);
     return;
   }
@@ -4876,7 +4876,7 @@ function renderChannelList() {
     const name = document.createElement("b");
     name.textContent = channel.title;
     const handle = document.createElement("span");
-    handle.textContent = `@${channel.handle}${channel.owner ? " · ваш" : ""}`;
+    handle.textContent = `@${channel.handle}${channel.owner ? tr(" · ваш") : ""}`;
     copy.append(name, handle);
 
     button.append(avatar, copy);
@@ -4915,7 +4915,7 @@ function renderChannel(report) {
   if (role !== "reader") {
     const tag = document.createElement("span");
     tag.className = "channel-role";
-    tag.textContent = role === "owner" ? "ваш канал" : "вы пишете";
+    tag.textContent = role === "owner" ? tr("ваш канал") : tr("вы пишете");
     $("channel-handle").append(" ", tag);
   }
   $("channel-about").textContent = channel.about ?? "";
@@ -4925,7 +4925,7 @@ function renderChannel(report) {
 
   const subscribe = $("channel-subscribe");
   subscribe.classList.toggle("hidden", Boolean(channel.owner));
-  subscribe.textContent = channel.subscribed ? "Отписаться" : "Подписаться";
+  subscribe.textContent = channel.subscribed ? tr("Отписаться") : tr("Подписаться");
   $("channel-settings").classList.toggle("hidden", !channel.owner);
   $("channel-delete").classList.toggle("hidden", !channel.owner);
 
@@ -4935,8 +4935,8 @@ function renderChannel(report) {
     const empty = document.createElement("li");
     empty.className = "channel-empty";
     empty.textContent = channel.owner
-      ? "Здесь пока пусто. Напишите первый пост."
-      : "Автор ещё ничего не публиковал.";
+      ? tr("Здесь пока пусто. Напишите первый пост.")
+      : tr("Автор ещё ничего не публиковал.");
     feed.appendChild(empty);
   } else {
     if (channelOldest === null) feed.replaceChildren();
@@ -5004,19 +5004,19 @@ function postNode(post, channel) {
   if (post.verified === false) {
     const mark = document.createElement("small");
     mark.className = "post-unverified";
-    mark.textContent = "авторство не подтверждено";
-    mark.title = "Пост не подписан ключом владельца канала: так выглядит и"
-      + " запись старого клиента, и запись, сделанная за владельца.";
+    mark.textContent = tr("авторство не подтверждено");
+    mark.title = tr("Пост не подписан ключом владельца канала: так выглядит и")
+      + tr(" запись старого клиента, и запись, сделанная за владельца.");
     item.appendChild(mark);
   }
   if (channel.owner) {
     const drop = document.createElement("button");
     drop.type = "button";
     drop.className = "drop";
-    drop.textContent = "Убрать";
+    drop.textContent = tr("Убрать");
     drop.addEventListener("click", () => {
-      confirmAction("Убрать пост?",
-        "Он исчезнет у всех читателей канала. Отменить это нечем.",
+      confirmAction(tr("Убрать пост?"),
+        tr("Он исчезнет у всех читателей канала. Отменить это нечем."),
         () => submit({ type: "channel_delete_post", channel: channel.id, post: post.id }));
     });
     item.appendChild(drop);
@@ -5034,7 +5034,7 @@ $("export-account").addEventListener("click", () => {
   const password = $("export-password").value;
   const unlock = $("export-unlock").value;
   if (password.length < 8) {
-    toast("Пароль файла — от восьми знаков");
+    toast(tr("Пароль файла — от восьми знаков"));
     return;
   }
   /*
@@ -5046,15 +5046,15 @@ $("export-account").addEventListener("click", () => {
     его ядро, здесь только поле.
   */
   if (unlock.length === 0) {
-    toast("Введите пароль этого устройства");
+    toast(tr("Введите пароль этого устройства"));
     return;
   }
   confirmAction(
-    "Сохранить файл со всем аккаунтом?",
-    "В файл попадут ключи личности и устройства и вся переписка. Кто получит файл"
-    + " и пароль к нему, сможет читать вашу переписку и писать от вашего имени.",
+    tr("Сохранить файл со всем аккаунтом?"),
+    tr("В файл попадут ключи личности и устройства и вся переписка. Кто получит файл")
+    + tr(" и пароль к нему, сможет читать вашу переписку и писать от вашего имени."),
     async () => {
-      $("export-status").textContent = "Собираем файл…";
+      $("export-status").textContent = tr("Собираем файл…");
       await submit({ type: "account_export", password, unlock });
       $("export-unlock").value = "";
     },
@@ -5063,7 +5063,7 @@ $("export-account").addEventListener("click", () => {
 
 $("import-account").addEventListener("click", () => {
   if ($("import-password").value.length < 8) {
-    toast("Введите пароль файла переноса");
+    toast(tr("Введите пароль файла переноса"));
     return;
   }
   $("import-file").click();
@@ -5079,11 +5079,11 @@ $("import-file").addEventListener("change", async () => {
   try {
     contents = (await file.text()).trim();
   } catch {
-    toast("Не удалось прочитать файл");
+    toast(tr("Не удалось прочитать файл"));
     return;
   }
-  confirmAction("Перенести аккаунт сюда?",
-    "Ключи и история из файла лягут в эту базу. Со старого устройства после этого писать нельзя: состояние шифрования у копий разойдётся.",
+  confirmAction(tr("Перенести аккаунт сюда?"),
+    tr("Ключи и история из файла лягут в эту базу. Со старого устройства после этого писать нельзя: состояние шифрования у копий разойдётся."),
     () => submit({ type: "account_import", password, data: contents }));
 });
 
@@ -5103,24 +5103,24 @@ function openChannelInfo() {
   modal.className = "modal";
 
   const rows = [
-    ["Подписчики", plural(channel.subscribers ?? 0, "человек", "человека", "человек")],
-    ["Постов", String(channel.posts ?? 0)],
+    [tr("Подписчики"), plural(channel.subscribers ?? 0, tr("человек"), tr("человека"), tr("человек"))],
+    [tr("Постов"), String(channel.posts ?? 0)],
   ];
   // Состав редакции знает только владелец — сервер её остальным и не отдаёт.
   if (role === "owner" && Array.isArray(channel.admins)) {
-    rows.push(["Редакция", channel.admins.length === 0
-      ? "только вы"
-      : plural(channel.admins.length, "человек", "человека", "человек")]);
+    rows.push([tr("Редакция"), channel.admins.length === 0
+      ? tr("только вы")
+      : plural(channel.admins.length, tr("человек"), tr("человека"), tr("человек"))]);
   }
-  rows.push(["Заведён", new Date(channel.createdAt).toLocaleDateString("ru-RU")]);
+  rows.push([tr("Заведён"), new Date(channel.createdAt).toLocaleDateString(getLocale())]);
 
   modal.innerHTML = `<div class="modal-card channel-info">`
     + `<div class="channel-info-head">`
     + `<span class="channel-icon" data-icon></span>`
     + `<div><b data-title></b><small data-subs></small></div>`
     + `</div>`
-    + `<button class="link-preview" data-link type="button" title="Скопировать ссылку">`
-    + `<span class="link-preview-copy"><small>Ссылка на канал</small><b data-link-text></b></span>`
+    + trTemplate`<button class="link-preview" data-link type="button" title="Скопировать ссылку">`
+    + trTemplate`<span class="link-preview-copy"><small>Ссылка на канал</small><b data-link-text></b></span>`
     + `<span class="ui-icon icon-discussion"></span></button>`
     + `<p class="channel-info-about" data-about></p>`
     + `<dl class="channel-info-rows">`
@@ -5128,16 +5128,16 @@ function openChannelInfo() {
       `<div><dt>${name}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")
     + `</dl>`
     + `<div class="setting-actions peer-actions">`
-    + `<button class="ghost-button" data-close>Закрыть</button>`
+    + trTemplate`<button class="ghost-button" data-close>Закрыть</button>`
     + (role === "reader" && channel.subscribed
-      ? `<button class="ghost-button danger" data-leave>Отписаться</button>` : "")
+      ? trTemplate`<button class="ghost-button danger" data-leave>Отписаться</button>` : "")
     + (role === "owner"
-      ? `<button class="ghost-button" data-settings>Настроить</button>` : "")
+      ? trTemplate`<button class="ghost-button" data-settings>Настроить</button>` : "")
     + `</div></div>`;
 
   modal.querySelector("[data-title]").textContent = channel.title;
   modal.querySelector("[data-subs]").textContent =
-    plural(channel.subscribers ?? 0, "подписчик", "подписчика", "подписчиков");
+    plural(channel.subscribers ?? 0, tr("подписчик"), tr("подписчика"), tr("подписчиков"));
   modal.querySelector("[data-link-text]").textContent = channelLink(channel).replace(/^https:\/\//, "");
   const about = modal.querySelector("[data-about]");
   about.textContent = channel.about ?? "";
@@ -5150,7 +5150,7 @@ function openChannelInfo() {
     if (event.target === modal) close();
   });
   modal.querySelector("[data-link]").addEventListener("click", () =>
-    copyText(channelLink(channel), "Ссылка на канал скопирована"));
+    copyText(channelLink(channel), tr("Ссылка на канал скопирована")));
   modal.querySelector("[data-leave]")?.addEventListener("click", () => {
     submit({ type: "channel_subscribe", channel: channel.id, subscribe: false });
     close();
@@ -5190,7 +5190,7 @@ $("channel-open-info-copy").addEventListener("keydown", (event) => {
 
 $("channel-link").addEventListener("click", () => {
   const channel = channels.get(openChannel);
-  if (channel) copyText(channelLink(channel), "Ссылка на канал скопирована");
+  if (channel) copyText(channelLink(channel), tr("Ссылка на канал скопирована"));
 });
 
 /**
@@ -5205,23 +5205,23 @@ $("channel-settings").addEventListener("click", () => {
 
   const modal = document.createElement("div");
   modal.className = "modal";
-  modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2>Настройки канала</h2></div>`
+  modal.innerHTML = trTemplate`<div class="modal-card"><div class="modal-header"><h2>Настройки канала</h2></div>`
     + `<div class="group-form">`
-    + `<input data-title type="text" maxlength="64" placeholder="Название" />`
-    + `<input data-about type="text" maxlength="280" placeholder="Описание" />`
+    + trTemplate`<input data-title type="text" maxlength="64" placeholder="Название" />`
+    + trTemplate`<input data-about type="text" maxlength="280" placeholder="Описание" />`
     + `<div class="setting-actions">`
-    + `<button class="ghost-button" data-icon type="button">Сменить значок</button>`
-    + `<button class="ghost-button" data-icon-clear type="button">Убрать значок</button>`
-    + `<button class="ghost-button" data-link type="button">Скопировать ссылку</button>`
+    + trTemplate`<button class="ghost-button" data-icon type="button">Сменить значок</button>`
+    + trTemplate`<button class="ghost-button" data-icon-clear type="button">Убрать значок</button>`
+    + trTemplate`<button class="ghost-button" data-link type="button">Скопировать ссылку</button>`
     + `</div>`
-    + `<small class="decor-label">Кто пишет, кроме вас</small>`
+    + trTemplate`<small class="decor-label">Кто пишет, кроме вас</small>`
     + `<ul class="channel-admins" data-admins></ul>`
-    + `<input data-invite type="text" placeholder="Позвать писать: OBS-код или адрес" />`
+    + trTemplate`<input data-invite type="text" placeholder="Позвать писать: OBS-код или адрес" />`
     + `</div>`
-    + `<p class="modal-copy">Позванный пишет посты, но не может ни переименовать канал, ни закрыть его, ни позвать других.</p>`
+    + trTemplate`<p class="modal-copy">Позванный пишет посты, но не может ни переименовать канал, ни закрыть его, ни позвать других.</p>`
     + `<div class="setting-actions peer-actions">`
-    + `<button class="ghost-button" data-no>Закрыть</button>`
-    + `<button class="ghost-button" data-yes>Сохранить</button></div></div>`;
+    + trTemplate`<button class="ghost-button" data-no>Закрыть</button>`
+    + trTemplate`<button class="ghost-button" data-yes>Сохранить</button></div></div>`;
 
   modal.querySelector("[data-title]").value = channel.title;
   modal.querySelector("[data-about]").value = channel.about ?? "";
@@ -5234,7 +5234,7 @@ $("channel-settings").addEventListener("click", () => {
     if (list.length === 0) {
       const empty = document.createElement("li");
       empty.className = "channel-empty-admins";
-      empty.textContent = "Пока никого — пишете только вы.";
+      empty.textContent = tr("Пока никого — пишете только вы.");
       admins.appendChild(empty);
       return;
     }
@@ -5244,7 +5244,7 @@ $("channel-settings").addEventListener("click", () => {
       name.textContent = code;
       const drop = document.createElement("button");
       drop.type = "button";
-      drop.textContent = "Убрать";
+      drop.textContent = tr("Убрать");
       drop.addEventListener("click", () =>
         submit({ type: "channel_admin", channel: current.id, who: code, admin: false }));
       row.append(name, drop);
@@ -5257,7 +5257,7 @@ $("channel-settings").addEventListener("click", () => {
   channelSettingsModal = modal;
 
   modal.querySelector("[data-link]").addEventListener("click", () =>
-    copyText(channelLink(channel), "Ссылка на канал скопирована"));
+    copyText(channelLink(channel), tr("Ссылка на канал скопирована")));
   modal.querySelector("[data-icon]").addEventListener("click", () => $("channel-icon-file").click());
   modal.querySelector("[data-icon-clear]").addEventListener("click", () =>
     submit({ type: "channel_update", channel: channel.id, icon: null }));
@@ -5280,7 +5280,7 @@ $("channel-settings").addEventListener("click", () => {
     const title = modal.querySelector("[data-title]").value.trim();
     const about = modal.querySelector("[data-about]").value.trim();
     if (!title) {
-      toast("Название не может быть пустым");
+      toast(tr("Название не может быть пустым"));
       return;
     }
     submit({ type: "channel_update", channel: channel.id, title, about });
@@ -5313,20 +5313,20 @@ const CHANNEL_HANDLE = /^[a-z][a-z0-9_]{2,29}$/;
 $("channel-create").addEventListener("click", () => {
   const modal = document.createElement("div");
   modal.className = "modal";
-  modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2>Новый канал</h2></div>`
+  modal.innerHTML = trTemplate`<div class="modal-card"><div class="modal-header"><h2>Новый канал</h2></div>`
     + `<div class="group-form">`
     + `<div class="handle-field"><i>@</i><input data-handle type="text" placeholder="notes" `
     + `maxlength="30" autocomplete="off" spellcheck="false" /></div>`
     + `<div class="link-preview static"><span class="link-preview-copy">`
-    + `<small>Ссылка на канал</small><b data-link>valanium.com/channel/…</b></span></div>`
-    + `<input data-title type="text" placeholder="Название" maxlength="64" />`
-    + `<input data-about type="text" placeholder="Описание, необязательно" maxlength="280" />`
+    + trTemplate`<small>Ссылка на канал</small><b data-link>valanium.com/channel/…</b></span></div>`
+    + trTemplate`<input data-title type="text" placeholder="Название" maxlength="64" />`
+    + trTemplate`<input data-about type="text" placeholder="Описание, необязательно" maxlength="280" />`
     + `</div>`
-    + `<p class="modal-copy">Канал — открытая лента. Посты лежат на сервере <b>без шифрования</b>`
-    + ` и видны всем, кто знает ссылку. Личная переписка работает иначе.</p>`
+    + trTemplate`<p class="modal-copy">Канал — открытая лента. Посты лежат на сервере <b>без шифрования</b>`
+    + trTemplate` и видны всем, кто знает ссылку. Личная переписка работает иначе.</p>`
     + `<div class="setting-actions peer-actions">`
-    + `<button class="ghost-button" data-no>Отмена</button>`
-    + `<button class="ghost-button" data-yes disabled>Завести</button></div></div>`;
+    + trTemplate`<button class="ghost-button" data-no>Отмена</button>`
+    + trTemplate`<button class="ghost-button" data-yes disabled>Завести</button></div></div>`;
 
   const handleInput = modal.querySelector("[data-handle]");
   const link = modal.querySelector("[data-link]");
@@ -5365,7 +5365,7 @@ $("channel-create").addEventListener("click", () => {
 });
 
 $("channel-find").addEventListener("click", () => {
-  const handle = prompt("Имя канала или ссылка на него:");
+  const handle = prompt(tr("Имя канала или ссылка на него:"));
   if (!handle) return;
   // Человеку прислали ссылку целиком — незачем заставлять его вырезать имя.
   const name = handle.trim().replace(/^.*\/channel\//, "").replace(/^@/, "");
@@ -5381,8 +5381,8 @@ $("channel-subscribe").addEventListener("click", () => {
 $("channel-delete").addEventListener("click", () => {
   const channel = channels.get(openChannel);
   if (!channel) return;
-  confirmAction("Закрыть канал?",
-    `@${channel.handle} исчезнет вместе со всеми постами и подписками. Отменить это нечем.`,
+  confirmAction(tr("Закрыть канал?"),
+    trTemplate`@${channel.handle} исчезнет вместе со всеми постами и подписками. Отменить это нечем.`,
     () => submit({ type: "channel_delete", channel: channel.id }));
 });
 
@@ -5427,7 +5427,7 @@ function permits(ruleName, peer) {
 /** Какое правило отвечает за этот тип содержимого. */
 const CONTENT_RULE = { image: "media", voice: "voice", file: "files" };
 
-const CONTENT_LABEL = { image: "Фото", voice: "Голосовое сообщение", file: "Файл" };
+const CONTENT_LABEL = { image: tr("Фото"), voice: tr("Голосовое сообщение"), file: tr("Файл") };
 
 /**
  * Заглушка вместо скрытого вложения.
@@ -5441,15 +5441,15 @@ function blockedAttachment(content, rebuild) {
   wrap.className = "blocked-attachment";
 
   const title = document.createElement("b");
-  title.textContent = `${CONTENT_LABEL[content.type] ?? "Вложение"} скрыто`;
+  title.textContent = trTemplate`${CONTENT_LABEL[content.type] ?? tr("Вложение")} скрыто`;
 
   const why = document.createElement("small");
-  why.textContent = "По вашим правилам приватности от этого собеседника такие вложения не показываются.";
+  why.textContent = tr("По вашим правилам приватности от этого собеседника такие вложения не показываются.");
 
   const show = document.createElement("button");
   show.type = "button";
   show.className = "ghost-button";
-  show.textContent = "Показать";
+  show.textContent = tr("Показать");
   show.addEventListener("click", rebuild);
 
   wrap.append(title, why, show);
@@ -5480,7 +5480,7 @@ function renderInvites() {
   if (invites.length === 0) {
     const empty = document.createElement("p");
     empty.className = "invite-empty";
-    empty.textContent = "Пока ни одной.";
+    empty.textContent = tr("Пока ни одной.");
     host.appendChild(empty);
     return;
   }
@@ -5491,11 +5491,11 @@ function renderInvites() {
 
     const copy = document.createElement("div");
     const title = document.createElement("b");
-    title.textContent = invite.label || "Без заметки";
+    title.textContent = invite.label || tr("Без заметки");
     const terms = document.createElement("small");
     terms.textContent = [
-      invite.one_time ? "одноразовая" : "многоразовая",
-      invite.ttl_sec === 0 ? "бессрочно" : `на ${humanTtl(invite.ttl_sec)}`,
+      invite.one_time ? tr("одноразовая") : tr("многоразовая"),
+      invite.ttl_sec === 0 ? tr("бессрочно") : trTemplate`на ${humanTtl(invite.ttl_sec)}`,
     ].join(" · ");
     const link = document.createElement("code");
     link.textContent = `valanium://invite/${invite.pass}`;
@@ -5508,14 +5508,14 @@ function renderInvites() {
     const copyButton = document.createElement("button");
     copyButton.type = "button";
     copyButton.className = "ghost-button";
-    copyButton.textContent = "Скопировать";
+    copyButton.textContent = tr("Скопировать");
     copyButton.addEventListener("click", () =>
-      copyText(`valanium://invite/${invite.pass}`, "Ссылка скопирована"));
+      copyText(`valanium://invite/${invite.pass}`, tr("Ссылка скопирована")));
 
     const revoke = document.createElement("button");
     revoke.type = "button";
     revoke.className = "ghost-button danger";
-    revoke.textContent = "Отозвать";
+    revoke.textContent = tr("Отозвать");
     revoke.addEventListener("click", () => submit({ type: "pass_revoke", hash: invite.hash }));
 
     actions.append(copyButton, revoke);
@@ -5525,10 +5525,10 @@ function renderInvites() {
 }
 
 function humanTtl(seconds) {
-  if (seconds >= 604800) return `${Math.round(seconds / 604800)} нед.`;
-  if (seconds >= 86400) return `${Math.round(seconds / 86400)} дн.`;
-  if (seconds >= 3600) return `${Math.round(seconds / 3600)} ч.`;
-  return `${Math.round(seconds / 60)} мин.`;
+  if (seconds >= 604800) return trTemplate`${Math.round(seconds / 604800)} нед.`;
+  if (seconds >= 86400) return trTemplate`${Math.round(seconds / 86400)} дн.`;
+  if (seconds >= 3600) return trTemplate`${Math.round(seconds / 3600)} ч.`;
+  return trTemplate`${Math.round(seconds / 60)} мин.`;
 }
 
 // --- профиль собеседника ---------------------------------------------------------
@@ -5547,19 +5547,19 @@ function openPeerCard(device) {
   paintName($("peer-modal-name"), device);
   applyAvatar($("peer-modal-avatar"), device);
   $("peer-modal-username").textContent = profile?.chat_code || short(device);
-  $("peer-modal-standing").textContent = STANDING_LABELS[entry?.standing] ?? "не в контактах";
+  $("peer-modal-standing").textContent = STANDING_LABELS[entry?.standing] ?? tr("не в контактах");
   $("peer-modal-code").textContent = profile?.chat_code ?? "—";
   $("peer-modal-device").textContent = short(device);
-  $("peer-contact").textContent = entry?.standing === "contact" ? "Убрать из контактов" : "В контакты";
+  $("peer-contact").textContent = entry?.standing === "contact" ? tr("Убрать из контактов") : tr("В контакты");
   $("peer-modal").classList.remove("hidden");
   $("peer-modal-close").focus();
 }
 
 const STANDING_LABELS = {
-  contact: "В контактах",
-  approved: "Запрос принят",
-  pending: "Ждёт вашего решения",
-  blocked: "Заблокирован",
+  contact: tr("В контактах"),
+  approved: tr("Запрос принят"),
+  pending: tr("Ждёт вашего решения"),
+  blocked: tr("Заблокирован"),
 };
 
 $("peer-modal-close").addEventListener("click", closePeerCard);
@@ -5573,9 +5573,9 @@ function closePeerCard() {
 }
 
 $("peer-modal-code").addEventListener("click", () =>
-  copyText($("peer-modal-code").textContent, "Код скопирован"));
+  copyText($("peer-modal-code").textContent, tr("Код скопирован")));
 $("peer-modal-device").addEventListener("click", () =>
-  peerCard && copyText(peerCard, "Адрес устройства скопирован"));
+  peerCard && copyText(peerCard, tr("Адрес устройства скопирован")));
 
 $("peer-contact").addEventListener("click", () => {
   if (!peerCard) return;
@@ -5593,7 +5593,7 @@ $("peer-block").addEventListener("click", () => {
   if (!peerCard) return;
   const device = peerCard;
   closePeerCard();
-  confirmAction("Заблокировать?", "Его сообщения перестанут приходить и не будут сохраняться.",
+  confirmAction(tr("Заблокировать?"), tr("Его сообщения перестанут приходить и не будут сохраняться."),
     () => submit({ type: "directory_set", device, standing: "blocked" }));
 });
 
@@ -5601,7 +5601,7 @@ $("peer-clear").addEventListener("click", () => {
   const conversation = conversationOf(peerCard);
   closePeerCard();
   if (!conversation) return;
-  confirmAction("Очистить переписку?", "Сообщения исчезнут с этого устройства. У собеседника они останутся.",
+  confirmAction(tr("Очистить переписку?"), tr("Сообщения исчезнут с этого устройства. У собеседника они останутся."),
     () => submit({ type: "clear_conversation", conversation }));
 });
 
@@ -5610,7 +5610,7 @@ $("peer-delete").addEventListener("click", () => {
   const conversation = conversationOf(device);
   closePeerCard();
   if (!conversation) return;
-  confirmAction("Удалить чат?", "Переписка и сама беседа исчезнут с этого устройства. Чтобы написать снова, диалог придётся завести заново.",
+  confirmAction(tr("Удалить чат?"), tr("Переписка и сама беседа исчезнут с этого устройства. Чтобы написать снова, диалог придётся завести заново."),
     () => submit({ type: "delete_conversation", conversation }));
 });
 
@@ -5625,8 +5625,8 @@ function confirmAction(title, detail, onYes) {
   modal.className = "modal";
   modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2></h2></div>`
     + `<p class="modal-copy"></p><div class="setting-actions peer-actions">`
-    + `<button class="ghost-button" data-no>Отмена</button>`
-    + `<button class="ghost-button danger" data-yes>Да</button></div></div>`;
+    + trTemplate`<button class="ghost-button" data-no>Отмена</button>`
+    + trTemplate`<button class="ghost-button danger" data-yes>Да</button></div></div>`;
   modal.querySelector("h2").textContent = title;
   modal.querySelector(".modal-copy").textContent = detail;
   modal.querySelector("[data-no]").addEventListener("click", () => modal.remove());
@@ -5644,7 +5644,7 @@ function confirmAction(title, detail, onYes) {
 function showRouteMigrationNotice() {
   const modal = document.createElement("div");
   modal.className = "modal";
-  modal.innerHTML = `<div class="modal-card"><div class="modal-header"><h2>Маршрут изменён</h2></div>
+  modal.innerHTML = trTemplate`<div class="modal-card"><div class="modal-header"><h2>Маршрут изменён</h2></div>
     <p class="modal-copy">Подключение переведено на Tor. Доступны только Tor и Auto; изменить выбор можно в настройках подключения.</p>
     <div class="setting-actions peer-actions"><button class="ghost-button" type="button">Понятно</button></div></div>`;
   modal.querySelector("button").addEventListener("click", () => modal.remove());
@@ -5664,20 +5664,20 @@ function showRouteMigrationNotice() {
   системную панель по Win+точка, которая никуда не делась.
 */
 const EMOJI_CATEGORIES = [
-  ["😀", "Лица", "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 🙂‍↕️ 😏 😒 🙂‍↔️ 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😮‍💨 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫣 🤭 🫢 🫡 🤫 🫠 🤥 😶 🫥 😐 🫤 😑 🫨 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 😵‍💫 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕 🤑 🤠 😈 👿 👹 👺 🤡 💩 👻 💀 ☠️ 👽 👾 🤖 🎃"],
-  ["👋", "Люди и жесты", "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 🫷 🫸 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 🦻 👃 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷 👮 👷 💂 🕵️ 👩‍⚕️ 👩‍🌾 👩‍🍳 👩‍🎓 👩‍🎤 👩‍🏫 👩‍🏭 👩‍💻 👩‍💼 👩‍🔧 👩‍🔬 👩‍🎨 👩‍🚒 👩‍✈️ 👩‍🚀 👩‍⚖️ 🦸 🦹 🧙 🧚 🧛 🧜 🧝 🧞 🧟 🧌 💆 💇 🚶 🧍 🧎 🏃 💃 🕺 🕴️ 👯 🧖 🧗 🤺 🏇 ⛷️ 🏂 🏌️ 🏄 🚣 🏊 ⛹️ 🏋️ 🚴 🚵 🤸 🤼 🤽 🤾 🤹 🧘 🛀 🛌"],
-  ["🐻", "Животные и природа", "🐵 🐒 🦍 🦧 🐶 🐕 🦮 🐕‍🦺 🐩 🐺 🦊 🦝 🐱 🐈 🐈‍⬛ 🦁 🐯 🐅 🐆 🐴 🫎 🫏 🐎 🦄 🦓 🦌 🦬 🐮 🐂 🐃 🐄 🐷 🐖 🐗 🐽 🐏 🐑 🐐 🐪 🐫 🦙 🦒 🐘 🦣 🦏 🦛 🐭 🐁 🐀 🐹 🐰 🐇 🐿️ 🦫 🦔 🦇 🐻 🐻‍❄️ 🐨 🐼 🦥 🦦 🦨 🦘 🦡 🐾 🦃 🐔 🐓 🐣 🐤 🐥 🐦 🐧 🕊️ 🦅 🦆 🦢 🦉 🦤 🪶 🦩 🦚 🦜 🪽 🐦‍⬛ 🪿 🐦‍🔥 🐸 🐊 🐢 🦎 🐍 🐲 🐉 🦕 🦖 🐳 🐋 🐬 🦭 🐟 🐠 🐡 🦈 🐙 🐚 🪸 🪼 🐌 🦋 🐛 🐜 🐝 🪲 🐞 🦗 🪳 🕷️ 🦂 🦟 🪰 🪱 🦠 💐 🌸 💮 🪷 🌹 🥀 🌺 🌻 🌼 🌷 🪻 🌱 🪴 🌲 🌳 🌴 🌵 🌾 🌿 ☘️ 🍀 🍁 🍂 🍃 🍄 🪨 🌍 🌎 🌏 🌕 🌙 ⭐ 🌟 ✨ ⚡ ☄️ 🔥 🌪️ 🌈 ☀️ 🌤️ ⛅ 🌧️ ⛈️ ❄️ ☃️ 💧 🌊"],
-  ["🍕", "Еда и напитки", "🍏 🍎 🍐 🍊 🍋 🍋‍🟩 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🫛 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🫚 🥐 🥯 🍞 🥖 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫓 🥪 🥙 🧆 🌮 🌯 🫔 🥗 🥘 🫕 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 🍼 🫖 ☕ 🍵 🧃 🥤 🧋 🍶 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧉 🍾 🧊 🥄 🍴 🍽️"],
-  ["⚽", "Спорт и занятия", "⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🎪 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🪗 🎸 🪕 🎻 🪈 🎲 ♟️ 🎯 🎳 🎮 🕹️ 🧩 🧸 🪅 🪩 🪆 🃏 🀄 🎴"],
-  ["🚀", "Путешествия", "🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🏍️ 🛵 🚲 🛴 🛹 🛼 🚨 🚔 🚍 🚘 🚖 🚡 🚠 🚟 🚃 🚋 🚞 🚝 🚄 🚅 🚈 🚂 🚆 🚇 🚊 🚉 ✈️ 🛫 🛬 🛩️ 💺 🛰️ 🚀 🛸 🚁 🛶 ⛵ 🚤 🛥️ 🛳️ ⛴️ 🚢 ⚓ 🛟 ⛽ 🚧 🚦 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏕️ 🏠 🏢 🏥 🏦 🏨 🏫 🏭 ⛪ 🕌 🛕 🕍 ⛩️ 🕋 🌅 🌄 🌠 🎇 🎆 🌆 🌃 🌌 🌉"],
-  ["💡", "Предметы", "⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 🖲️ 🕹️ 🗜️ 💽 💾 💿 📀 📼 📷 📸 📹 🎥 📽️ 🎞️ 📞 ☎️ 📟 📠 📺 📻 🎙️ 🎚️ 🎛️ 🧭 ⏱️ ⏲️ ⏰ 🕰️ ⌛ ⏳ 📡 🔋 🪫 🔌 💡 🔦 🕯️ 🧯 🛢️ 💸 💵 💶 💷 💳 🪙 💎 ⚖️ 🪜 🧰 🪛 🔧 🔨 ⚒️ 🛠️ ⛏️ 🪚 🔩 ⚙️ 🪤 🧱 ⛓️ ⛓️‍💥 🧲 🔫 💣 🧨 🪓 🔪 🗡️ ⚔️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🔮 📿 🧿 🪬 💈 ⚗️ 🔭 🔬 🕳️ 🩹 🩺 🩻 🚪 🛗 🪞 🪟 🛏️ 🛋️ 🪑 🚽 🪠 🚿 🛁 🪥 🧴 🧷 🧹 🧺 🧻 🪣 🧼 🫧 🪥 🧽 🧯 🛒 🎁 🎈 🎀 🪄 🪅 ✉️ 📩 📨 📧 💌 📦 🏷️ 🪧 📪 📫 📬 📭 📮 📜 📃 📄 📑 🧾 📊 📈 📉 🗒️ 🗓️ 📆 📅 🗑️ 📇 🗃️ 🗳️ 🗄️ 📋 📁 📂 🗂️ 📰 📓 📔 📒 📕 📗 📘 📙 📚 📖 🔖 🧷 🔗 📎 🖇️ 📐 📏 🧮 📌 📍 ✂️ 🖊️ 🖋️ ✒️ 🖌️ 🖍️ 📝 ✏️ 🔍 🔎 🔏 🔐 🔒 🔓"],
-  ["❤️", "Символы", "❤️ 🩷 🧡 💛 💚 💙 🩵 💜 🤎 🖤 🩶 🤍 💔 ❤️‍🔥 ❤️‍🩹 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉️ ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ 🆔 ⚛️ 🉑 ☢️ ☣️ 📴 📳 🈶 🈚 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕ 🛑 ⛔ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 🚭 ❗ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 〽️ ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧️ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 #️⃣ *️⃣ ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ 🔀 🔁 🔂 ◀️ 🔼 🔽 ⏫ ⏬ ➡️ ⬅️ ⬆️ ⬇️ ↗️ ↘️ ↙️ ↖️ ↕️ ↔️ 🔄 ↪️ ↩️ ➿ ♾️ ✔️ ➕ ➖ ➗ ✖️ ™️ ©️ ®️"],
-  ["🏳️", "Флаги", "🏁 🚩 🎌 🏴 🏳️ 🏳️‍🌈 🏳️‍⚧️ 🏴‍☠️ 🇺🇳 🇷🇺 🇺🇦 🇧🇾 🇰🇿 🇦🇲 🇦🇿 🇬🇪 🇺🇿 🇹🇯 🇰🇬 🇲🇩 🇺🇸 🇨🇦 🇲🇽 🇧🇷 🇦🇷 🇨🇱 🇨🇴 🇵🇪 🇬🇧 🇮🇪 🇫🇷 🇩🇪 🇪🇸 🇵🇹 🇮🇹 🇳🇱 🇧🇪 🇨🇭 🇦🇹 🇵🇱 🇨🇿 🇸🇰 🇭🇺 🇷🇴 🇧🇬 🇬🇷 🇹🇷 🇸🇪 🇳🇴 🇫🇮 🇩🇰 🇮🇸 🇪🇪 🇱🇻 🇱🇹 🇷🇸 🇭🇷 🇸🇮 🇧🇦 🇲🇪 🇲🇰 🇦🇱 🇨🇾 🇲🇹 🇯🇵 🇨🇳 🇰🇷 🇮🇳 🇮🇩 🇹🇭 🇻🇳 🇸🇬 🇲🇾 🇵🇭 🇵🇰 🇧🇩 🇮🇱 🇸🇦 🇦🇪 🇮🇷 🇮🇶 🇪🇬 🇿🇦 🇳🇬 🇰🇪 🇲🇦 🇩🇿 🇹🇳 🇦🇺 🇳🇿"],
+  ["😀", tr("Лица"), "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 🙂‍↕️ 😏 😒 🙂‍↔️ 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😮‍💨 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫣 🤭 🫢 🫡 🤫 🫠 🤥 😶 🫥 😐 🫤 😑 🫨 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 😵‍💫 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕 🤑 🤠 😈 👿 👹 👺 🤡 💩 👻 💀 ☠️ 👽 👾 🤖 🎃"],
+  ["👋", tr("Люди и жесты"), "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 🫷 🫸 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 🦻 👃 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷 👮 👷 💂 🕵️ 👩‍⚕️ 👩‍🌾 👩‍🍳 👩‍🎓 👩‍🎤 👩‍🏫 👩‍🏭 👩‍💻 👩‍💼 👩‍🔧 👩‍🔬 👩‍🎨 👩‍🚒 👩‍✈️ 👩‍🚀 👩‍⚖️ 🦸 🦹 🧙 🧚 🧛 🧜 🧝 🧞 🧟 🧌 💆 💇 🚶 🧍 🧎 🏃 💃 🕺 🕴️ 👯 🧖 🧗 🤺 🏇 ⛷️ 🏂 🏌️ 🏄 🚣 🏊 ⛹️ 🏋️ 🚴 🚵 🤸 🤼 🤽 🤾 🤹 🧘 🛀 🛌"],
+  ["🐻", tr("Животные и природа"), "🐵 🐒 🦍 🦧 🐶 🐕 🦮 🐕‍🦺 🐩 🐺 🦊 🦝 🐱 🐈 🐈‍⬛ 🦁 🐯 🐅 🐆 🐴 🫎 🫏 🐎 🦄 🦓 🦌 🦬 🐮 🐂 🐃 🐄 🐷 🐖 🐗 🐽 🐏 🐑 🐐 🐪 🐫 🦙 🦒 🐘 🦣 🦏 🦛 🐭 🐁 🐀 🐹 🐰 🐇 🐿️ 🦫 🦔 🦇 🐻 🐻‍❄️ 🐨 🐼 🦥 🦦 🦨 🦘 🦡 🐾 🦃 🐔 🐓 🐣 🐤 🐥 🐦 🐧 🕊️ 🦅 🦆 🦢 🦉 🦤 🪶 🦩 🦚 🦜 🪽 🐦‍⬛ 🪿 🐦‍🔥 🐸 🐊 🐢 🦎 🐍 🐲 🐉 🦕 🦖 🐳 🐋 🐬 🦭 🐟 🐠 🐡 🦈 🐙 🐚 🪸 🪼 🐌 🦋 🐛 🐜 🐝 🪲 🐞 🦗 🪳 🕷️ 🦂 🦟 🪰 🪱 🦠 💐 🌸 💮 🪷 🌹 🥀 🌺 🌻 🌼 🌷 🪻 🌱 🪴 🌲 🌳 🌴 🌵 🌾 🌿 ☘️ 🍀 🍁 🍂 🍃 🍄 🪨 🌍 🌎 🌏 🌕 🌙 ⭐ 🌟 ✨ ⚡ ☄️ 🔥 🌪️ 🌈 ☀️ 🌤️ ⛅ 🌧️ ⛈️ ❄️ ☃️ 💧 🌊"],
+  ["🍕", tr("Еда и напитки"), "🍏 🍎 🍐 🍊 🍋 🍋‍🟩 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🫛 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🫚 🥐 🥯 🍞 🥖 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫓 🥪 🥙 🧆 🌮 🌯 🫔 🥗 🥘 🫕 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 🍼 🫖 ☕ 🍵 🧃 🥤 🧋 🍶 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧉 🍾 🧊 🥄 🍴 🍽️"],
+  ["⚽", tr("Спорт и занятия"), "⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🎪 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🪗 🎸 🪕 🎻 🪈 🎲 ♟️ 🎯 🎳 🎮 🕹️ 🧩 🧸 🪅 🪩 🪆 🃏 🀄 🎴"],
+  ["🚀", tr("Путешествия"), "🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🏍️ 🛵 🚲 🛴 🛹 🛼 🚨 🚔 🚍 🚘 🚖 🚡 🚠 🚟 🚃 🚋 🚞 🚝 🚄 🚅 🚈 🚂 🚆 🚇 🚊 🚉 ✈️ 🛫 🛬 🛩️ 💺 🛰️ 🚀 🛸 🚁 🛶 ⛵ 🚤 🛥️ 🛳️ ⛴️ 🚢 ⚓ 🛟 ⛽ 🚧 🚦 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏕️ 🏠 🏢 🏥 🏦 🏨 🏫 🏭 ⛪ 🕌 🛕 🕍 ⛩️ 🕋 🌅 🌄 🌠 🎇 🎆 🌆 🌃 🌌 🌉"],
+  ["💡", tr("Предметы"), "⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 🖲️ 🕹️ 🗜️ 💽 💾 💿 📀 📼 📷 📸 📹 🎥 📽️ 🎞️ 📞 ☎️ 📟 📠 📺 📻 🎙️ 🎚️ 🎛️ 🧭 ⏱️ ⏲️ ⏰ 🕰️ ⌛ ⏳ 📡 🔋 🪫 🔌 💡 🔦 🕯️ 🧯 🛢️ 💸 💵 💶 💷 💳 🪙 💎 ⚖️ 🪜 🧰 🪛 🔧 🔨 ⚒️ 🛠️ ⛏️ 🪚 🔩 ⚙️ 🪤 🧱 ⛓️ ⛓️‍💥 🧲 🔫 💣 🧨 🪓 🔪 🗡️ ⚔️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🔮 📿 🧿 🪬 💈 ⚗️ 🔭 🔬 🕳️ 🩹 🩺 🩻 🚪 🛗 🪞 🪟 🛏️ 🛋️ 🪑 🚽 🪠 🚿 🛁 🪥 🧴 🧷 🧹 🧺 🧻 🪣 🧼 🫧 🪥 🧽 🧯 🛒 🎁 🎈 🎀 🪄 🪅 ✉️ 📩 📨 📧 💌 📦 🏷️ 🪧 📪 📫 📬 📭 📮 📜 📃 📄 📑 🧾 📊 📈 📉 🗒️ 🗓️ 📆 📅 🗑️ 📇 🗃️ 🗳️ 🗄️ 📋 📁 📂 🗂️ 📰 📓 📔 📒 📕 📗 📘 📙 📚 📖 🔖 🧷 🔗 📎 🖇️ 📐 📏 🧮 📌 📍 ✂️ 🖊️ 🖋️ ✒️ 🖌️ 🖍️ 📝 ✏️ 🔍 🔎 🔏 🔐 🔒 🔓"],
+  ["❤️", tr("Символы"), "❤️ 🩷 🧡 💛 💚 💙 🩵 💜 🤎 🖤 🩶 🤍 💔 ❤️‍🔥 ❤️‍🩹 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉️ ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ 🆔 ⚛️ 🉑 ☢️ ☣️ 📴 📳 🈶 🈚 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕ 🛑 ⛔ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 🚭 ❗ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 〽️ ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧️ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 #️⃣ *️⃣ ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ 🔀 🔁 🔂 ◀️ 🔼 🔽 ⏫ ⏬ ➡️ ⬅️ ⬆️ ⬇️ ↗️ ↘️ ↙️ ↖️ ↕️ ↔️ 🔄 ↪️ ↩️ ➿ ♾️ ✔️ ➕ ➖ ➗ ✖️ ™️ ©️ ®️"],
+  ["🏳️", tr("Флаги"), "🏁 🚩 🎌 🏴 🏳️ 🏳️‍🌈 🏳️‍⚧️ 🏴‍☠️ 🇺🇳 🇷🇺 🇺🇦 🇧🇾 🇰🇿 🇦🇲 🇦🇿 🇬🇪 🇺🇿 🇹🇯 🇰🇬 🇲🇩 🇺🇸 🇨🇦 🇲🇽 🇧🇷 🇦🇷 🇨🇱 🇨🇴 🇵🇪 🇬🇧 🇮🇪 🇫🇷 🇩🇪 🇪🇸 🇵🇹 🇮🇹 🇳🇱 🇧🇪 🇨🇭 🇦🇹 🇵🇱 🇨🇿 🇸🇰 🇭🇺 🇷🇴 🇧🇬 🇬🇷 🇹🇷 🇸🇪 🇳🇴 🇫🇮 🇩🇰 🇮🇸 🇪🇪 🇱🇻 🇱🇹 🇷🇸 🇭🇷 🇸🇮 🇧🇦 🇲🇪 🇲🇰 🇦🇱 🇨🇾 🇲🇹 🇯🇵 🇨🇳 🇰🇷 🇮🇳 🇮🇩 🇹🇭 🇻🇳 🇸🇬 🇲🇾 🇵🇭 🇵🇰 🇧🇩 🇮🇱 🇸🇦 🇦🇪 🇮🇷 🇮🇶 🇪🇬 🇿🇦 🇳🇬 🇰🇪 🇲🇦 🇩🇿 🇹🇳 🇦🇺 🇳🇿"],
 ];
 
 const EMOJI_TONES = ["🏻", "🏼", "🏽", "🏾", "🏿"];
 const TONE_BASES = "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 🫷 🫸 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🙏 ✍️ 💅 🤳 💪 🦵 🦶 👂 👃 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵".split(" ");
-EMOJI_CATEGORIES.splice(2, 0, ["🎨", "Оттенки кожи", null]);
+EMOJI_CATEGORIES.splice(2, 0, ["🎨", tr("Оттенки кожи"), null]);
 
 let emojiPanel = null;
 
@@ -5760,9 +5760,9 @@ document.addEventListener("click", closeEmoji);
 
 function calculateExpression(source) {
   const input = source.toLowerCase().replaceAll(",", ".").replace(/\s+/g, "");
-  if (!input || input.length > 120 || /[^a-z\d.+\-*/();]/.test(input)) throw new Error("Выражение не распознано");
+  if (!input || input.length > 120 || /[^a-z\d.+\-*/();]/.test(input)) throw new Error(tr("Выражение не распознано"));
   const parts = input.match(/[a-z]+|(?:\d+(?:\.\d*)?|\.\d+)|[()+\-*/;]/g) || [];
-  if (parts.join("") !== input) throw new Error("Выражение не распознано");
+  if (parts.join("") !== input) throw new Error(tr("Выражение не распознано"));
   let at = 0;
   const factor = () => {
     if (parts[at] === "+" || parts[at] === "-") {
@@ -5772,24 +5772,24 @@ function calculateExpression(source) {
     if (parts[at] === "(") {
       at++;
       const value = sum();
-      if (parts[at++] !== ")") throw new Error("Проверьте скобки");
+      if (parts[at++] !== ")") throw new Error(tr("Проверьте скобки"));
       return value;
     }
     if (/^[a-z]+$/.test(parts[at] ?? "")) {
       const name = parts[at++];
-      if (parts[at++] !== "(") throw new Error("Проверьте функцию");
+      if (parts[at++] !== "(") throw new Error(tr("Проверьте функцию"));
       const args = [sum()];
       while (parts[at] === ";") { at++; args.push(sum()); }
-      if (parts[at++] !== ")") throw new Error("Проверьте скобки");
+      if (parts[at++] !== ")") throw new Error(tr("Проверьте скобки"));
       if (name === "max" && args.length >= 2) return Math.max(...args);
       if (name === "min" && args.length >= 2) return Math.min(...args);
       if (name === "abs" && args.length === 1) return Math.abs(args[0]);
       if (name === "sqrt" && args.length === 1) return Math.sqrt(args[0]);
       if (name === "log" && args.length === 1) return Math.log10(args[0]);
-      throw new Error("Проверьте функцию");
+      throw new Error(tr("Проверьте функцию"));
     }
     const value = Number(parts[at++]);
-    if (!Number.isFinite(value)) throw new Error("Выражение не распознано");
+    if (!Number.isFinite(value)) throw new Error(tr("Выражение не распознано"));
     return value;
   };
   const product = () => {
@@ -5797,7 +5797,7 @@ function calculateExpression(source) {
     while (parts[at] === "*" || parts[at] === "/") {
       const op = parts[at++];
       const right = factor();
-      if (op === "/" && right === 0) throw new Error("Деление на ноль");
+      if (op === "/" && right === 0) throw new Error(tr("Деление на ноль"));
       value = op === "*" ? value * right : value / right;
     }
     return value;
@@ -5811,7 +5811,7 @@ function calculateExpression(source) {
     return value;
   };
   const value = sum();
-  if (at !== parts.length || !Number.isFinite(value)) throw new Error("Выражение не распознано");
+  if (at !== parts.length || !Number.isFinite(value)) throw new Error(tr("Выражение не распознано"));
   return String(Number(value.toPrecision(12)));
 }
 
@@ -5888,11 +5888,11 @@ function renderEditBar() {
   const bar = document.createElement("div");
   bar.className = "composer-edit";
   const label = document.createElement("b");
-  label.textContent = "Изменение сообщения";
+  label.textContent = tr("Изменение сообщения");
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "icon-button";
-  cancel.title = "Отменить правку";
+  cancel.title = tr("Отменить правку");
   cancel.append(Object.assign(document.createElement("span"), { className: "ui-icon icon-cross" }));
   cancel.addEventListener("click", cancelEdit);
   bar.append(label, cancel);
@@ -5928,7 +5928,7 @@ function markEdited(node) {
   if (!meta || meta.querySelector(".edited")) return;
   const mark = document.createElement("span");
   mark.className = "edited";
-  mark.textContent = "изменено";
+  mark.textContent = tr("изменено");
   meta.appendChild(mark);
 }
 
@@ -5974,7 +5974,7 @@ function runSearch() {
   }
   $("chat-search-count").textContent = needle.length < 2
     ? "—"
-    : searchHits.length === 0 ? "ничего" : `1 из ${searchHits.length}`;
+    : searchHits.length === 0 ? tr("ничего") : trTemplate`1 из ${searchHits.length}`;
   if (searchHits.length > 0) stepSearch(searchHits.length - 1);
 }
 
@@ -5985,7 +5985,7 @@ function stepSearch(to) {
   const node = searchHits[searchAt];
   node.classList.add("search-current");
   node.scrollIntoView({ block: "center", behavior: "smooth" });
-  $("chat-search-count").textContent = `${searchAt + 1} из ${searchHits.length}`;
+  $("chat-search-count").textContent = trTemplate`${searchAt + 1} из ${searchHits.length}`;
 }
 
 $("open-search").addEventListener("click", () => {
@@ -5997,15 +5997,15 @@ $("open-search").addEventListener("click", () => {
 
 $("revoke-other-devices").addEventListener("click", () => {
   confirmAction(
-    "Отключить другие устройства?",
-    "Их старые ключи будут заблокированы навсегда. Подключённым останется только этот компьютер.",
+    tr("Отключить другие устройства?"),
+    tr("Их старые ключи будут заблокированы навсегда. Подключённым останется только этот компьютер."),
     () => submit({ type: "revoke_other_devices" }),
   );
 });
 
 $("call-button")?.addEventListener("click", (e) => {
   e.preventDefault();
-  toast("Функция звонков ещё не реализована и появится скоро");
+  toast(tr("Функция звонков ещё не реализована и появится скоро"));
 });
 
 $("chat-search-input").addEventListener("input", runSearch);
@@ -6092,17 +6092,17 @@ function openMessageMenu(item, x, y) {
   const text = item.querySelector(".body")?.textContent ?? "";
 
   const entries = [
-    ["Ответить", () => startReply(id, text)],
-    ["Копировать текст", () => copyText(text, "Скопировано")],
-    ["Удалить у себя", () => confirmDelete(id, false), true],
+    [tr("Ответить"), () => startReply(id, text)],
+    [tr("Копировать текст"), () => copyText(text, tr("Скопировано"))],
+    [tr("Удалить у себя"), () => confirmDelete(id, false), true],
   ];
   // Править можно только своё и только текст: у фотографии и голосового
   // «изменить» означало бы отправить другое, а это уже новое сообщение.
   const editable = outgoing && !item.querySelector(".message-image, .voice");
-  if (editable) entries.splice(1, 0, ["Изменить", () => startEdit(id, text)]);
+  if (editable) entries.splice(1, 0, [tr("Изменить"), () => startEdit(id, text)]);
   // Просить об удалении можно только своё: чужую копию у собеседника мы всё
   // равно не контролируем, а кнопка обещала бы обратное.
-  if (outgoing) entries.push(["Удалить у обоих", () => confirmDelete(id, true), true]);
+  if (outgoing) entries.push([tr("Удалить у обоих"), () => confirmDelete(id, true), true]);
 
   for (const [caption, action, danger] of entries) {
     const button = document.createElement("button");
@@ -6146,9 +6146,9 @@ function confirmDelete(id, forBoth) {
   // вернуть. Настройку уважаем — кому спокойнее с вопросом, тот его оставит.
   if (!preferences.confirmDelete) return deleteMessage(id, forBoth);
   const message = forBoth
-    ? "Ваша копия исчезнет сразу. Собеседнику уйдёт просьба удалить свою — выполнит её его приложение, и проверить это невозможно."
-    : "Сообщение исчезнет только на этом устройстве. У собеседника оно останется.";
-  confirmAction(forBoth ? "Удалить у обоих?" : "Удалить у себя?", message,
+    ? tr("Ваша копия исчезнет сразу. Собеседнику уйдёт просьба удалить свою — выполнит её его приложение, и проверить это невозможно.")
+    : tr("Сообщение исчезнет только на этом устройстве. У собеседника оно останется.");
+  confirmAction(forBoth ? tr("Удалить у обоих?") : tr("Удалить у себя?"), message,
     () => deleteMessage(id, forBoth));
 }
 
@@ -6197,7 +6197,7 @@ function undoLast() {
   pendingUndo = null;
   hideUndo();
   revert?.();
-  toast("Отменено");
+  toast(tr("Отменено"));
   return true;
 }
 
@@ -6224,7 +6224,7 @@ function deleteMessage(id, forBoth) {
   for (const node of nodes) node.remove();
 
   deferWithUndo(
-    forBoth ? "Сообщение удаляется у обоих" : "Сообщение удаляется",
+    forBoth ? tr("Сообщение удаляется у обоих") : tr("Сообщение удаляется"),
     () => submit({ type: "delete_message", conversation, id, for_both: forBoth }),
     () => {
       for (const { node, next, parent } of anchors) parent?.insertBefore(node, next);
@@ -6246,11 +6246,11 @@ function renderReplyBar() {
   const bar = document.createElement("div");
   bar.className = "composer-reply";
   const label = document.createElement("span");
-  label.textContent = `Ответ на: ${replyingTo.text}`;
+  label.textContent = trTemplate`Ответ на: ${replyingTo.text}`;
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "ghost-button";
-  cancel.textContent = "Отменить";
+  cancel.textContent = tr("Отменить");
   cancel.addEventListener("click", () => {
     replyingTo = null;
     renderReplyBar();
@@ -6302,7 +6302,7 @@ function showTyping(peer, active) {
   if (active) {
     // Точки — отдельные элементы: так они действительно набирают, а не стоят
     // тремя символами в строке.
-    node.textContent = "печатает";
+    node.textContent = tr("печатает");
     const dots = document.createElement("span");
     dots.className = "typing-dots";
     dots.append(document.createElement("i"), document.createElement("i"),
@@ -6342,8 +6342,8 @@ function refreshPeerState() {
   if (!peer) return;
   if (typingPeers.has(peer)) return;
   node.classList.remove("typing");
-  node.textContent = isOnline(peer) ? "в сети · контроль ключа включён" : "контроль ключа включён";
-  node.title = "Приложение запоминает ключ собеседника и остановит отправку, если он неожиданно изменится";
+  node.textContent = isOnline(peer) ? tr("в сети · контроль ключа включён") : tr("контроль ключа включён");
+  node.title = tr("Приложение запоминает ключ собеседника и остановит отправку, если он неожиданно изменится");
 }
 
 // --- пароль при запуске (Windows) ------------------------------------------
@@ -6365,7 +6365,7 @@ $("form-locked").addEventListener("submit", async (event) => {
   try {
     await invoke("unlock_with_password", { password });
     $("lock-password").value = "";
-    showBoot("Входим в аккаунт…");
+    showBoot(tr("Входим в аккаунт…"));
     await submit({ type: "status" });
   } catch (error) {
     $("lock-error").textContent = String(error);
@@ -6377,10 +6377,10 @@ async function renderLockState() {
   try {
     const enabled = await invoke("app_lock_enabled");
     $("lock-state").textContent = enabled
-      ? "Пароль включён: без него база не откроется."
-      : "Пароль не задан: база открывается автоматически.";
+      ? tr("Пароль включён: без него база не откроется.")
+      : tr("Пароль не задан: база открывается автоматически.");
   } catch (error) {
-    $("lock-state").textContent = `Не удалось узнать состояние: ${String(error)}`;
+    $("lock-state").textContent = trTemplate`Не удалось узнать состояние: ${String(error)}`;
   }
 }
 
@@ -6388,7 +6388,7 @@ $("lock-apply").addEventListener("click", async () => {
   const current = $("lock-current").value;
   const next = $("lock-next").value;
   if (next && next.length < 8) {
-    toast("Пароль запуска — от восьми знаков");
+    toast(tr("Пароль запуска — от восьми знаков"));
     return;
   }
   const apply = async () => {
@@ -6397,7 +6397,7 @@ $("lock-apply").addEventListener("click", async () => {
       $("lock-current").value = "";
       $("lock-next").value = "";
       await renderLockState();
-      toast(enabled ? "Пароль при запуске включён" : "Пароль при запуске снят");
+      toast(enabled ? tr("Пароль при запуске включён") : tr("Пароль при запуске снят"));
     } catch (error) {
       toast(String(error));
     }
@@ -6405,17 +6405,17 @@ $("lock-apply").addEventListener("click", async () => {
 
   if (!next) {
     confirmAction(
-      "Снять пароль при запуске?",
-      "База снова будет открываться автоматически — как и для любой программы,"
-      + " работающей под вашей учётной записью Windows.",
+      tr("Снять пароль при запуске?"),
+      tr("База снова будет открываться автоматически — как и для любой программы,")
+      + tr(" работающей под вашей учётной записью Windows."),
       apply,
     );
     return;
   }
   confirmAction(
-    "Включить пароль при запуске?",
-    "Его нигде не сохранят и не восстановят. Забудете — переписка на этом"
-    + " устройстве останется закрытой навсегда.",
+    tr("Включить пароль при запуске?"),
+    tr("Его нигде не сохранят и не восстановят. Забудете — переписка на этом")
+    + tr(" устройстве останется закрытой навсегда."),
     apply,
   );
 });

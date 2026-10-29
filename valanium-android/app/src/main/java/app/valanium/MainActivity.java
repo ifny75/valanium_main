@@ -403,6 +403,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private Thread localPoller;
 
     @Override
+    protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(I18n.localizedContext(base)); }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         configureWindow();
@@ -576,6 +579,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         // Sharing has a labelled action in the empty state and in settings.
         findViewById(R.id.copy_chat_code).setVisibility(View.GONE);
         configureTransport();
+        for (String[][] table : new String[][][]{PRIVACY_SPEC, EMBLEMS, PROFILE_COLORS})
+            for (String[] row : table) for (int i=1;i<row.length;i++) row[i]=I18n.t(row[i]);
+        findViewById(R.id.language_entry).setOnClickListener(v -> chooseLanguage());
+        findViewById(R.id.language_settings).setOnClickListener(v -> chooseLanguage());
         configureEntryExperience();
         wireChatSettings();
         configureInsets();
@@ -1849,7 +1856,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void chooseAvatar() {
         if (!profilesSupported) {
-            toast("Сервер ещё не обновлён для аватаров");
+            toast(I18n.t("Сервер ещё не обновлён для аватаров"));
             return;
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -1884,7 +1891,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (bitmap == null) throw new IllegalArgumentException("image decode failed");
             new PhotoViewer(this, bitmap).show();
         } catch (RuntimeException error) {
-            toast("Не удалось открыть изображение");
+            toast(I18n.t("Не удалось открыть изображение"));
         }
     }
 
@@ -1948,7 +1955,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 if (source == null) throw new IOException("image decode failed");
                 runOnUiThread(() -> openEditor(source, avatar));
             } catch (Exception error) {
-                runOnUiThread(() -> toast("Не удалось прочитать изображение"));
+                runOnUiThread(() -> toast(I18n.t("Не удалось прочитать изображение")));
             }
         }, avatar ? "valanium-avatar" : "valanium-photo").start();
     }
@@ -1964,7 +1971,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         new PhotoEditor(this, source, avatar ? 1f : 0f, limit, (base64, width, height) -> {
             if (avatar) {
                 submit(Commands.profileSet("image/jpeg", base64));
-                toast("Аватар загружается…");
+                toast(I18n.t("Аватар загружается…"));
                 return;
             }
             if (currentPeer == null) return;
@@ -2343,26 +2350,26 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void configureAccountActions() {
         findViewById(R.id.account_share).setOnClickListener(v -> {
             if (ownChatCode.isEmpty()) {
-                toast("Код профиля пока недоступен. Проверьте подключение.");
+                toast(I18n.t("Код профиля пока недоступен. Проверьте подключение."));
                 return;
             }
             Intent share = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                    .putExtra(Intent.EXTRA_TEXT, "Мой код Valanium: " + ownChatCode);
-            startActivity(Intent.createChooser(share, "Поделиться профилем"));
+                    .putExtra(Intent.EXTRA_TEXT, I18n.t("Мой код Valanium: ") + ownChatCode);
+            startActivity(Intent.createChooser(share, I18n.t("Поделиться профилем")));
         });
         findViewById(R.id.account_reconnect).setOnClickListener(v -> {
             if (myDeviceHex.isEmpty()) return;
             submit(Commands.disconnect());
             ui.postDelayed(this::connectSelectedRoute, 250);
-            toast("Переподключаемся…");
+            toast(I18n.t("Переподключаемся…"));
         });
         findViewById(R.id.account_updates).setOnClickListener(v -> checkForUpdates(true));
         findViewById(R.id.account_logout).setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setTitle("Выйти из аккаунта?")
-                .setMessage("Аккаунт на сервере не удалится. Для повторного входа нужна фраза восстановления или настроенные данные входа. Прежняя зашифрованная база останется на телефоне, но история не переносится в новую сессию автоматически.")
-                .setNeutralButton("Восстановление", (dialog, which) -> open(screenSecurity))
+                .setTitle(I18n.t("Выйти из аккаунта?"))
+                .setMessage(I18n.t("Аккаунт на сервере не удалится. Для повторного входа нужна фраза восстановления или настроенные данные входа. Прежняя зашифрованная база останется на телефоне, но история не переносится в новую сессию автоматически."))
+                .setNeutralButton(I18n.t("Восстановление"), (dialog, which) -> open(screenSecurity))
                 .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton("Выйти", (dialog, which) -> logoutAccount())
+                .setPositiveButton(I18n.t("Выйти"), (dialog, which) -> logoutAccount())
                 .show());
     }
 
@@ -2377,7 +2384,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         ValaniumService.stopForLogout(this, () -> {
             boolean saved = getSharedPreferences("account_session", MODE_PRIVATE).edit()
                     .putString("database", "session-" + java.util.UUID.randomUUID() + ".db").commit();
-            if (!saved) toast("Не удалось сохранить выход. Прежний аккаунт сохранён.");
+            if (!saved) toast(I18n.t("Не удалось сохранить выход. Прежний аккаунт сохранён."));
             android.app.NotificationManager notifications = getSystemService(android.app.NotificationManager.class);
             if (notifications != null) notifications.cancelAll();
             startActivity(new Intent(this, MainActivity.class)
@@ -2414,7 +2421,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                     registrationPending = false;
                     entrySubmit.setEnabled(true);
                     entrySubmit.setText(R.string.register);
-                    toast("Tor не готов. Регистрация не отправлена; прямого подключения не было.");
+                    toast(I18n.t("Tor не готов. Регистрация не отправлена; прямого подключения не было."));
                 }
             });
         }, "valanium-private-register").start();
@@ -2427,10 +2434,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void checkForUpdates(boolean manual) {
         if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))
                 || (myDeviceHex.isEmpty() && ((Switch) findViewById(R.id.entry_tor_only)).isChecked())) {
-            if (manual) toast("В режиме только Tor обычные HTTPS-проверки обновлений отключены.");
+            if (manual) toast(I18n.t("В режиме только Tor обычные HTTPS-проверки обновлений отключены."));
             return;
         }
-        if (manual) toast("Проверяем обновления…");
+        if (manual) toast(I18n.t("Проверяем обновления…"));
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
@@ -2463,19 +2470,19 @@ public final class MainActivity extends Activity implements Events.Listener {
                             || expectedBytes <= 0) throw new java.io.IOException("Invalid download");
                     if (compareVersions(latest, appVersion()) > 0) {
                         runOnUiThread(() -> new AlertDialog.Builder(this)
-                                .setTitle("Доступно обновление " + latest)
-                                .setMessage("Скачать новую Public Beta? Установка начнётся только после подтверждения Android.")
-                                .setPositiveButton("Скачать", (dialog, which) ->
+                                .setTitle(I18n.t("Доступно обновление ") + latest)
+                                .setMessage(I18n.t("Скачать новую Public Beta? Установка начнётся только после подтверждения Android."))
+                                .setPositiveButton(I18n.t("Скачать"), (dialog, which) ->
                                         startActivity(new Intent(Intent.ACTION_VIEW, download)))
-                                .setNegativeButton("Позже", null)
+                                .setNegativeButton(I18n.t("Позже"), null)
                                 .show());
                     } else if (manual) {
-                        runOnUiThread(() -> toast("Установлена актуальная версия: " + appVersion()));
+                        runOnUiThread(() -> toast(I18n.t("Установлена актуальная версия: ") + appVersion()));
                     }
                 }
             } catch (Exception ignored) {
                 // Проверка не должна мешать запуску и работе офлайн.
-                if (manual) runOnUiThread(() -> toast("Не удалось проверить обновления. Повторите позже."));
+                if (manual) runOnUiThread(() -> toast(I18n.t("Не удалось проверить обновления. Повторите позже.")));
             } finally {
                 if (connection != null) connection.disconnect();
             }
@@ -2515,7 +2522,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         String chatCode = raw.toUpperCase(Locale.ROOT);
         if (chatCode.matches("OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}")) {
             if (!profilesSupported) {
-                toast("Сервер ещё не обновлён для кодов чата");
+                toast(I18n.t("Сервер ещё не обновлён для кодов чата"));
                 return;
             }
             pendingChatCode = chatCode;
@@ -2678,7 +2685,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (peer == null || !peer.equals(currentPeer)) return;
         try { submit(new JSONObject().put("type", "verification_confirm")
                 .put("peer_device", peer).put("proof", proof).toString()); }
-        catch (Exception ignored) { toast("Не удалось сверить код"); }
+        catch (Exception ignored) { toast(I18n.t("Не удалось сверить код")); }
     }
 
     private void showVerification(JSONObject event) {
@@ -2689,8 +2696,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(20), dp(8), dp(20), dp(8));
         TextView explanation = new TextView(this);
-        explanation.setText((event.optBoolean("verified") ? "✓ Устройство проверено" : "Устройство ещё не проверено")
-                + "\n\nСверьте QR или код лично либо по другому доверенному каналу. Смена ключа потребует новой проверки.");
+        explanation.setText((event.optBoolean("verified") ? I18n.t("✓ Устройство проверено") : I18n.t("Устройство ещё не проверено"))
+                + I18n.t("\n\nСверьте QR или код лично либо по другому доверенному каналу. Смена ключа потребует новой проверки."));
         content.addView(explanation);
         try {
             com.google.zxing.common.BitMatrix matrix = VerificationQr.encode(event.optString("qr_payload"));
@@ -2700,7 +2707,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             Bitmap bitmap = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888);
             ImageView image = new ImageView(this);
             image.setImageBitmap(bitmap);
-            image.setContentDescription("QR для проверки пары устройств");
+            image.setContentDescription(I18n.t("QR для проверки пары устройств"));
             image.setAdjustViewBounds(true);
             content.addView(image, new LinearLayout.LayoutParams(-1, dp(250)));
         } catch (Exception ignored) { /* Numeric verification remains available. */ }
@@ -2711,26 +2718,26 @@ public final class MainActivity extends Activity implements Events.Listener {
         code.setPadding(0, dp(12), 0, dp(12));
         content.addView(code);
         TextView epoch = new TextView(this);
-        epoch.setText("Код текущей эпохи " + event.optLong("epoch") + ":\n" + event.optString("epoch_code"));
+        epoch.setText(I18n.t("Код текущей эпохи ") + event.optLong("epoch") + ":\n" + event.optString("epoch_code"));
         epoch.setTextIsSelectable(true);
         content.addView(epoch);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
-        verificationDialog = new AlertDialog.Builder(this).setTitle("Проверка ключей").setView(scroll)
-                .setPositiveButton("Ввести код", (dialog, which) -> {
+        verificationDialog = new AlertDialog.Builder(this).setTitle(I18n.t("Проверка ключей")).setView(scroll)
+                .setPositiveButton(I18n.t("Ввести код"), (dialog, which) -> {
                     EditText input = new EditText(this);
-                    input.setHint("Код с устройства собеседника");
+                    input.setHint(I18n.t("Код с устройства собеседника"));
                     input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-                    new AlertDialog.Builder(this).setTitle("Сверка кода").setView(input)
-                            .setPositiveButton("Сверить", (d, w) -> confirmVerification(peer, input.getText().toString()))
-                            .setNegativeButton("Отмена", null).show();
+                    new AlertDialog.Builder(this).setTitle(I18n.t("Сверка кода")).setView(input)
+                            .setPositiveButton(I18n.t("Сверить"), (d, w) -> confirmVerification(peer, input.getText().toString()))
+                            .setNegativeButton(I18n.t("Отмена"), null).show();
                 })
-                .setNeutralButton("QR из изображения", (dialog, which) -> {
+                .setNeutralButton(I18n.t("QR из изображения"), (dialog, which) -> {
                     verificationImagePeer = peer;
                     Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*")
                             .addCategory(Intent.CATEGORY_OPENABLE);
                     startActivityForResult(pick, VERIFICATION_IMAGE_REQUEST);
-                }).setNegativeButton("Закрыть", null).create();
+                }).setNegativeButton(I18n.t("Закрыть"), null).create();
         verificationDialog.show();
     }
 
@@ -2753,7 +2760,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 bitmap.recycle();
                 String proof = VerificationQr.decode(pixels, width, height);
                 runOnUiThread(() -> confirmVerification(peer, proof));
-            } catch (Exception error) { runOnUiThread(() -> toast("Не найден QR проверки Valanium. Можно сверить числовой код.")); }
+            } catch (Exception error) { runOnUiThread(() -> toast(I18n.t("Не найден QR проверки Valanium. Можно сверить числовой код."))); }
         }, "valanium-verify-image").start();
     }
 
@@ -2851,7 +2858,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                             .putBoolean("onion_default_v1", true).apply();
                     ((RoutingView) findViewById(R.id.transport_mode)).setMode("onion");
                     connectSelectedRoute();
-                    toast("Профиль сохранён. Подключаемся через Onion; серверные ограничения обновятся при подключении.");
+                    toast(I18n.t("Профиль сохранён. Подключаемся через Onion; серверные ограничения обновятся при подключении."));
                 }
                 break;
             case "directory":
@@ -2910,7 +2917,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 break;
             case "verification_checked":
                 if (!event.optString("peer_device").equals(currentPeer)) break;
-                toast(event.optBoolean("verified") ? "Ключи совпали. Устройство проверено." : "Коды не совпадают. Проверка не пройдена.");
+                toast(event.optBoolean("verified") ? I18n.t("Ключи совпали. Устройство проверено.") : I18n.t("Коды не совпадают. Проверка не пройдена."));
                 submit(Commands.verify(currentPeer));
                 break;
             case "recovery_code":
@@ -2919,12 +2926,12 @@ public final class MainActivity extends Activity implements Events.Listener {
                 // одному знаку и ошибаются.
                 if (seedBackupPending) {
                     seedBackupPending = false;
-                    new AlertDialog.Builder(this).setTitle("Сохраните сид-фразу")
-                            .setMessage("24 слова нужны для восстановления аккаунта. Покажите их, когда сможете записать в надёжном месте.")
-                            .setPositiveButton("Показать 24 слова", (dialog, which) -> {
+                    new AlertDialog.Builder(this).setTitle(I18n.t("Сохраните сид-фразу"))
+                            .setMessage(I18n.t("24 слова нужны для восстановления аккаунта. Покажите их, когда сможете записать в надёжном месте."))
+                            .setPositiveButton(I18n.t("Показать 24 слова"), (dialog, which) -> {
                                 open(screenSecurity);
                                 showRecoveryCode(event.optString("words"));
-                            }).setNegativeButton("Позже в настройках", null).show();
+                            }).setNegativeButton(I18n.t("Позже в настройках"), null).show();
                 } else showRecoveryCode(event.optString("words"));
                 break;
             case "failed":
@@ -3898,8 +3905,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         if (conversations.isEmpty()) {
             rows.add(ChatListItem.empty());
-            rows.add(ChatListItem.action("Начать чат", 1));
-            rows.add(ChatListItem.action("Поделиться моим кодом", 2));
+            rows.add(ChatListItem.action(I18n.t("Начать чат"), 1));
+            rows.add(ChatListItem.action(I18n.t("Поделиться моим кодом"), 2));
             chatListAdapter.submit(rows);
             return;
         }
@@ -4219,7 +4226,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 imageShape.setCornerRadius(dp(Math.max(10, bubbleRadiusDp() - 4)));
                 image.setBackground(imageShape);
                 image.setClipToOutline(true);
-                image.setContentDescription("Открыть изображение");
+                image.setContentDescription(I18n.t("Открыть изображение"));
                 image.setFocusable(true);
                 image.setTag(R.id.message_image_tag, bitmap);
                 image.setOnClickListener(v -> {
@@ -4233,7 +4240,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 });
                 bubble.addView(image);
             } catch (RuntimeException ignored) {
-                TextView failed = new TextView(this); failed.setText("Не удалось открыть фото"); failed.setTextColor(Color.GRAY); bubble.addView(failed);
+                TextView failed = new TextView(this); failed.setText(I18n.t("Не удалось открыть фото")); failed.setTextColor(Color.GRAY); bubble.addView(failed);
             }
         } else {
             TextView text = new TextView(this);
@@ -4290,7 +4297,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         bubble.setOnClickListener(view -> showMessageMenu(body, outgoing, peer));
         bubble.setOnLongClickListener(view -> { showMessageMenu(body, outgoing, peer); return true; });
-        bubble.setContentDescription("Сообщение. Нажмите для действий");
+        bubble.setContentDescription(I18n.t("Сообщение. Нажмите для действий"));
         return bubble;
     }
 
@@ -4377,12 +4384,12 @@ public final class MainActivity extends Activity implements Events.Listener {
                 show(screenChat);
             }
             renderPeers();
-            toast("Чат удалён");
+            toast(I18n.t("Чат удалён"));
         } else {
             if (conversation.equals(conversations.get(currentPeer))) {
                 messageListAdapter.submit(java.util.Collections.emptyList());
             }
-            toast("Переписка очищена");
+            toast(I18n.t("Переписка очищена"));
         }
     }
 
@@ -4396,20 +4403,20 @@ public final class MainActivity extends Activity implements Events.Listener {
         String id = content.optString("id");
         String type = content.optString("type");
         String text = content.optString("text");
-        String quote = !text.isEmpty() ? text : "image".equals(type) ? "Фото" : "Голосовое сообщение";
+        String quote = !text.isEmpty() ? text : "image".equals(type) ? I18n.t("Фото") : I18n.t("Голосовое сообщение");
         java.util.List<SwipeMessageLayout.Action> actions = new ArrayList<>();
         if (!id.isEmpty()) {
-            actions.add(new SwipeMessageLayout.Action("Ответить", "↩", () -> { setReply(id, quote); focusComposer(); }));
-            actions.add(new SwipeMessageLayout.Action("Реакция", "♡", () -> chooseMessageReaction(peer, id, quote)));
+            actions.add(new SwipeMessageLayout.Action(I18n.t("Ответить"), "↩", () -> { setReply(id, quote); focusComposer(); }));
+            actions.add(new SwipeMessageLayout.Action(I18n.t("Реакция"), "♡", () -> chooseMessageReaction(peer, id, quote)));
         }
-        if (!text.isEmpty()) actions.add(new SwipeMessageLayout.Action("Копировать", "⧉", () -> copyToClipboard(text, "Скопировано")));
+        if (!text.isEmpty()) actions.add(new SwipeMessageLayout.Action(I18n.t("Копировать"), "⧉", () -> copyToClipboard(text, I18n.t("Скопировано"))));
         if ((outgoing || contentRule(type) == null || permits(contentRule(type), peer))
                 && ("text".equals(type) || "image".equals(type) || "voice".equals(type)))
-            actions.add(new SwipeMessageLayout.Action("Переслать", "➜", () -> forwardMessage(body)));
+            actions.add(new SwipeMessageLayout.Action(I18n.t("Переслать"), "➜", () -> forwardMessage(body)));
         String conversation = conversations.get(peer);
         if (!id.isEmpty() && !TextUtils.isEmpty(conversation)) {
-            if (outgoing && "text".equals(type)) actions.add(new SwipeMessageLayout.Action("Редактировать", "✎", () -> editMessage(conversation, id, body)));
-            actions.add(new SwipeMessageLayout.Action("Удалить", "×", () -> chooseMessageDeletion(conversation, id, outgoing)));
+            if (outgoing && "text".equals(type)) actions.add(new SwipeMessageLayout.Action(I18n.t("Редактировать"), "✎", () -> editMessage(conversation, id, body)));
+            actions.add(new SwipeMessageLayout.Action(I18n.t("Удалить"), "×", () -> chooseMessageDeletion(conversation, id, outgoing)));
         }
         return actions;
     }
@@ -4419,7 +4426,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (actions.isEmpty()) return;
         String[] labels = new String[actions.size()];
         for (int i = 0; i < actions.size(); i++) labels[i] = actions.get(i).label;
-        new AlertDialog.Builder(this).setTitle("Сообщение")
+        new AlertDialog.Builder(this).setTitle(I18n.t("Сообщение"))
                 .setItems(labels, (dialog, which) -> actions.get(which).run.run())
                 .setNegativeButton(R.string.cancel, null).show();
     }
@@ -4433,7 +4440,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void chooseMessageReaction(String peer, String id, String quote) {
         // Emoji replies use the same encrypted quote format as desktop, with no new metadata on the server.
         String[] emoji = {"❤️", "👍", "😂", "🔥", "😮", "😢"};
-        new AlertDialog.Builder(this).setTitle("Реакция")
+        new AlertDialog.Builder(this).setTitle(I18n.t("Реакция"))
                 .setItems(emoji, (dialog, which) -> {
                     String body = encodeReply("text", logicalId(), emoji[which], id, quote);
                     submit(Commands.send(peer, body));
@@ -4445,10 +4452,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         java.util.List<String> peers = new ArrayList<>(conversations.keySet());
         peers.removeIf(peer -> { JSONObject entry = directory.get(peer);
             return entry != null && "blocked".equals(entry.optString("standing")); });
-        if (peers.isEmpty()) { toast("Сначала откройте чат с получателем"); return; }
+        if (peers.isEmpty()) { toast(I18n.t("Сначала откройте чат с получателем")); return; }
         String[] labels = new String[peers.size()];
         for (int i = 0; i < peers.size(); i++) labels[i] = displayName(peers.get(i));
-        new AlertDialog.Builder(this).setTitle("Переслать в чат")
+        new AlertDialog.Builder(this).setTitle(I18n.t("Переслать в чат"))
                 .setItems(labels, (dialog, which) -> {
                     try {
                         JSONObject copy = new JSONObject(parseContent(body).toString());
@@ -4458,8 +4465,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                         String peer = peers.get(which);
                         submit(Commands.send(peer, fresh));
                         if (peer.equals(currentPeer)) addBubble(fresh, true);
-                        toast("Добавлено в очередь отправки");
-                    } catch (Exception error) { toast("Не удалось переслать сообщение"); }
+                        toast(I18n.t("Добавлено в очередь отправки"));
+                    } catch (Exception error) { toast(I18n.t("Не удалось переслать сообщение")); }
                 }).setNegativeButton(R.string.cancel, null).show();
     }
 
@@ -4468,17 +4475,17 @@ public final class MainActivity extends Activity implements Events.Listener {
         input.setText(parseContent(body).optString("text"));
         input.setSelection(input.length());
         input.setPadding(dp(20), dp(12), dp(20), dp(12));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Редактировать сообщение")
-                .setView(input).setPositiveButton("Сохранить", null)
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(I18n.t("Редактировать сообщение"))
+                .setView(input).setPositiveButton(I18n.t("Сохранить"), null)
                 .setNegativeButton(R.string.cancel, null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-            if (input.getText().toString().trim().isEmpty()) { input.setError("Введите текст"); return; }
+            if (input.getText().toString().trim().isEmpty()) { input.setError(I18n.t("Введите текст")); return; }
             try {
                 JSONObject content = new JSONObject(parseContent(body).toString());
                 content.put("text", input.getText().toString().trim());
                 submit(Commands.editMessage(conversation, id, CONTENT_PREFIX + content));
                 dialog.dismiss(); focusComposer();
-            } catch (Exception error) { toast("Не удалось сохранить правку"); }
+            } catch (Exception error) { toast(I18n.t("Не удалось сохранить правку")); }
         }));
         dialog.show(); input.requestFocus();
         dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
@@ -4487,7 +4494,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void chooseMessageDeletion(String conversation, String id, boolean outgoing) {
         String[] labels = outgoing ? new String[]{getString(R.string.delete_mine), getString(R.string.delete_both)}
                 : new String[]{getString(R.string.delete_mine)};
-        new AlertDialog.Builder(this).setTitle("Удалить сообщение?")
+        new AlertDialog.Builder(this).setTitle(I18n.t("Удалить сообщение?"))
                 .setItems(labels, (dialog, which) -> new AlertDialog.Builder(this)
                         .setTitle(labels[which]).setMessage(which == 1 ? R.string.delete_both_hint : R.string.delete_mine_hint)
                         .setPositiveButton(R.string.delete, (confirm, button) -> submit(Commands.deleteMessage(conversation, id, which == 1)))
@@ -4540,7 +4547,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         avatar.setLayoutParams(new LinearLayout.LayoutParams(dp(64), dp(64)));
         applyAvatar(avatar, profile, initials(displayName(device)));
         if (profile != null && !profile.avatarBase64.isEmpty()) {
-            avatar.setContentDescription("Открыть аватар собеседника");
+            avatar.setContentDescription(I18n.t("Открыть аватар собеседника"));
             avatar.setOnClickListener(v -> showBase64Photo(profile.avatarBase64));
         }
         header.addView(avatar);
@@ -4583,15 +4590,15 @@ public final class MainActivity extends Activity implements Events.Listener {
         detailsParams.topMargin = dp(16);
         details.setLayoutParams(detailsParams);
         if (profile != null && profile.chatCode != null && !profile.chatCode.isEmpty()) {
-            details.addView(peerDetail("Код для чата", profile.chatCode, false));
+            details.addView(peerDetail(I18n.t("Код для чата"), profile.chatCode, false));
         }
-        details.addView(peerDetail("Устройство", shortHex(device), true));
+        details.addView(peerDetail(I18n.t("Устройство"), shortHex(device), true));
         card.addView(details);
 
         List<Bitmap> media = conversationImages(device);
         if (!media.isEmpty()) {
             Button gallery = new Button(this, null, 0, R.style.Valanium_Button_Dark);
-            gallery.setText("Фото в диалоге · " + media.size());
+            gallery.setText(I18n.t("Фото в диалоге · ") + media.size());
             LinearLayout.LayoutParams galleryParams = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
             galleryParams.topMargin = dp(10);
@@ -4600,7 +4607,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             card.addView(gallery);
         }
 
-        TextView privacy = peerCardText("Данные показаны только в рамках текущего сеанса",
+        TextView privacy = peerCardText(I18n.t("Данные показаны только в рамках текущего сеанса"),
                 10, getColor(R.color.valanium_dim));
         privacy.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams privacyParams = new LinearLayout.LayoutParams(
@@ -4615,7 +4622,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 .setPositiveButton(isContact ? R.string.remove_contact : R.string.add_contact,
                         (dialog, which) -> submit(Commands.directorySet(device, isContact ? "approved" : "contact")))
                 .setNeutralButton(R.string.verify_keys, (dialog, which) -> submit(Commands.verify(device)))
-                .setNegativeButton("Ещё", (dialog, which) -> showPeerActions(device))
+                .setNegativeButton(I18n.t("Ещё"), (dialog, which) -> showPeerActions(device))
                 .show();
     }
 
@@ -4666,7 +4673,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void showMediaGallery(String device) {
         List<Bitmap> images = conversationImages(device);
         if (images.isEmpty()) {
-            toast("В открытой истории пока нет фотографий");
+            toast(I18n.t("В открытой истории пока нет фотографий"));
             return;
         }
         android.widget.GridLayout grid = new android.widget.GridLayout(this);
@@ -4679,7 +4686,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             ImageView image = new ImageView(this);
             image.setImageBitmap(bitmap);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            image.setContentDescription("Открыть фотографию");
+            image.setContentDescription(I18n.t("Открыть фотографию"));
             GradientDrawable shape = new GradientDrawable();
             shape.setColor(Color.TRANSPARENT);
             shape.setCornerRadius(dp(12));
@@ -4701,7 +4708,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         scroll.addView(galleryRoot, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
         new AlertDialog.Builder(this)
-                .setTitle("Фото · " + images.size())
+                .setTitle(I18n.t("Фото · ") + images.size())
                 .setView(scroll)
                 .setNegativeButton(R.string.close, null)
                 .show();
@@ -4709,11 +4716,11 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private String standingLabel(String standing) {
         switch (standing) {
-            case "contact": return "в контактах";
-            case "approved": return "запрос принят";
-            case "pending": return "ждёт вашего решения";
-            case "blocked": return "заблокирован";
-            default: return "не в контактах";
+            case "contact": return I18n.t("в контактах");
+            case "approved": return I18n.t("запрос принят");
+            case "pending": return I18n.t("ждёт вашего решения");
+            case "blocked": return I18n.t("заблокирован");
+            default: return I18n.t("не в контактах");
         }
     }
 
@@ -4729,22 +4736,22 @@ public final class MainActivity extends Activity implements Events.Listener {
                     String conversation = conversations.get(device);
                     switch (which) {
                         case 0:
-                            confirm("Очистить переписку?",
-                                    "Сообщения исчезнут с этого устройства. У собеседника они останутся.",
+                            confirm(I18n.t("Очистить переписку?"),
+                                    I18n.t("Сообщения исчезнут с этого устройства. У собеседника они останутся."),
                                     () -> {
                                         if (conversation != null) submit(Commands.clearConversation(conversation));
                                     });
                             break;
                         case 1:
-                            confirm("Удалить чат?",
-                                    "Переписка и сама беседа исчезнут с этого устройства.",
+                            confirm(I18n.t("Удалить чат?"),
+                                    I18n.t("Переписка и сама беседа исчезнут с этого устройства."),
                                     () -> {
                                         if (conversation != null) submit(Commands.deleteConversation(conversation));
                                     });
                             break;
                         default:
-                            confirm("Заблокировать?",
-                                    "Его сообщения перестанут приходить и не будут сохраняться.",
+                            confirm(I18n.t("Заблокировать?"),
+                                    I18n.t("Его сообщения перестанут приходить и не будут сохраняться."),
                                     () -> submit(Commands.directorySet(device, "blocked")));
                             break;
                     }
@@ -4757,7 +4764,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setMessage(detail)
-                .setPositiveButton("Да", (dialog, which) -> onYes.run())
+                .setPositiveButton(I18n.t("Да"), (dialog, which) -> onYes.run())
                 .setNegativeButton(R.string.cancel, null)
                 .show();
     }
@@ -4914,7 +4921,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         recoverError.setText("");
         String words = recoverCode.getText().toString().trim().replaceAll("\\s+", " ");
         if (words.isEmpty() || words.split(" ").length != 24) {
-            recoverError.setText("Введите все 24 слова сид-фразы в исходном порядке");
+            recoverError.setText(I18n.t("Введите все 24 слова сид-фразы в исходном порядке"));
             return;
         }
         recoverSubmit.setEnabled(false);
@@ -5337,7 +5344,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private String previewText(ConversationPreview preview) {
         if (preview == null) return getString(R.string.preview_empty);
-        return (preview.outgoing ? "Вы: " : "") + preview.text;
+        return (preview.outgoing ? I18n.t("Вы: ") : "") + preview.text;
     }
 
     private String messagePreview(String body) {
@@ -5377,11 +5384,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         then.setTimeInMillis(timestamp);
         String label;
         if (sameDay(now, then)) {
-            label = "Сегодня";
+            label = I18n.t("Сегодня");
         } else {
             Calendar yesterday = Calendar.getInstance();
             yesterday.add(Calendar.DAY_OF_YEAR, -1);
-            label = sameDay(yesterday, then) ? "Вчера"
+            label = sameDay(yesterday, then) ? I18n.t("Вчера")
                     : new SimpleDateFormat(now.get(Calendar.YEAR) == then.get(Calendar.YEAR)
                             ? "d MMMM" : "d MMMM yyyy", Locale.getDefault())
                             .format(new Date(timestamp));
@@ -5526,42 +5533,42 @@ public final class MainActivity extends Activity implements Events.Listener {
      * полный набор.
      */
     private static final String[][] PRIVACY_SPEC = {
-            {"#", "Кто может обращаться"},
-            {"direct_messages", "Личные сообщения",
-             "Кто может вам написать. Проверяет сервер: постороннему конверт не поставят в очередь вовсе.",
+            {"#", I18n.t("Кто может обращаться")},
+            {"direct_messages", I18n.t("Личные сообщения"),
+             I18n.t("Кто может вам написать. Проверяет сервер: постороннему конверт не поставят в очередь вовсе."),
              "everyone,approved,contacts,nobody"},
 
-            {"#", "Что мне можно присылать"},
-            {"media", "Фото и видео",
-             "Вложения от незнакомых не будут показаны и сохранены.", ""},
-            {"voice", "Голосовые сообщения", "", ""},
-            {"files", "Файлы", "", ""},
-            {"calls", "Звонки", "Звонков пока нет; правило начнёт действовать вместе с ними.", ""},
-            {"link_previews", "Превью ссылок",
-             "Чтобы показать превью, надо сходить на чужой сайт, и он увидит, что ссылку открыли вы.",
+            {"#", I18n.t("Что мне можно присылать")},
+            {"media", I18n.t("Фото и видео"),
+             I18n.t("Вложения от незнакомых не будут показаны и сохранены."), ""},
+            {"voice", I18n.t("Голосовые сообщения"), "", ""},
+            {"files", I18n.t("Файлы"), "", ""},
+            {"calls", I18n.t("Звонки"), I18n.t("Звонков пока нет; правило начнёт действовать вместе с ними."), ""},
+            {"link_previews", I18n.t("Превью ссылок"),
+             I18n.t("Чтобы показать превью, надо сходить на чужой сайт, и он увидит, что ссылку открыли вы."),
              "everyone,contacts,nobody"},
 
-            {"#", "Что видно обо мне"},
-            {"presence", "Сейчас в сети", "", "everyone,contacts,nobody"},
-            {"last_seen", "Последняя активность",
-             "По времени появления восстанавливают распорядок дня.", "everyone,contacts,nobody"},
-            {"read_receipts", "Отчёты о прочтении",
-             "Если выключить, собеседник видит «отправлено», но не «прочитано».", "everyone,contacts,nobody"},
-            {"typing", "Индикатор набора текста", "", "everyone,contacts,nobody"},
-            {"voice_recording_hint", "Показывать запись голосового", "", "everyone,contacts,nobody"},
+            {"#", I18n.t("Что видно обо мне")},
+            {"presence", I18n.t("Сейчас в сети"), "", "everyone,contacts,nobody"},
+            {"last_seen", I18n.t("Последняя активность"),
+             I18n.t("По времени появления восстанавливают распорядок дня."), "everyone,contacts,nobody"},
+            {"read_receipts", I18n.t("Отчёты о прочтении"),
+             I18n.t("Если выключить, собеседник видит «отправлено», но не «прочитано»."), "everyone,contacts,nobody"},
+            {"typing", I18n.t("Индикатор набора текста"), "", "everyone,contacts,nobody"},
+            {"voice_recording_hint", I18n.t("Показывать запись голосового"), "", "everyone,contacts,nobody"},
 
-            {"#", "Профиль и поиск"},
-            {"profile_avatar", "Аватар", "", "everyone,contacts,nobody"},
+            {"#", I18n.t("Профиль и поиск")},
+            {"profile_avatar", I18n.t("Аватар"), "", "everyone,contacts,nobody"},
     };
 
     private static final String DEFAULT_SCOPES = "everyone,approved,contacts,nobody";
 
     private static String scopeLabel(String scope) {
         switch (scope) {
-            case "everyone": return "Все";
-            case "approved": return "Одобренные";
-            case "contacts": return "Контакты";
-            default: return "Никто";
+            case "everyone": return I18n.t("Все");
+            case "approved": return I18n.t("Одобренные");
+            case "contacts": return I18n.t("Контакты");
+            default: return I18n.t("Никто");
         }
     }
 
@@ -5818,8 +5825,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         int deny = rule.optJSONArray("deny") == null ? 0 : rule.optJSONArray("deny").length();
         if (allow == 0 && deny == 0) return getString(R.string.exceptions_none);
         StringBuilder out = new StringBuilder();
-        if (allow > 0) out.append("всегда разрешено: ").append(allow);
-        if (deny > 0) out.append(out.length() > 0 ? " · " : "").append("никогда: ").append(deny);
+        if (allow > 0) out.append(I18n.t("всегда разрешено: ")).append(allow);
+        if (deny > 0) out.append(out.length() > 0 ? " · " : "").append(I18n.t("никогда: ")).append(deny);
         return out.toString();
     }
 
@@ -5854,7 +5861,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         addAll(peers, rule.optJSONArray("deny"));
 
         if (peers.isEmpty()) {
-            toast("Пока некого добавить: список появится вместе с диалогами");
+            toast(I18n.t("Пока некого добавить: список появится вместе с диалогами"));
             return;
         }
 
@@ -5862,15 +5869,15 @@ public final class MainActivity extends Activity implements Events.Listener {
         boolean[] checked = new boolean[peers.size()];
         String[] devices = peers.toArray(new String[0]);
         for (int i = 0; i < devices.length; i++) {
-            String state = contains(rule.optJSONArray("deny"), devices[i]) ? " — никогда"
-                    : contains(rule.optJSONArray("allow"), devices[i]) ? " — всегда" : "";
+            String state = contains(rule.optJSONArray("deny"), devices[i]) ? I18n.t(" — никогда")
+                    : contains(rule.optJSONArray("allow"), devices[i]) ? I18n.t(" — всегда") : "";
             names[i] = displayName(devices[i]) + state;
         }
 
         new AlertDialog.Builder(this)
                 .setTitle(title + " · " + getString(R.string.exceptions))
                 .setItems(names, (dialog, which) -> cycleException(key, devices[which]))
-                .setNegativeButton("Закрыть", null)
+                .setNegativeButton(I18n.t("Закрыть"), null)
                 .show();
     }
 
@@ -5967,15 +5974,15 @@ public final class MainActivity extends Activity implements Events.Listener {
     };
 
     private static final String[][] PROFILE_COLORS = {
-            {"none", "Без цвета", "#929292"},
-            {"white", "Белый", "#F4F4F4"},
-            {"blue", "Синий", "#70A8FF"},
-            {"violet", "Фиолетовый", "#A98CFF"},
-            {"green", "Зелёный", "#67D4A3"},
-            {"coral", "Коралловый", "#ED8674"},
-            {"amber", "Янтарный", "#E7B75F"},
-            {"teal", "Бирюзовый", "#5FD0C7"},
-            {"rose", "Розовый", "#EE8AB4"},
+            {"none", I18n.t("Без цвета"), "#929292"},
+            {"white", I18n.t("Белый"), "#F4F4F4"},
+            {"blue", I18n.t("Синий"), "#70A8FF"},
+            {"violet", I18n.t("Фиолетовый"), "#A98CFF"},
+            {"green", I18n.t("Зелёный"), "#67D4A3"},
+            {"coral", I18n.t("Коралловый"), "#ED8674"},
+            {"amber", I18n.t("Янтарный"), "#E7B75F"},
+            {"teal", I18n.t("Бирюзовый"), "#5FD0C7"},
+            {"rose", I18n.t("Розовый"), "#EE8AB4"},
     };
 
     /**
@@ -6240,6 +6247,17 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     // --- чат и сообщения ----------------------------------------------------------
+
+    private void chooseLanguage() {
+        String[] labels = {"Русский", "English", getString(R.string.language_auto)};
+        String[] codes = {"ru", "en", "auto"};
+        new AlertDialog.Builder(this).setTitle(R.string.language)
+                .setSingleChoiceItems(labels, java.util.Arrays.asList(codes).indexOf(
+                        appearancePreferences.getString("language", "auto")), (dialog, which) -> {
+                    appearancePreferences.edit().putString("language", codes[which]).commit();
+                    I18n.apply(this); dialog.dismiss(); recreate();
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
 
     private void wireChatSettings() {
         wireAppLock();
@@ -6654,7 +6672,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             openChannelFeed(channel, null);
             return;
         }
-        toast("@" + report.optString("handle") + ": новый пост");
+        toast("@" + report.optString("handle") + I18n.t(": новый пост"));
     }
 
     private void renderRequests() {
@@ -6749,8 +6767,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         items[0] = getString(R.string.invite_create);
         for (int i = 0; i < count; i++) {
             JSONObject invite = invites.optJSONObject(i);
-            String label = invite.isNull("label") ? "Без заметки" : invite.optString("label");
-            items[i + 1] = label + (invite.optBoolean("one_time") ? " · одноразовая" : " · многоразовая");
+            String label = invite.isNull("label") ? I18n.t("Без заметки") : invite.optString("label");
+            items[i + 1] = label + (invite.optBoolean("one_time") ? I18n.t(" · одноразовая") : I18n.t(" · многоразовая"));
         }
 
         new AlertDialog.Builder(this)
@@ -6758,13 +6776,13 @@ public final class MainActivity extends Activity implements Events.Listener {
                 .setItems(items, (dialog, which) -> {
                     if (which == 0) {
                         submit(Commands.passInvite("", true, 86400));
-                        toast("Ссылка создана — откройте список ещё раз");
+                        toast(I18n.t("Ссылка создана — откройте список ещё раз"));
                         return;
                     }
                     JSONObject invite = invites.optJSONObject(which - 1);
                     showInvite(invite);
                 })
-                .setNegativeButton("Закрыть", null)
+                .setNegativeButton(I18n.t("Закрыть"), null)
                 .show();
     }
 
@@ -6773,7 +6791,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         new AlertDialog.Builder(this)
                 .setTitle(R.string.invites_open)
                 .setMessage(link)
-                .setPositiveButton(R.string.copy, (dialog, which) -> copyToClipboard(link, "Ссылка скопирована"))
+                .setPositiveButton(R.string.copy, (dialog, which) -> copyToClipboard(link, I18n.t("Ссылка скопирована")))
                 .setNegativeButton(R.string.invite_revoke,
                         (dialog, which) -> submit(Commands.passRevoke(invite.optString("hash"))))
                 .show();

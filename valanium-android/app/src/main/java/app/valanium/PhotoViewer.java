@@ -48,7 +48,7 @@ final class PhotoViewer {
         root.setBackgroundColor(Color.rgb(3, 3, 4));
 
         ZoomView image = new ZoomView(activity, bitmap);
-        image.setContentDescription("Просмотр изображения. Сведите пальцы для масштаба");
+        image.setContentDescription(I18n.t("Просмотр изображения. Сведите пальцы для масштаба"));
         root.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -57,7 +57,7 @@ final class PhotoViewer {
         close.setTextColor(Color.WHITE);
         close.setTextSize(30);
         close.setGravity(Gravity.CENTER);
-        close.setContentDescription("Закрыть просмотр");
+        close.setContentDescription(I18n.t("Закрыть просмотр"));
         close.setBackground(round(0xCC171719, 0x553F3F44));
         close.setOnClickListener(v -> dialog.dismiss());
         FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(48), dp(48),
@@ -66,7 +66,7 @@ final class PhotoViewer {
         root.addView(close, closeParams);
 
         TextView hint = new TextView(activity);
-        hint.setText("Двойное касание · масштаб пальцами");
+        hint.setText(I18n.t("Двойное касание · масштаб пальцами"));
         hint.setTextColor(0xFFB4AFBE);
         hint.setTextSize(11);
         hint.setGravity(Gravity.CENTER);

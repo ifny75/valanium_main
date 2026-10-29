@@ -1086,6 +1086,13 @@ details[open] .node-expand { transform:rotate(180deg); }
 .network-minimal-message { margin: 16px 12px; font-size: 13px; color: #988b9e; }
 .network-minimal-status { display: inline-block; margin: 20px 12px 0; font-size: 12px; color: #92869b; }
 .network-minimal-status:hover { color: #cfb2e8; }
+.language-switcher { min-height: 32px; padding: 5px 7px; border: 1px solid #ffffff16; border-radius: 999px; color: #d9cce5; background: #17101f; font: 500 11px var(--font-inter),sans-serif; cursor: pointer; }
+.language-switcher:focus-visible { outline: 2px solid #c99aff; outline-offset: 3px; }
+@media(max-width:820px) {
+  .nav { height: auto; min-height: 56px; padding-block: 8px; }
+  .site-header.is-compact .nav { height: auto; min-height: 50px; padding-block: 7px; }
+  .nav-actions { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 5px; }
+}
 @media(max-width:520px) {
   .network-minimal { padding-block: 42px; }
   .network-minimal-header { gap: 12px; margin-bottom: 16px; }

@@ -14,7 +14,7 @@ function registration(torReady) {
   const commands = [];
   const nodes = Object.fromEntries(['form-entry', 'entry-submit', 'entry-error'].map(id => [id, {}]));
   nodes['form-entry'].addEventListener = (_, handler) => { nodes.submit = handler; };
-  const context = vm.createContext({
+  const context = vm.createContext({ tr: value => value, trTemplate: (parts,...values) => parts.reduce((out,part,i)=>out+part+(i<values.length?values[i]:""),""), getLocale:()=>"ru-RU",
     $: id => { assert.ok(nodes[id], `Unexpected credential field: ${id}`); return nodes[id]; },
     state: {}, preferences: { transport: 'onion' }, savePreferences() {},
     serverUrl: () => 'valanium://auto',
@@ -50,7 +50,7 @@ test('phrase recovery requires all 24 words and uses only the seed command', () 
   const calls = [];
   const nodes = { 'form-recover-code': {}, 'recover-error': {}, 'recover-code': {} };
   nodes['form-recover-code'].addEventListener = (_, handler) => { nodes.submit = handler; };
-  const context = vm.createContext({ $: id => nodes[id], recoveryWords: words,
+  const context = vm.createContext({ tr: value => value, trTemplate: (parts,...values) => parts.reduce((out,part,i)=>out+part+(i<values.length?values[i]:""),""), getLocale:()=>"ru-RU",  $: id => nodes[id], recoveryWords: words,
     storeRecoveryPage() {}, serverUrl: () => 'valanium://onion',
     runRecovery: (...args) => calls.push(args) });
   vm.runInContext(listener('form-recover-code', 'submit'), context);

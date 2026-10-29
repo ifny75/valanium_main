@@ -3,6 +3,7 @@
             <ImageView android:id="@+id/entry_logo" android:layout_width="88dp" android:layout_height="88dp" android:background="@drawable/entry_badge" android:contentDescription="@string/app_name" android:padding="15dp" android:src="@drawable/valanium_logo" />
             <TextView android:id="@+id/entry_wordmark" style="@style/Valanium.Wordmark" android:layout_marginTop="14dp" android:text="@string/app_name" android:textSize="30sp" />
             <TextView android:id="@+id/entry_badge" style="@style/Valanium.Micro" android:layout_marginTop="9dp" android:background="@drawable/entry_badge" android:gravity="center" android:letterSpacing="0.12" android:paddingStart="12dp" android:paddingTop="7dp" android:paddingEnd="12dp" android:paddingBottom="7dp" android:text="@string/entry_eyebrow" android:textColor="#BE9EFF" android:textSize="10sp" />
+            <Button android:id="@+id/language_entry" style="@style/Valanium.Button.Link" android:layout_marginTop="6dp" android:text="@string/language" />
             <LinearLayout android:id="@+id/entry_form" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="22dp" android:background="@drawable/entry_surface" android:orientation="vertical" android:padding="22dp">
                 <TextView style="@style/Valanium.Title" android:text="@string/registration_title" android:textSize="25sp" />
                 <TextView style="@style/Valanium.Muted" android:layout_marginTop="7dp" android:text="@string/entry_lead" android:textSize="14sp" />
