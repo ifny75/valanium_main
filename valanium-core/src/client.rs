@@ -91,6 +91,18 @@ const TICKET_BATCH_SIZE: u8 = 10;
 /// через Tor), HELLO, ответ. Дольше — не тише, а просто медленнее: сообщение
 /// останется в запечатанной очереди до следующей анонимной попытки.
 const ANON_SEND_TIMEOUT: Duration = Duration::from_secs(25);
+const ANON_POOL_SIZE: usize = 2;
+const ANON_READY_LIFETIME: Duration = Duration::from_secs(45);
+const TICKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const TICKET_SEND_MARGIN_MS: i64 = 30_000;
+
+struct PreparedAnonymous {
+    route: String,
+    started: tokio::time::Instant,
+    socket: Socket,
+    supports_passes: bool,
+}
+
 /// Внутренний адрес, который UI передаёт для автоматического выбора пути.
 /// Он никогда не попадает в DNS или URL-парсер: `session` разворачивает его в
 /// реальные маршруты перед каждой попыткой соединения.
@@ -290,20 +302,24 @@ struct Live {
     /// Sealed sender (ARCHITECTURE.md §7a): непотраченные билеты. Живут в
     /// `Live`, а не в `pump`, по той же причине, что и `outbox`, — переживают
     /// переподключение. Свой короткий срок годности билеты и так несут сами;
-    /// протухший билет приводит к новой анонимной попытке, без downgrade.
+    /// срок проверяется до отправки с запасом на установление Tor-соединения.
     tickets: VecDeque<[u8; proto::TICKET_LEN]>,
+    ticket_request_until: Option<tokio::time::Instant>,
+    anonymous_queued: bool,
     calls: crate::calls::Pending,
     anon_inflight: HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
     anon_retries: HashMap<[u8; ID_LEN], (tokio::time::Instant, u32)>,
     route_cooldowns: HashMap<String, tokio::time::Instant>,
     // Unauthenticated, single-use socket. Never shared between messages.
-    prewarm: Option<(String, tokio::time::Instant, tokio::task::JoinHandle<Result<(Socket, bool)>>)>,
+    prewarming: tokio::task::JoinSet<(String, Result<PreparedAnonymous>)>,
+    prepared: VecDeque<PreparedAnonymous>,
+    prewarm_retry_at: Option<tokio::time::Instant>,
     require_anonymous: bool,
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        if let Some((_, _, task)) = self.prewarm.take() { task.abort(); }
+        self.prewarming.abort_all();
         for task in self.anon_inflight.values() { task.abort(); }
     }
 }
@@ -2500,10 +2516,11 @@ async fn pump(
             send(&mut socket, proto::device_list_frame()?).await?;
         }
 
+        live.ticket_request_until = None;
         // Sealed sender: прогреваем пул заранее, а не в момент первой отправки —
         // иначе первое сообщение после каждого подключения ждало бы пачки.
         if greeting.sealed_sender {
-            send(&mut socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
+            request_anonymous_tickets(&mut socket, live).await?;
         }
 
         // Выдаём пропуска тем, кому они полагаются, но ещё не достались.
@@ -2569,7 +2586,17 @@ async fn pump(
     let mut last_received = tokio::time::Instant::now();
 
     loop {
+        let anonymous_deadline = if authenticated && greeting.sealed_sender {
+            next_anonymous_maintenance(live, live.anonymous_queued)
+        } else { None };
+        let prewarming_active = !live.prewarming.is_empty();
         tokio::select! {
+            Some(outcome) = live.prewarming.join_next(), if prewarming_active => {
+                accept_anonymous_prewarm(live, outcome);
+                if authenticated {
+                    flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
+                }
+            }
             _ = tokio::time::sleep_until(last_received + idle_timeout) => {
                 return Err(CoreError::Transport("Server stopped responding; reconnecting".into()));
             }
@@ -3322,7 +3349,7 @@ async fn pump(
                 }
                 if authenticated { flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?; }
             }
-            _ = wait_anonymous_retry(if greeting.sealed_sender && !live.tickets.is_empty() { next_anonymous_retry(live) } else { None }), if authenticated => {
+            _ = wait_anonymous_retry(anonymous_deadline), if authenticated => {
                 flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
             }
             _ = ticker.tick() => {
@@ -3395,7 +3422,8 @@ async fn on_frame(
         // их негде, кроме как здесь — TICKET_REQUEST не привязан к конкретной
         // отправке, и ответ может прийти в любой момент между ними.
         op::TICKET_GRANT => {
-            live.tickets.extend(proto::parse_ticket_grant(body)?);
+            let tickets = proto::parse_ticket_grant(body)?;
+            accept_anonymous_tickets(live, tickets, now_millis());
             flush_anonymous(socket, store, sink, live, sealed_sender_available, anon_tx).await?;
         }
         op::PROFILE => {
@@ -4471,24 +4499,77 @@ fn cancel_removed_anonymous(store: &Store, live: &mut Live) -> Result<()> {
     Ok(())
 }
 
+fn ticket_usable(ticket: &[u8; proto::TICKET_LEN], now: i64) -> bool {
+    // Public expiry is only a local scheduling hint; the server verifies the signature.
+    let expiry = u64::from_be_bytes(ticket[16..24].try_into().unwrap());
+    expiry > now.max(0).saturating_add(TICKET_SEND_MARGIN_MS) as u64
+}
+
+fn prune_anonymous_tickets(live: &mut Live, now: i64) {
+    live.tickets.retain(|ticket| ticket_usable(ticket, now));
+}
+
+fn accept_anonymous_tickets(live: &mut Live, tickets: Vec<[u8; proto::TICKET_LEN]>, now: i64) {
+    // Empty/expired grants must not cause an immediate request/response loop.
+    if tickets.iter().any(|ticket| ticket_usable(ticket, now)) { live.ticket_request_until = None; }
+    live.tickets.extend(tickets);
+    prune_anonymous_tickets(live, now);
+    live.tickets.truncate(32);
+}
+
+async fn request_anonymous_tickets(socket: &mut Socket, live: &mut Live) -> Result<()> {
+    prune_anonymous_tickets(live, now_millis());
+    let now = tokio::time::Instant::now();
+    if live.tickets.len() < TICKET_LOW_WATERMARK
+        && !live.ticket_request_until.is_some_and(|until| until > now) {
+        send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
+        live.ticket_request_until = Some(tokio::time::Instant::now() + TICKET_REQUEST_TIMEOUT);
+    }
+    Ok(())
+}
+
 fn maintain_anonymous_prewarm(store: &Store, live: &mut Live) {
     if !live.require_anonymous { return; }
     let now = tokio::time::Instant::now();
-    if live.prewarm.as_ref().is_some_and(|(route, since, _)|
-        now.duration_since(*since) > Duration::from_secs(45)
-            || live.route_cooldowns.get(route).is_some_and(|until| *until > now)) {
-        if let Some((_, _, task)) = live.prewarm.take() { task.abort(); }
+    live.prepared.retain(|ready| now.duration_since(ready.started) < ANON_READY_LIFETIME
+        && !live.route_cooldowns.get(&ready.route).is_some_and(|until| *until > now));
+    if live.prewarm_retry_at.is_some_and(|until| until > now) { return; }
+    live.prewarm_retry_at = None;
+    while live.prepared.len() + live.prewarming.len() < ANON_POOL_SIZE {
+        let Some(route) = pick_onion_route(store, live) else { break };
+        live.prewarming.spawn(async move {
+            let result = async {
+                let (socket, supports_passes) = tokio::time::timeout(
+                    ANON_SEND_TIMEOUT, prepare_anonymous_socket(&route)).await
+                    .map_err(|_| CoreError::Transport("anonymous prewarm timeout".into()))??;
+                Ok(PreparedAnonymous { route: route.clone(), started: now, socket, supports_passes })
+            }.await;
+            (route, result)
+        });
     }
-    if live.prewarm.is_none() {
-        if let Some(route) = pick_onion_route(store, live) {
-            let target = route.clone();
-            let task = tokio::spawn(async move {
-                tokio::time::timeout(ANON_SEND_TIMEOUT, prepare_anonymous_socket(&target)).await
-                    .map_err(|_| CoreError::Transport("anonymous prewarm timeout".into()))?
-            });
-            live.prewarm = Some((route, now, task));
+}
+
+fn accept_anonymous_prewarm(live: &mut Live,
+    outcome: std::result::Result<(String, Result<PreparedAnonymous>), tokio::task::JoinError>) {
+    match outcome {
+        Ok((_, Ok(ready))) => live.prepared.push_back(ready),
+        other => {
+            let now = tokio::time::Instant::now();
+            live.prewarm_retry_at = Some(now + Duration::from_secs(2));
+            if let Ok((route, Err(_))) = other {
+                live.route_cooldowns.insert(route, now + Duration::from_secs(30));
+            }
         }
     }
+}
+
+fn next_anonymous_maintenance(live: &Live, sending: bool) -> Option<tokio::time::Instant> {
+    let retry = if sending && !live.tickets.is_empty()
+        && (!live.require_anonymous || !live.prepared.is_empty()) { next_anonymous_retry(live) } else { None };
+    let ticket = if sending { live.ticket_request_until } else { None };
+    [retry, ticket, live.prewarm_retry_at,
+        live.prepared.iter().map(|r| r.started + ANON_READY_LIFETIME).min()]
+        .into_iter().flatten().min()
 }
 
 // Ignore active sends: their old retry deadline must not spin the select loop.
@@ -4525,27 +4606,25 @@ async fn flush_anonymous(
         }
     }
     let queue = crate::anon_queue::prune_expired(store, now_millis())?;
+    live.anonymous_queued = !queue.is_empty();
     maintain_anonymous_prewarm(store, live);
     let queued: HashSet<_> = queue.iter().map(|item| item.client_ref).collect();
     live.anon_retries.retain(|id, _| queued.contains(id));
     if queue.is_empty() { return Ok(()); }
-    if live.tickets.len() < TICKET_LOW_WATERMARK {
-        send(socket, proto::ticket_request_frame(TICKET_BATCH_SIZE)).await?;
-    }
+    request_anonymous_tickets(socket, live).await?;
     let now = tokio::time::Instant::now();
     let inflight = live.anon_inflight.keys().copied().chain(live.anon_retries.iter()
         .filter(|(_, (until, _))| *until > now).map(|(id, _)| *id)).collect();
     for envelope in crate::anon_queue::ready(&queue, &inflight, 4usize.saturating_sub(live.anon_inflight.len())) {
-        let mut prepared = None;
-        let mut route = pick_onion_route(store, live);
-        if live.prewarm.as_ref().is_some_and(|(_, _, task)| task.is_finished()) {
-            if let Some((warm_route, _, task)) = live.prewarm.take() {
-                if let Ok(Ok(socket)) = task.await {
-                    route = Some(warm_route);
-                    prepared = Some(socket);
-                }
-            }
-        }
+        if live.tickets.is_empty() { break; }
+        let ready = live.prepared.pop_front();
+        // A building socket will wake pump when ready. Do not start another
+        // cold connection and throw away the work already in progress.
+        if live.require_anonymous && ready.is_none() { break; }
+        let (route, prepared) = match ready {
+            Some(ready) => (Some(ready.route), Some((ready.socket, ready.supports_passes))),
+            None => (pick_onion_route(store, live), None),
+        };
         if let (Some(route), Some(ticket)) = (route, live.tickets.pop_front()) {
             if envelope.kind == crate::anon_queue::Kind::Message {
                 if let Some(id) = &envelope.logical_id {
@@ -4597,6 +4676,171 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn usable_test_ticket(expiry: i64) -> [u8; proto::TICKET_LEN] {
+        let mut ticket = [0; proto::TICKET_LEN];
+        ticket[16..24].copy_from_slice(&(expiry as u64).to_be_bytes());
+        ticket
+    }
+
+    #[test]
+    fn anonymous_ticket_expiry_has_a_send_margin_and_preserves_valid_order() {
+        let now = 1_000_000;
+        let fresh = usable_test_ticket(now + 300_000);
+        let later = usable_test_ticket(now + 400_000);
+        let mut live = Live::default();
+        live.tickets.extend([usable_test_ticket(now - 1), fresh,
+            usable_test_ticket(now + TICKET_SEND_MARGIN_MS), later]);
+        prune_anonymous_tickets(&mut live, now);
+        assert_eq!(live.tickets.iter().copied().collect::<Vec<_>>(), vec![fresh, later]);
+    }
+
+    #[tokio::test]
+    async fn anonymous_ticket_grants_are_bounded_and_invalid_grants_do_not_spin() {
+        let now = 1_000_000;
+        let mut live = Live::default();
+        let deadline = tokio::time::Instant::now() + TICKET_REQUEST_TIMEOUT;
+        live.ticket_request_until = Some(deadline);
+        accept_anonymous_tickets(&mut live, vec![usable_test_ticket(now - 1)], now);
+        assert_eq!(live.ticket_request_until, Some(deadline));
+        assert!(live.tickets.is_empty());
+        accept_anonymous_tickets(&mut live, vec![], now);
+        assert_eq!(live.ticket_request_until, Some(deadline));
+        accept_anonymous_tickets(&mut live, vec![usable_test_ticket(now + 300_000); 100], now);
+        assert_eq!(live.ticket_request_until, None);
+        assert_eq!(live.tickets.len(), 32);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn anonymous_ticket_refresh_is_single_flight_and_retries_without_heartbeat() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let mut socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let mut observer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+        let mut live = Live::default();
+        live.tickets.push_back(usable_test_ticket(now_millis() - 1));
+        request_anonymous_tickets(&mut socket, &mut live).await.unwrap();
+        let deadline = live.ticket_request_until.unwrap();
+        request_anonymous_tickets(&mut socket, &mut live).await.unwrap();
+        assert_eq!(live.ticket_request_until, Some(deadline));
+        assert!(live.tickets.is_empty());
+        assert_eq!(next_anonymous_maintenance(&live, true), Some(deadline));
+        assert_eq!(proto::split(&observer.next().await.unwrap().unwrap().into_data()).unwrap().0, op::TICKET_REQUEST);
+        assert!(tokio::time::timeout(Duration::from_millis(1), observer.next()).await.is_err());
+        tokio::time::advance(TICKET_REQUEST_TIMEOUT).await;
+        request_anonymous_tickets(&mut socket, &mut live).await.unwrap();
+        assert_eq!(proto::split(&observer.next().await.unwrap().unwrap().into_data()).unwrap().0, op::TICKET_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn anonymous_send_waits_for_existing_prewarm_and_uses_it_without_auth() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store = Store::open(":memory:", b"prewarm-test").unwrap();
+        let envelope = crate::anon_queue::Envelope { client_ref: [1; ID_LEN], device: [2; KEY_LEN],
+            conversation: vec![4], logical_id: None, ciphertext: vec![3; 256],
+            kind: crate::anon_queue::Kind::Essential, expires_at: Some(now_millis() + 60_000) };
+        crate::anon_queue::enqueue(&store, envelope.clone()).unwrap();
+        let mut live = Live::default(); live.require_anonymous = true;
+        live.tickets.extend([usable_test_ticket(now_millis()+300_000); 4]);
+        // Occupied slots prevent any real network access in this test.
+        for _ in 0..ANON_POOL_SIZE { live.prewarming.spawn(std::future::pending()); }
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let mut auth = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let mut auth_peer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sink: EventSink = Arc::new(|_| {});
+        flush_anonymous(&mut auth, &store, &sink, &mut live, true, &tx).await.unwrap();
+        assert!(live.anon_inflight.is_empty(), "do not open another cold socket while prewarming");
+        live.anon_retries.insert(envelope.client_ref, (tokio::time::Instant::now(), 1));
+        assert_eq!(next_anonymous_maintenance(&live, true), None, "no expired retry timer spin while waiting for a socket");
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let server = tokio::spawn(async move {
+            let mut ws = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+            let data = ws.next().await.unwrap().unwrap().into_data();
+            assert_eq!(proto::split(&data).unwrap().0, op::SEND_ANON);
+            let mut ack = vec![1; ID_LEN]; ack.extend_from_slice(&[8; ID_LEN]);
+            ws.send(Message::Binary(proto::frame(op::SEND_OK, &ack))).await.unwrap();
+        });
+        accept_anonymous_prewarm(&mut live, Ok(("test.onion".into(), Ok(PreparedAnonymous {
+            route: "test.onion".into(), started: tokio::time::Instant::now(), socket, supports_passes: true }))));
+        flush_anonymous(&mut auth, &store, &sink, &mut live, true, &tx).await.unwrap();
+        assert_eq!(rx.recv().await.unwrap().result.unwrap(), [8; ID_LEN]);
+        assert!(live.prepared.is_empty(), "one socket is consumed by exactly one send");
+        assert!(tokio::time::timeout(Duration::from_millis(10), auth_peer.next()).await.is_err());
+        server.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn anonymous_prewarm_completion_wakes_pump_before_heartbeat() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store = Store::open(":memory:", b"prewarm-wakeup").unwrap();
+        let credentials = Credentials::generate(); store.save_credentials(&credentials).unwrap();
+        let mut mls = load_or_create_mls(&store, &credentials).unwrap();
+        crate::anon_queue::enqueue(&store, crate::anon_queue::Envelope {
+            client_ref: [1; ID_LEN], device: [2; KEY_LEN], conversation: vec![4],
+            logical_id: None, ciphertext: vec![3; 256], kind: crate::anon_queue::Kind::Essential,
+            expires_at: Some(now_millis() + 60_000),
+        }).unwrap();
+        let (pipe, peer) = tokio::io::duplex(65536);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let _auth_peer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+        let (pipe, peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let prepared_socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let server = tokio::spawn(async move {
+            let mut ws = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+            assert_eq!(proto::split(&ws.next().await.unwrap().unwrap().into_data()).unwrap().0, op::SEND_ANON);
+            let mut ack = vec![1; ID_LEN]; ack.extend_from_slice(&[8; ID_LEN]);
+            ws.send(Message::Binary(proto::frame(op::SEND_OK, &ack))).await.unwrap();
+        });
+        let mut live = Live::default(); live.require_anonymous = true;
+        live.tickets.extend([usable_test_ticket(now_millis()+300_000); 4]);
+        // A previous failed preparation can back off replenishment while another
+        // preparation completes. Avoid real network access during this test.
+        live.prewarm_retry_at = Some(tokio::time::Instant::now()+Duration::from_secs(60));
+        live.prewarming.spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            ("mock.onion".into(), Ok(PreparedAnonymous { route: "mock.onion".into(),
+                started: tokio::time::Instant::now(), socket: prepared_socket, supports_passes: true }))
+        });
+        let (tx, mut commands) = mpsc::unbounded_channel();
+        let (accepted, mut received) = mpsc::unbounded_channel();
+        let sink: EventSink = Arc::new(move |event| {
+            if matches!(event, Event::Accepted { .. }) { let _ = accepted.send(()); }
+        });
+        let controller = tokio::spawn(async move {
+            received.recv().await.unwrap(); tx.send(Command::Disconnect).unwrap();
+        });
+        let greeting = Greeting { heartbeat_sec: 30, invite_entry: true, ton_entry: false,
+            profiles: false, decor: false, devices: false, sealed_sender: true };
+        let handshake = Handshake::Authenticated { key_packages: Some(KEY_PACKAGES_PER_CONNECT),
+            device_id: hex::encode(credentials.device_pub()), admin: false };
+        let (outcomes, mut incoming) = mpsc::unbounded_channel();
+        let result = tokio::time::timeout(Duration::from_secs(10), pump(socket, &store, &mut mls,
+            &sink, &mut commands, greeting, handshake, &mut live, outcomes, &mut incoming)).await.unwrap().unwrap();
+        assert!(matches!(result, Outcome::Closed));
+        controller.await.unwrap(); server.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn anonymous_prewarm_failure_is_backed_off_and_pool_is_bounded() {
+        let store = Store::open(":memory:", b"prewarm-failure").unwrap();
+        let mut live = Live::default(); live.require_anonymous = true;
+        accept_anonymous_prewarm(&mut live, Ok(("failed.onion".into(), Err(CoreError::BadFrame))));
+        maintain_anonymous_prewarm(&store, &mut live);
+        assert_eq!(live.prewarming.len(), 0);
+        assert!(next_anonymous_maintenance(&live, false).is_some());
+        tokio::time::advance(Duration::from_secs(2)).await;
+        maintain_anonymous_prewarm(&store, &mut live);
+        maintain_anonymous_prewarm(&store, &mut live);
+        assert_eq!(live.prewarming.len(), ANON_POOL_SIZE);
+        live.prewarming.abort_all();
+    }
 
     #[tokio::test(start_paused = true)]
     async fn silent_open_socket_is_reconnected_instead_of_staying_online() {

@@ -9,7 +9,7 @@ use crate::error::{CoreError, Result};
 
 pub const ID_LEN: usize = 16;
 pub const KEY_LEN: usize = 32;
-/// `[16B nonce][8B expiry][64B sig]` — sealed-sender билет, opaque для клиента.
+/// `[16B nonce][8B expiry][64B sig]` — sealed-sender билет. Expiry — подсказка для планирования; подпись проверяет сервер.
 pub const TICKET_LEN: usize = 16 + 8 + 64;
 
 pub mod op {
@@ -517,7 +517,7 @@ pub fn send_anon_frame(
     frame(op::SEND_ANON, &body)
 }
 
-/// `[1B count][ticket]...` — билеты непрозрачны для клиента, он их просто хранит.
+/// `[1B count][ticket]...` — билеты сохраняются без изменения; expiry используется для очистки запаса.
 pub fn parse_ticket_grant(body: &[u8]) -> Result<Vec<[u8; TICKET_LEN]>> {
     if body.is_empty() {
         return Err(CoreError::BadFrame);
