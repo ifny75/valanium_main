@@ -265,6 +265,7 @@ pub enum Control {
     Pass(String),
     /// Ключ от аватара собеседника.
     ProfileKey(String),
+    ProfileChanged,
     Delete(Vec<String>),
     /// Правка уже отправленного: тот же логический идентификатор, новое тело.
     Edit { id: String, body: String },
@@ -353,6 +354,9 @@ pub fn parse_signal(body: &str) -> Option<Control> {
             return None;
         }
         return Some(Control::Pass(pass.to_owned()));
+    }
+    if value.get("profileChanged").and_then(|v|v.as_bool()) == Some(true) {
+        return Some(Control::ProfileChanged);
     }
     if let Some(key) = value.get("profileKey").and_then(|v| v.as_str()) {
         // Длина проверяется здесь по той же причине, что и у пропуска: мусор в

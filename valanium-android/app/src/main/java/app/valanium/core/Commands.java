@@ -26,6 +26,9 @@ public final class Commands {
         return "{\"type\":\"disconnect\"}";
     }
 
+    public static String probeConnection() { return "{\"type\":\"probe_connection\"}"; }
+    public static String networkChanged() { return "{\"type\":\"network_changed\"}"; }
+
     /** Вход уже существующей личностью. */
     public static String connect(String url) {
         StringBuilder out = new StringBuilder("{\"type\":\"connect\",\"url\":");

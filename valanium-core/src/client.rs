@@ -324,6 +324,18 @@ impl Drop for Live {
     }
 }
 
+fn invalidate_network(live: &mut Live, outcomes: &mut mpsc::UnboundedReceiver<AnonOutcome>) {
+    live.prewarming.abort_all();
+    live.prepared.clear();
+    for (_,task) in live.anon_inflight.drain() { task.abort(); }
+    while outcomes.try_recv().is_ok() {}
+    live.anon_retries.clear();
+    live.route_cooldowns.clear();
+    live.prewarm_retry_at=None;
+    live.ticket_request_until=None;
+    // Ciphertexts and stable client references remain in the durable queue.
+}
+
 /// Анонимная отправка не удалась (билетов не было / Tor недоступен / сервер
 /// отказал / соединение оборвалось) — сообщить об этом некому, кроме `pump`:
 /// он обновляет запечатанную очередь и планирует следующую onion-попытку.
@@ -785,6 +797,7 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
                 session(&url, Entry::Existing, &store, &sink, &mut commands).await;
             }
             Command::Disconnect => sink(Event::Disconnected { reason: "by request".into() }),
+            Command::NetworkChanged | Command::ProbeConnection => {},
             Command::Send { recipient_device, body } => {
                 queue_offline(&store, &sink, &recipient_device, &body);
             }
@@ -2156,6 +2169,7 @@ async fn session(
             // перестанет открываться.
             route = (route + 1) % routes.len();
         }
+        invalidate_network(&mut live,&mut anon_rx);
         if wait_before_retry(backoff, store, sink, commands).await == Pause::Closed {
             return;
         }
@@ -2207,7 +2221,7 @@ async fn wait_before_retry(
                 match command {
                     Command::Send { recipient_device, body } => queue_offline(store, sink, &recipient_device, &body),
                     // «Подключись» во время паузы — это «не жди, попробуй сейчас».
-                    Command::Connect { .. } => return Pause::Elapsed,
+                    Command::Connect { .. } | Command::NetworkChanged | Command::ProbeConnection => return Pause::Elapsed,
                     Command::Disconnect => {
                         sink(Event::Disconnected { reason: "by request".into() });
                         return Pause::Closed;
@@ -2396,7 +2410,8 @@ async fn while_connecting_with_timeout<T>(future: impl std::future::Future<Outpu
                         sink(Event::Disconnected { reason: "by request".into() });
                         return Ok(None);
                     }
-                    Command::Connect { .. } => {},
+                    Command::Connect { .. } | Command::ProbeConnection => {},
+                    Command::NetworkChanged => return Err(CoreError::Transport("Network changed; reconnecting".into())),
                     _ => fail(sink, "not_connected", "Соединение ещё устанавливается"),
                 }
             }
@@ -2643,6 +2658,7 @@ async fn pump(
     ticker.tick().await; // первый тик срабатывает сразу — пропускаем
     let idle_timeout = Duration::from_secs((greeting.heartbeat_sec * 3).clamp(30, 180));
     let mut last_received = tokio::time::Instant::now();
+    let mut probe: Option<(tokio::time::Instant,Vec<u8>)> = None;
 
     loop {
         let anonymous_deadline = if authenticated && greeting.sealed_sender {
@@ -2650,6 +2666,9 @@ async fn pump(
         } else { None };
         let prewarming_active = !live.prewarming.is_empty();
         tokio::select! {
+            _ = tokio::time::sleep_until(probe.as_ref().map(|p|p.0).unwrap_or(last_received+idle_timeout)), if probe.is_some() => {
+                return Err(CoreError::Transport("Resume probe timed out; reconnecting".into()));
+            }
             Some(outcome) = live.prewarming.join_next(), if prewarming_active => {
                 accept_anonymous_prewarm(live, outcome);
                 if authenticated {
@@ -2663,6 +2682,9 @@ async fn pump(
                 let Some(message) = incoming else { return Ok(Outcome::Retry) };
                 let message = message.map_err(|err| CoreError::Transport(err.to_string()))?;
                 last_received = tokio::time::Instant::now();
+                if let Message::Pong(payload)=&message {
+                    if probe.as_ref().is_some_and(|p|p.1.as_slice()==payload.as_slice()) {probe=None;}
+                }
 
                 // Закрытие сервером надо заметить здесь. Дальше сокет только
                 // выглядит живым: отправка в него вернёт «sending after
@@ -3307,6 +3329,7 @@ async fn pump(
                                 }
                                 _ => (avatar_mime.clone(), avatar_base64.clone()),
                             };
+                            store.save_setting("pending_avatar_publication",&serde_json::to_vec(&(mime.clone(),data.clone()))?)?;
                             send(&mut socket, proto::profile_set_frame(&mime, &data)?).await?;
                         } else {
                             fail(sink, "profiles_unavailable", "server does not support profiles yet");
@@ -3371,6 +3394,16 @@ async fn pump(
                                 return Ok(Outcome::Retry);
                             }
                             fail(sink, "send", &err.to_string());
+                        }
+                    }
+                    Command::NetworkChanged => return Ok(Outcome::Retry),
+                    Command::ProbeConnection => {
+                        if probe.is_none() {
+                            let nonce=random_bytes(16);
+                            tokio::time::timeout(Duration::from_secs(8),socket.send(Message::Ping(nonce.clone().into())))
+                                .await.map_err(|_|CoreError::Transport("Resume probe write timed out".into()))?
+                                .map_err(|e|CoreError::Transport(e.to_string()))?;
+                            probe=Some((tokio::time::Instant::now()+Duration::from_secs(8),nonce));
                         }
                     }
                     Command::Connect { .. } => {
@@ -3488,6 +3521,21 @@ async fn on_frame(
         }
         op::PROFILE => {
             let profile: proto::ProfilePayload = proto::parse_json(body)?;
+            let published: Option<(Option<String>,Option<String>)> = store.load_setting("pending_avatar_publication")?
+                .and_then(|raw|serde_json::from_slice(&raw).ok());
+            if profile.device==hex::encode(store.load_credentials()?.device_pub())
+                && published.as_ref()==Some(&(profile.avatar_mime.clone(),profile.avatar_base64.clone())) {
+                let recipients=avatar_recipients(store);
+                for (device,group) in store.list_conversations()? {
+                    if !recipients.contains(&hex::encode(&device)) || mls.inspect(&group).is_err() {continue;}
+                    let Ok(device)=<[u8;KEY_LEN]>::try_from(device.as_slice()) else{continue};
+                    encrypt_and_send(socket,store,mls,sink,&group,PendingSend{device,
+                        body:"\u{2063}VALCTL1:{\"profileChanged\":true}".into(),stored:true},
+                        &mut live.outbox,Some(&mut SealedSenderCtx{required:live.require_anonymous})).await?;
+                }
+                store.save_setting("pending_avatar_publication",b"null")?;
+                flush_anonymous(socket,store,sink,live,sealed_sender_available,anon_tx).await?;
+            }
             // Аватар мог приехать запечатанным. Ключ есть — открываем, нет —
             // отдаём наверх пустоту: интерфейс покажет инициалы.
             let (avatar_mime, avatar_base64) = unseal_avatar(
@@ -3707,6 +3755,10 @@ async fn on_envelope(
                         store.save_setting(PEER_PROFILE_KEYS, &serde_json::to_vec(&keys)?)?;
                         store.save_mls(&mls.signer_public(), &mls.snapshot())?;
                         send(socket, proto::profile_get_frame(&device)?).await?;
+                    }
+                    Some(Control::ProfileChanged) => {
+                        store.save_mls(&mls.signer_public(), &mls.snapshot())?;
+                        send(socket,proto::profile_get_frame(&device)?).await?;
                     }
                     Some(Control::Delete(ids)) => {
                         // Нить, а не группа: сообщения лежат под нитью, и
@@ -4744,6 +4796,38 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn resume_probe_detects_a_silent_socket_before_the_idle_timeout() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=Store::open(":memory:",b"resume-test").unwrap();
+        let credentials=Credentials::generate();store.save_credentials(&credentials).unwrap();
+        let mut mls=load_or_create_mls(&store,&credentials).unwrap();
+        let (pipe,peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let _silent_server=WebSocketStream::from_raw_socket(peer,Role::Server,None).await;
+        let (tx,mut commands)=mpsc::unbounded_channel();tx.send(Command::ProbeConnection).unwrap();
+        let (outcomes,mut incoming)=mpsc::unbounded_channel();
+        let greeting=Greeting{heartbeat_sec:30,invite_entry:true,ton_entry:false,profiles:false,decor:false,devices:false,sealed_sender:false};
+        let handshake=Handshake::Authenticated{key_packages:Some(KEY_PACKAGES_PER_CONNECT),device_id:hex::encode(credentials.device_pub()),admin:false};
+        let sink:EventSink=Arc::new(|_|{});let mut live=Live::default();let started=tokio::time::Instant::now();
+        let result=pump(socket,&store,&mut mls,&sink,&mut commands,greeting,handshake,&mut live,outcomes,&mut incoming).await;
+        assert!(matches!(result,Err(CoreError::Transport(ref message)) if message.contains("Resume probe")));
+        assert!(started.elapsed()<Duration::from_secs(10));
+    }
+
+    #[tokio::test]
+    async fn changed_network_cancels_transient_tasks_and_resets_retry_delays() {
+        let mut live=Live::default();let (tx,mut rx)=mpsc::unbounded_channel();
+        live.anon_retries.insert([1;ID_LEN],(tokio::time::Instant::now(),1));
+        live.route_cooldowns.insert("old.onion".into(),tokio::time::Instant::now());
+        live.ticket_request_until=Some(tokio::time::Instant::now());
+        let task=tokio::spawn(std::future::pending::<()>());live.anon_inflight.insert([1;ID_LEN],task.abort_handle());
+        invalidate_network(&mut live,&mut rx);drop(tx);
+        assert!(live.anon_inflight.is_empty());assert!(live.anon_retries.is_empty());
+        assert!(live.route_cooldowns.is_empty());assert!(live.ticket_request_until.is_none());
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
 
     #[test]
     fn private_avatars_open_for_the_owner_and_existing_legacy_peer_keys() {

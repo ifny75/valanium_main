@@ -13,6 +13,11 @@ import android.os.IBinder;
 import org.json.JSONObject;
 
 import app.valanium.core.Core;
+import app.valanium.core.Commands;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.os.Handler;
+import android.os.Looper;
 
 /**
  * Держит соединение живым. Без foreground-сервиса Doze прибивает WebSocket, и
@@ -35,6 +40,42 @@ public final class ValaniumService extends Service {
     private static boolean signingOut;
     private static boolean startRequested;
     private static ValaniumService instance;
+    private static final Handler networkHandler = new Handler(Looper.getMainLooper());
+    private static ConnectivityManager networkManager;
+    private static ConnectivityManager.NetworkCallback networkCallback;
+    private static volatile Network lastNetwork;
+    private static volatile boolean networkLost;
+    private static final Runnable reconnectNetwork = () -> {
+        if (!signingOut && core.isOpen()) core.submit(Commands.networkChanged());
+    };
+
+    /** Uses application context, so watching the network survives Activity.onStop. */
+    public static void watchNetwork(Context context) {
+        if (networkCallback != null || signingOut) return;
+        networkManager = context.getApplicationContext().getSystemService(ConnectivityManager.class);
+        if (networkManager == null) return;
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onLost(Network network) { if(network.equals(lastNetwork)) networkLost=true; }
+            @Override public void onAvailable(Network network) {
+                boolean changed=lastNetwork!=null&&!lastNetwork.equals(network);
+                lastNetwork=network;
+                if(!networkLost&&!changed)return;
+                networkLost=false;
+                networkHandler.removeCallbacks(reconnectNetwork);
+                networkHandler.postDelayed(reconnectNetwork,500);
+            }
+        };
+        try { networkManager.registerDefaultNetworkCallback(networkCallback); }
+        catch(RuntimeException unavailable) { networkCallback=null; }
+    }
+
+    private static void stopNetworkWatch() {
+        networkHandler.removeCallbacks(reconnectNetwork);
+        if(networkCallback!=null&&networkManager!=null) {
+            try { networkManager.unregisterNetworkCallback(networkCallback); } catch(RuntimeException ignored) {}
+        }
+        networkCallback=null;networkManager=null;lastNetwork=null;networkLost=false;
+    }
 
     public static boolean isSigningOut() { return signingOut; }
 
@@ -42,6 +83,7 @@ public final class ValaniumService extends Service {
     public static void stopForLogout(Context context, Runnable completed) {
         if (signingOut) return;
         signingOut = true;
+        stopNetworkWatch();
         afterStop = completed;
         // Android treats stopping an unpromoted FGS as a fatal startup failure.
         // Let the pending onCreate promote it, then stop immediately.
@@ -109,6 +151,7 @@ public final class ValaniumService extends Service {
 
         if (signingOut) { stopSelf(); return; }
         running = true;
+        watchNetwork(this);
         poller = new Thread(this::pollLoop, "valanium-poll");
         poller.start();
     }
@@ -135,6 +178,7 @@ public final class ValaniumService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        stopNetworkWatch();
         if (poller != null) {
             // poll держит read-замок и вернётся не позже таймаута, после чего
             // close получит write-замок. Ждём именно поэтому.

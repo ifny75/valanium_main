@@ -25,6 +25,10 @@ pub enum Command {
     RequestInvoice { url: String },
     /// Войти уже существующей личностью.
     Connect { url: String },
+    /// Local transport change: replace stale sockets without changing the route.
+    NetworkChanged,
+    /// Foreground resume: probe the live socket before deciding to reconnect.
+    ProbeConnection,
     Disconnect,
     /// `recipient_device` — hex публичного ключа устройства получателя.
     Send { recipient_device: String, body: String },

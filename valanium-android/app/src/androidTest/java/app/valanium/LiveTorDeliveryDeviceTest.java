@@ -71,10 +71,25 @@ public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
             alice.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&image.equals(e.optString("avatar_base64")));
             bob.send(new JSONObject().put("type","profile_get").put("query",alice.device));
             bob.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&image.equals(e.optString("avatar_base64")));
+            android.graphics.Bitmap replacement=android.graphics.Bitmap.createBitmap(4,4,android.graphics.Bitmap.Config.ARGB_8888);
+            replacement.eraseColor(android.graphics.Color.RED);
+            java.io.ByteArrayOutputStream encoded=new java.io.ByteArrayOutputStream();
+            replacement.compress(android.graphics.Bitmap.CompressFormat.PNG,100,encoded);replacement.recycle();
+            String nextImage=android.util.Base64.encodeToString(encoded.toByteArray(),android.util.Base64.NO_WRAP);
+            alice.send(new JSONObject().put("type","profile_set").put("avatar_mime","image/png").put("avatar_base64",nextImage));
+            // No profile_get: the encrypted change notification must invalidate Bob's cached avatar.
+            bob.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&nextImage.equals(e.optString("avatar_base64")));
+            bob.send(new JSONObject().put("type","probe_connection"));
+            bob.send(new JSONObject().put("type","network_changed"));
+            bob.waitFor(e->"authenticated".equals(e.optString("type")));
+            exchange(alice,bob,"after-network-reconnect");
+            bob.pending.removeIf(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device")));
+            alice.send(new JSONObject().put("type","profile_set").put("avatar_mime",JSONObject.NULL).put("avatar_base64",JSONObject.NULL));
+            bob.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&e.isNull("avatar_base64"));
             alice.send(new JSONObject().put("type","call_probe").put("recipient_device",bob.device));
             assertEquals(bob.device,alice.waitFor(e->"call_status".equals(e.optString("type"))&&"media_unavailable".equals(e.optString("status"))).getString("peer_device"));
             alice.send(new JSONObject().put("type","profile_get").put("query",bob.device));
-            assertEquals(bob.device,alice.waitFor(e->"profile".equals(e.optString("type"))).getString("device"));
+            assertEquals(bob.device,alice.waitFor(e->"profile".equals(e.optString("type"))&&bob.device.equals(e.optString("device"))).getString("device"));
             alice.send(new JSONObject().put("type","verify").put("peer_device",bob.device));
             bob.send(new JSONObject().put("type","verify").put("peer_device",alice.device));
             JSONObject a=alice.waitFor(e->"verification".equals(e.optString("type")));

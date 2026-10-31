@@ -6,8 +6,8 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.content.Intent;
 import android.net.Uri;
-import android.net.ConnectivityManager;
-import android.net.Network;
+
+
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -76,9 +76,6 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static long backgroundedAt = -1L;
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
-    private ConnectivityManager.NetworkCallback networkCallback;
-    private static Network lastKnownNetwork;
-    private volatile boolean networkWasLost;
 
     private static final String SERVER_BASIC_URL = "wss://valanium.com/ws";
     /*
@@ -661,11 +658,6 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onStop() {
         if(appUpdates!=null)appUpdates.pause();
-        if (networkCallback != null) {
-            ConnectivityManager manager = getSystemService(ConnectivityManager.class);
-            if (manager != null) manager.unregisterNetworkCallback(networkCallback);
-            networkCallback = null;
-        }
         ui.removeCallbacks(activityExpiry);
         peerTypingUntil.clear();
         for(Runnable timeout:callProbeTimeouts.values())ui.removeCallbacks(timeout);callProbeTimeouts.clear();
@@ -2299,27 +2291,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         startEventDelivery();
         submit(Commands.status());
         submit(Commands.conversations());
-        if (networkCallback == null) {
-            ConnectivityManager manager = getSystemService(ConnectivityManager.class);
-            if (manager != null) {
-                networkCallback = new ConnectivityManager.NetworkCallback() {
-                    @Override public void onLost(Network network) { networkWasLost = true; }
-                    @Override public void onAvailable(Network network) {
-                        boolean changed=lastKnownNetwork!=null&&!lastKnownNetwork.equals(network);
-                        lastKnownNetwork=network;
-                        if (!networkWasLost&&!changed) return;
-                        networkWasLost = false;
-                        ui.post(() -> {
-                            if (!foregroundAuthorized || myDeviceHex.isEmpty()) return;
-                            submit(Commands.disconnect());
-                            connectSelectedRoute();
-                            submit(Commands.conversations());
-                        });
-                    }
-                };
-                manager.registerDefaultNetworkCallback(networkCallback);
-            }
-        }
+        ValaniumService.watchNetwork(this);
+        submit(Commands.probeConnection());
     }
 
     private void requestNotificationPermission() {
