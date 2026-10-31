@@ -4151,14 +4151,8 @@ public final class MainActivity extends Activity implements Events.Listener {
      * настройках, и перекодировать все аватары ради этого не нужно.
      */
     private android.graphics.drawable.Drawable roundedAvatar(Bitmap bitmap) {
-        android.graphics.drawable.ShapeDrawable shape = new android.graphics.drawable.ShapeDrawable(
-                new android.graphics.drawable.shapes.RoundRectShape(
-                        new float[]{avatarRadius(), avatarRadius(), avatarRadius(), avatarRadius(),
-                                avatarRadius(), avatarRadius(), avatarRadius(), avatarRadius()},
-                        null, null));
-        shape.getPaint().setShader(new android.graphics.BitmapShader(bitmap,
-                android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP));
-        return shape;
+        if (bitmap == null) throw new IllegalArgumentException("Invalid avatar image");
+        return new AvatarDrawable(bitmap, avatarRadius());
     }
 
     /** Собирает пузырь и кладёт его и в ленту, и в кэш открытой беседы. */

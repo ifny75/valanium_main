@@ -414,6 +414,7 @@ final class PhotoEditor {
         private boolean transformed;
         private final ScaleGestureDetector scaler;
         private final GestureDetector gestures;
+        private final Runnable estimate = () -> updateEstimate();
 
         CropView(Activity context) {
             super(context);
@@ -449,9 +450,18 @@ final class PhotoEditor {
             if(getWidth()==0||getHeight()==0)return;
             RectF frame=cropOnScreen();float before=scale();
             float anchorX=(focusX-offsetX())/before,anchorY=(focusY-offsetY())/before;
-            zoom=Math.max(1f,Math.min(5f,wanted));float after=scale();
+            float base=before/zoom;
+            float minimum=Math.min(MIN_CROP,Math.min(work.getWidth(),work.getHeight()));
+            float limit=Math.max(1f,Math.min(5f,Math.min(frame.width(),frame.height())/(base*minimum)));
+            zoom=Math.max(1f,Math.min(limit,wanted));float after=scale();
             panX=focusX-anchorX*after-(getWidth()-work.getWidth()*after)/2;
             panY=focusY-anchorY*after-(getHeight()-work.getHeight()*after)/2;
+            // Keep the picture covering the same frame even when the pinch
+            // focus is close to an edge. Clamping only the crop made it jump.
+            float originX=clamp(offsetX(),frame.right-work.getWidth()*after,frame.left);
+            float originY=clamp(offsetY(),frame.bottom-work.getHeight()*after,frame.top);
+            panX=originX-(getWidth()-work.getWidth()*after)/2;
+            panY=originY-(getHeight()-work.getHeight()*after)/2;
             float width=Math.min(work.getWidth(),Math.max(MIN_CROP,frame.width()/after));
             float height=Math.min(work.getHeight(),Math.max(MIN_CROP,frame.height()/after));
             if(ratio!=0){width=Math.min(width,height*ratio);height=width/ratio;}
@@ -460,8 +470,10 @@ final class PhotoEditor {
             crop.set(left,top,left+width,top+height);
             if(zoomBar!=null){zoomBar.setProgress(Math.round((zoom-1)*100));zoomBar.setContentDescription(I18n.t("Масштаб")+" "+String.format(java.util.Locale.getDefault(),"%.1f×",zoom));}
             if(zoomLabel!=null)zoomLabel.setText(I18n.t("Масштаб")+" "+String.format(java.util.Locale.getDefault(),"%.1f×",zoom));
-            invalidate();updateEstimate();
+            invalidate();removeCallbacks(estimate);postDelayed(estimate,150);
         }
+
+        @Override protected void onDetachedFromWindow(){removeCallbacks(estimate);super.onDetachedFromWindow();}
 
         private RectF cropOnScreen() {
             float s = scale();

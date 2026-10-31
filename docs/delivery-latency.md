@@ -2,9 +2,12 @@
 
 Each message still uses its own onion WebSocket and bearer ticket; there is no
 fallback to authenticated SEND and no reduction of SOCKS/Tor circuit isolation.
-One anonymous socket can be prepared before a message exists. It contains no
-identity, ticket, recipient or ciphertext, is used once, and is discarded after
-45 seconds. Preparation has the existing 25-second timeout. This moves connection
+A bounded pool prepares at most two anonymous sockets before a message exists.
+They contain no identity, ticket, recipient or ciphertext, are each used once,
+and expire 45 seconds after preparation starts. Completion wakes the message
+queue immediately, independently of heartbeat. A send waits for an existing
+preparation rather than opening a competing cold connection; preparation failures
+release the slot and schedule a retry after two seconds. Preparation has the existing 25-second timeout. This moves connection
 setup off the send path when preparation has completed; it cannot guarantee Tor
 latency, especially immediately after startup or in a burst.
 
@@ -12,6 +15,13 @@ Failed envelopes retry after 2, 4, then 8 seconds using a dedicated deadline,
 independent of heartbeat. Other recipients continue sending; the same recipient
 retains FIFO ordering. A failed route is avoided for 30 seconds when another
 route is available. These measurements and cooldowns are memory-only.
+
+Tickets are discarded locally when expired or with less than 30 seconds of
+remaining validity (25-second send budget plus margin). Expiry is a scheduling
+hint; the server still verifies the signature. This requires a reasonably correct
+client clock. Missing stock triggers one outstanding request at a time, retried
+on a dedicated ten-second deadline; reconnect clears the outstanding request.
+The stock is bounded to 32 tickets. The wire format and server do not change.
 
 Set `VALANIUM_DELIVERY_TIMINGS=1` to enable local stderr durations for transport
 connection, anonymous WebSocket/HELLO and server ACK. Logs contain stage names

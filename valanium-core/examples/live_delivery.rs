@@ -169,6 +169,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         exchange(&alice, &bob, &format!("maximum-privacy-{run}"))?;
         println!("Delivery after maximum privacy verified");
     }
+    if args.iter().any(|v|v=="--avatars") {
+        let mut privacy=valanium_core::privacy::Privacy::default();
+        privacy.profile_avatar.scope=valanium_core::privacy::Scope::Approved;
+        alice.command(json!({"type":"privacy_set","privacy":privacy}));
+        let image="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=";
+        alice.command(json!({"type":"profile_set","avatar_mime":"image/png","avatar_base64":image}));
+        alice.wait(|e|e["type"]=="profile" && e["device"]==alice.device && e["avatar_base64"]==image)?;
+        bob.command(json!({"type":"profile_get","query":alice.device}));
+        bob.wait(|e|e["type"]=="profile" && e["device"]==alice.device && e["avatar_base64"]==image)?;
+        println!("Private avatar decrypted by its owner and approved peer over Tor");
+    }
     println!("Live private delivery verified in both directions");
     Ok(())
 }
