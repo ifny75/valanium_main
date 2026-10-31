@@ -1,4 +1,14 @@
 export default {
+  "Авторизация": "Authentication",
+  "Периодически, около 15 минут": "Periodically, about 15 minutes",
+  "Замеров пока нет": "No measurements yet",
+  "Фоновая доставка": "Background delivery",
+  "Только при открытом приложении": "Only while the app is open",
+  "Постоянно с уведомлением": "Persistent with notification",
+  "Очередь": "Queue",
+  "Подтверждение сервера": "Server acknowledgement",
+  "Задержки доставки": "Delivery timings",
+
   "Удалить фото": "Remove photo",
   "Не удалось загрузить обои": "Could not load wallpaper",
   "Свое фото": "My photo",

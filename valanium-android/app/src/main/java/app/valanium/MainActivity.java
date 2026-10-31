@@ -300,6 +300,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final int AVATAR_PICK_REQUEST = 1002;
     private static final int PHOTO_PICK_REQUEST = 1003;
     private static final int WALLPAPER_PICK_REQUEST = 1004;
+    private boolean diagnosticsRequested;
+    private boolean avatarThumbnailPending;
+    private long avatarEditGeneration;
     private Bitmap customWallpaperBitmap;
     private View chatWallpaperLayer;
     private Button customWallpaperSelect, customWallpaperRemove;
@@ -671,6 +674,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         stopVoicePlayback();
         stopLocalPolling();
         Events.unsubscribe(this);
+        if(!BackgroundDelivery.persistent(this)){
+            ValaniumService.stop(this);
+            if(ValaniumService.core().isOpen())ValaniumService.core().submit(Commands.disconnect());
+        }
         super.onStop();
     }
 
@@ -2084,9 +2091,10 @@ public final class MainActivity extends Activity implements Events.Listener {
      * обрезать его вслепую — значит промахиваться.
      */
     private void openEditor(Bitmap source, boolean avatar) {
-        int limit = avatar ? 340_000 : 700_000;
-        new PhotoEditor(this, source, avatar ? 1f : 0f, limit, (base64, width, height) -> {
+        int limit = avatar ? 80_000 : 700_000;
+        new PhotoEditor(this, source, avatar ? 1f : 0f, limit, avatar?384:1600, (base64, width, height) -> {
             if (avatar) {
+                avatarEditGeneration++;
                 submit(Commands.profileSet("image/jpeg", base64));
                 toast(I18n.t("Аватар загружается…"));
                 return;
@@ -2373,6 +2381,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         backgroundedAt = -1L;
         Events.subscribe(this);
         startEventDelivery();
+        BackgroundDelivery.schedule(this);
         submit(Commands.status());
         submit(Commands.conversations());
         ValaniumService.watchNetwork(this);
@@ -2388,20 +2397,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
     }
 
-    private boolean canUseForegroundService() {
-        return Build.VERSION.SDK_INT < 33
-                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED;
-    }
-
-    /**
-     * На Android 13+ foreground-сервис запускается только после разрешения на
-     * уведомления. При отказе приложение остаётся полностью рабочим, пока оно
-     * открыто: события забирает локальный поток активности.
-     */
+    /** Message delivery does not require notification permission. Android still
+     * exposes an ongoing FGS in its task manager when drawer notifications are denied. */
     private void startEventDelivery() {
         if (ValaniumService.isSigningOut()) return;
-        if (!canUseForegroundService()) {
+        if (!BackgroundDelivery.persistent(this)) {
             startLocalPolling();
             return;
         }
@@ -2448,6 +2448,25 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void configureAccountActions() {
+        View reconnect=findViewById(R.id.account_reconnect);
+        if(reconnect.getParent() instanceof LinearLayout){
+            LinearLayout parent=(LinearLayout)reconnect.getParent();
+            Button background=new Button(this);background.setText(I18n.t("Фоновая доставка"));
+            background.setOnClickListener(v->{
+                String[] modes={"persistent","periodic","foreground"};
+                String[] labels={I18n.t("Постоянно с уведомлением"),I18n.t("Периодически, около 15 минут"),I18n.t("Только при открытом приложении")};
+                int selected=java.util.Arrays.asList(modes).indexOf(BackgroundDelivery.mode(this));
+                new AlertDialog.Builder(this).setTitle(I18n.t("Фоновая доставка")).setSingleChoiceItems(labels,selected,(dialog,which)->{
+                    appearancePreferences.edit().putString("background_delivery",modes[which]).apply();BackgroundDelivery.schedule(this);
+                    if("persistent".equals(modes[which])&&ValaniumService.core().isOpen())startEventDelivery();
+                    dialog.dismiss();
+                }).setNegativeButton(I18n.t("Отмена"),null).show();
+            });
+            parent.addView(background);
+            Button diagnostics=new Button(this);diagnostics.setText(I18n.t("Задержки доставки"));
+            diagnostics.setOnClickListener(v->{diagnosticsRequested=true;submit("{\"type\":\"diagnostics\"}");});
+            parent.addView(diagnostics);
+        }
         findViewById(R.id.account_share).setOnClickListener(v -> {
             if (ownChatCode.isEmpty()) {
                 toast(I18n.t("Код профиля пока недоступен. Проверьте подключение."));
@@ -2966,6 +2985,14 @@ public final class MainActivity extends Activity implements Events.Listener {
             case "profile":
                 onProfile(event);
                 break;
+            case "diagnostics":
+                if(diagnosticsRequested){
+                    diagnosticsRequested=false;JSONObject report=event.optJSONObject("report");StringBuilder text=new StringBuilder();
+                    String[][] stages={{"connection","Подключение"},{"authentication","Авторизация"},{"queue","Очередь"},{"acknowledgement","Подтверждение сервера"}};
+                    for(String[] stage:stages){JSONObject values=report==null?null:report.optJSONObject(stage[0]);if(values!=null)text.append(I18n.t(stage[1])).append(": ").append(values.optLong("last_ms")).append(" ms · p50 ").append(values.optLong("p50_ms")).append(" · p95 ").append(values.optLong("p95_ms")).append('\n');}
+                    new AlertDialog.Builder(this).setTitle(I18n.t("Задержки доставки")).setMessage(text.length()==0?I18n.t("Замеров пока нет"):text.toString()).setPositiveButton("OK",null).show();
+                }
+                break;
             case "admin":
                 onAdminReport(event);
                 break;
@@ -3244,6 +3271,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         profile.color = optText(event, "color");
         profiles.put(profile.device, profile);
         if (profile.device.equals(myDeviceHex)) {
+            normalizeOwnAvatar(profile);
             ownChatCode = profile.chatCode;
             myEmblem = optText(event, "emblem");
             myColor = optText(event, "color");
@@ -3265,6 +3293,26 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         if (profile.device.equals(currentPeer)) updateConversationHeader(profile.device);
         renderPeers();
+    }
+
+    private void normalizeOwnAvatar(Profile profile){
+        if(avatarThumbnailPending||profile.avatarBase64.isEmpty()||!profile.avatarMime.startsWith("image/"))return;
+        avatarThumbnailPending=true;
+        final long generation=avatarEditGeneration;
+        new Thread(()->{
+            try{
+                byte[] bytes=Base64.decode(profile.avatarBase64,Base64.NO_WRAP);
+                BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+                if(Math.max(options.outWidth,options.outHeight)<=384)return;
+                options.inSampleSize=1;while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>768)options.inSampleSize*=2;
+                options.inJustDecodeBounds=false;Bitmap source=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(source==null)return;
+                float scale=Math.min(1f,384f/Math.max(source.getWidth(),source.getHeight()));
+                Bitmap small=Bitmap.createScaledBitmap(source,Math.max(1,Math.round(source.getWidth()*scale)),Math.max(1,Math.round(source.getHeight()*scale)),true);
+                java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();small.compress(Bitmap.CompressFormat.JPEG,80,output);
+                String data=Base64.encodeToString(output.toByteArray(),Base64.NO_WRAP);if(small!=source)small.recycle();source.recycle();
+                runOnUiThread(()->{Profile current=profiles.get(myDeviceHex);if(foregroundAuthorized&&generation==avatarEditGeneration&&current!=null&&current.avatarBase64.equals(profile.avatarBase64)&&myDeviceHex.equals(profile.device))submit(Commands.profileSet("image/jpeg",data));});
+            }catch(Exception ignored){}finally{runOnUiThread(()->avatarThumbnailPending=false);}
+        },"valanium-avatar-thumbnail").start();
     }
 
     // --- отрисовка -------------------------------------------------------------

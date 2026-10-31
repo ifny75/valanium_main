@@ -17,6 +17,10 @@ pub(crate) enum Kind {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Envelope {
+    #[serde(default = "normal_priority")]
+    pub priority: u8,
+    #[serde(default)]
+    pub queued_at: i64,
     pub client_ref: [u8; 16],
     pub device: [u8; 32],
     pub conversation: Vec<u8>,
@@ -27,6 +31,7 @@ pub(crate) struct Envelope {
     #[serde(default)]
     pub expires_at: Option<i64>,
 }
+fn normal_priority()->u8{1}
 
 pub(crate) fn load(store: &Store) -> Result<Vec<Envelope>> {
     match store.load_setting(KEY)? {
@@ -145,21 +150,39 @@ pub(crate) fn bound_legacy_lifetimes(store: &Store, now: i64, ttl: i64) -> Resul
 /// At most one envelope per device may be active. This keeps Welcome and
 /// commits ahead of their dependent application messages, including retries.
 pub(crate) fn ready(queue: &[Envelope], inflight: &std::collections::HashSet<[u8; 16]>, limit: usize) -> Vec<Envelope> {
-    let mut busy: std::collections::HashSet<_> = queue.iter()
+    let busy: std::collections::HashSet<_> = queue.iter()
         .filter(|item| inflight.contains(&item.client_ref)).map(|item| item.device).collect();
-    let mut ready = Vec::new();
-    for item in queue {
-        if ready.len() >= limit { break; }
-        if busy.insert(item.device) { ready.push(item.clone()); }
+    let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+    let score=|item:&Envelope|if item.queued_at>0&&now.saturating_sub(item.queued_at)>30_000{item.priority.min(1)}else{item.priority};
+    let mut barriers=std::collections::HashSet::new();
+    let mut candidates:std::collections::HashMap<_,(usize,&Envelope)>=std::collections::HashMap::new();
+    for (index,item) in queue.iter().enumerate() {
+        if busy.contains(&item.device)||barriers.contains(&item.device){continue;}
+        if item.kind==Kind::Essential {
+            barriers.insert(item.device);candidates.entry(item.device).or_insert((index,item));
+        }else{
+            candidates.entry(item.device).and_modify(|candidate|{if score(item)<score(candidate.1){*candidate=(index,item);}}).or_insert((index,item));
+        }
     }
-    ready
+    let mut candidates:Vec<_>=candidates.into_values().collect();candidates.sort_by_key(|(index,item)|(score(item),*index));
+    candidates.into_iter().take(limit).map(|(_,item)|item.clone()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn text_overtakes_an_attachment_but_never_a_key_change(){
+        let mut image=sample(1);image.priority=2;
+        let text=sample(2);
+        assert_eq!(ready(&[image.clone(),text.clone()],&Default::default(),1)[0].client_ref,text.client_ref);
+        let mut commit=sample(3);commit.kind=Kind::Essential;
+        let queue=vec![image.clone(),commit,text.clone()];
+        assert_eq!(ready(&queue,&Default::default(),1)[0].client_ref,image.client_ref);
+        assert_eq!(ready(&queue,&std::collections::HashSet::from([image.client_ref]),4).len(),0);
+    }
+    #[test] fn an_aged_attachment_is_not_starved(){let mut image=sample(1);image.priority=2;image.queued_at=1;assert_eq!(ready(&[image,sample(2)],&Default::default(),1)[0].client_ref,[1;16]);}
     fn sample(id: u8) -> Envelope {
-        Envelope { client_ref: [id; 16], device: [2; 32], conversation: vec![4],
+        Envelope { priority:1,queued_at:0,client_ref: [id; 16], device: [2; 32], conversation: vec![4],
             logical_id: Some(format!("message-{id}")), ciphertext: vec![3; 256],
             kind: Kind::Message, expires_at: None }
     }

@@ -52,6 +52,7 @@ final class PhotoEditor {
     private final Activity activity;
     private final Bitmap source;
     private final int maxBase64;
+    private final int outputMaxSide;
     private final Result result;
 
     /** Исходник, уже повёрнутый и отражённый. */
@@ -74,10 +75,14 @@ final class PhotoEditor {
     private TextView zoomLabel;
 
     PhotoEditor(Activity activity, Bitmap source, float ratio, int maxBase64, Result result) {
+        this(activity,source,ratio,maxBase64,WORK_MAX_SIDE,result);
+    }
+    PhotoEditor(Activity activity, Bitmap source, float ratio, int maxBase64, int outputMaxSide,Result result) {
         this.activity = activity;
         this.source = source;
         this.ratio = ratio;
         this.maxBase64 = maxBase64;
+        this.outputMaxSide=outputMaxSide;
         this.result = result;
     }
 
@@ -230,6 +235,8 @@ final class PhotoEditor {
     private Rendered render() {
         int width = Math.max(1, Math.round(crop.width()));
         int height = Math.max(1, Math.round(crop.height()));
+        float resize=Math.min(1f,(float)outputMaxSide/Math.max(width,height));
+        width=Math.max(1,Math.round(width*resize));height=Math.max(1,Math.round(height*resize));
 
         Bitmap out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(out);

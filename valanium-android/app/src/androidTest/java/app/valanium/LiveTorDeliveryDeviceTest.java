@@ -11,7 +11,7 @@ import org.json.JSONObject;
 
 /** Explicit live-network QA: two disposable accounts, embedded Tor, no user data. */
 public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
-    private static final class Client implements AutoCloseable {
+    static final class Client implements AutoCloseable {
         final Core core=new Core();
         final List<JSONObject> pending=new ArrayList<>();
         String device;
@@ -96,6 +96,11 @@ public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
             JSONObject b=bob.waitFor(e->"verification".equals(e.optString("type")));
             assertEquals(a.getString("qr_payload"),b.getString("qr_payload"));
             assertEquals(a.getString("safety_number"),b.getString("safety_number"));
+            bob.send(new JSONObject().put("type","diagnostics"));
+            JSONObject timings=bob.waitFor(e->"diagnostics".equals(e.optString("type"))).getJSONObject("report");
+            assertTrue(timings.getJSONObject("connection").getInt("count")>=2);
+            assertTrue(timings.getJSONObject("queue").getInt("count")>0);
+            assertTrue(timings.getJSONObject("acknowledgement").getInt("count")>0);
         }
     }
 }

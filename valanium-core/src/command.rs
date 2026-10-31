@@ -29,6 +29,7 @@ pub enum Command {
     NetworkChanged,
     /// Foreground resume: probe the live socket before deciding to reconnect.
     ProbeConnection,
+    Diagnostics,
     Disconnect,
     /// `recipient_device` — hex публичного ключа устройства получателя.
     Send { recipient_device: String, body: String },
@@ -301,6 +302,7 @@ pub enum Command {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    Diagnostics { report: serde_json::Value },
     /// Соединение установлено, сервер представился.
     Connected {
         heartbeat_sec: u64,

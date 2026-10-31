@@ -40,3 +40,4 @@ pub use error::{CoreError, Result};
 pub mod calls;
 pub mod updates;
 mod engine_lock;
+mod latency;

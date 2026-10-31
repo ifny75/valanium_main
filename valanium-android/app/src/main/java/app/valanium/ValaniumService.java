@@ -37,7 +37,7 @@ public final class ValaniumService extends Service {
 
     private static final Core core = new Core();
     private static Runnable afterStop;
-    private static boolean signingOut;
+    private static volatile boolean signingOut;
     private static boolean startRequested;
     private static ValaniumService instance;
     private static final Handler networkHandler = new Handler(Looper.getMainLooper());
@@ -78,11 +78,13 @@ public final class ValaniumService extends Service {
     }
 
     public static boolean isSigningOut() { return signingOut; }
+    public static boolean active(){return instance!=null&&instance.running;}
 
     /** Called on the main thread; reopen a database only after onDestroy closes the old core. */
     public static void stopForLogout(Context context, Runnable completed) {
         if (signingOut) return;
         signingOut = true;
+        BackgroundDelivery.cancel(context);
         stopNetworkWatch();
         afterStop = completed;
         // Android treats stopping an unpromoted FGS as a fatal startup failure.
@@ -114,6 +116,8 @@ public final class ValaniumService extends Service {
     }
 
     public static void start(Context context) {
+        BackgroundDelivery.schedule(context);
+        if(!BackgroundDelivery.persistent(context))return;
         if (signingOut || startRequested) return;
         startRequested = true;
         Intent intent = new Intent(context, ValaniumService.class);
@@ -149,11 +153,16 @@ public final class ValaniumService extends Service {
             return;
         }
 
-        if (signingOut) { stopSelf(); return; }
+        if (signingOut || !BackgroundDelivery.persistent(this)) { stopSelf(); return; }
+        BackgroundDelivery.schedule(this);
         running = true;
         watchNetwork(this);
         poller = new Thread(this::pollLoop, "valanium-poll");
         poller.start();
+        if(!core.isOpen())new Thread(()->{
+            try {if(!BackgroundDelivery.openExisting(this,core)||!BackgroundDelivery.connect(this,core))stopSelf();}
+            catch(Exception unavailable){BackgroundDelivery.state(this,"unlock_required");stopSelf();}
+        },"valanium-service-restore").start();
     }
 
     @Override
@@ -170,8 +179,9 @@ public final class ValaniumService extends Service {
 
     @Override
     public void onTimeout(int startId, int fgsType) {
-        // Respect Android's dataSync budget; do not crash or silently restart around it.
+        // Respect any OS stop request; scheduled delivery is a separate bounded job.
         getSharedPreferences("service_state", MODE_PRIVATE).edit().putBoolean("timed_out", true).apply();
+        BackgroundDelivery.schedule(this);
         stopSelf();
     }
 
@@ -197,29 +207,31 @@ public final class ValaniumService extends Service {
 
     private void pollLoop() {
         while (running) {
+            if(!core.isOpen()){android.os.SystemClock.sleep(100);continue;}
             String event = core.poll(POLL_TIMEOUT_MS);
             if (event != null) {
-                notifyIncoming(event);
+                notifyIncoming(this,event);
                 Events.publish(event);
             }
         }
     }
 
-    private void createChannel() {
+    private void createChannel(){createChannels(this);}
+    static void createChannels(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
         NotificationChannel channel = new NotificationChannel(
-                CHANNEL, getString(R.string.channel_connection), NotificationManager.IMPORTANCE_LOW);
+                CHANNEL, context.getString(R.string.channel_connection), NotificationManager.IMPORTANCE_LOW);
         // Тихо и без всплытия: это индикатор, а не уведомление о сообщении.
         channel.setShowBadge(false);
-        NotificationManager manager = getSystemService(NotificationManager.class);
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
         manager.createNotificationChannel(channel);
 
         NotificationChannel messages = new NotificationChannel(
-                MESSAGE_CHANNEL, getString(R.string.channel_messages),
+                MESSAGE_CHANNEL, context.getString(R.string.channel_messages),
                 NotificationManager.IMPORTANCE_HIGH);
-        messages.setDescription(getString(R.string.channel_messages_hint));
+        messages.setDescription(context.getString(R.string.channel_messages_hint));
         messages.enableVibration(true);
         messages.setShowBadge(true);
         manager.createNotificationChannel(messages);
@@ -241,25 +253,25 @@ public final class ValaniumService extends Service {
     }
 
     /** Показывает системное уведомление только когда интерфейс не открыт. */
-    private void notifyIncoming(String json) {
+    static void notifyIncoming(Context context,String json) {
         if (Events.hasListeners()) return;
         try {
             JSONObject event = new JSONObject(json);
             if (!"message".equals(event.optString("type"))) return;
             String body = event.optString("body");
-            String preview = messagePreview(body);
+            String preview = messagePreview(context,body);
             if (preview == null) return; // служебная отметка прочтения
 
-            Intent open = new Intent(this, MainActivity.class)
+            Intent open = new Intent(context, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            PendingIntent content = PendingIntent.getActivity(this, 0, open,
+            PendingIntent content = PendingIntent.getActivity(context, 0, open,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    ? new Notification.Builder(this, MESSAGE_CHANNEL)
-                    : new Notification.Builder(this);
+                    ? new Notification.Builder(context, MESSAGE_CHANNEL)
+                    : new Notification.Builder(context);
             Notification notification = builder
                     .setSmallIcon(R.drawable.ic_messenger_status)
-                    .setContentTitle(getString(R.string.notification_new_message))
+                    .setContentTitle(context.getString(R.string.notification_new_message))
                     .setContentText(preview)
                     .setStyle(new Notification.BigTextStyle().bigText(preview))
                     .setCategory(Notification.CATEGORY_MESSAGE)
@@ -268,28 +280,28 @@ public final class ValaniumService extends Service {
                     .setAutoCancel(true)
                     .build();
             int id = 1000 + (event.optString("conversation").hashCode() & 0x3fffffff);
-            getSystemService(NotificationManager.class).notify(id, notification);
+            context.getSystemService(NotificationManager.class).notify(id, notification);
         } catch (Exception ignored) {
             // Повреждённое событие всё равно дойдёт до обычной обработки.
         }
     }
 
-    private String messagePreview(String body) {
+    private static String messagePreview(Context context,String body) {
         try {
             if (body != null && body.startsWith(CONTENT_PREFIX)) {
                 JSONObject content = new JSONObject(body.substring(CONTENT_PREFIX.length()));
                 switch (content.optString("type")) {
                     case "read": return null;
-                    case "image": return getString(R.string.preview_image);
-                    case "voice": return getString(R.string.preview_voice);
+                    case "image": return context.getString(R.string.preview_image);
+                    case "voice": return context.getString(R.string.preview_voice);
                     default:
                         String text = content.optString("text").trim();
-                        return text.isEmpty() ? getString(R.string.preview_message) : text;
+                        return text.isEmpty() ? context.getString(R.string.preview_message) : text;
                 }
             }
         } catch (Exception ignored) {
         }
         return body == null || body.trim().isEmpty()
-                ? getString(R.string.preview_message) : body.trim();
+                ? context.getString(R.string.preview_message) : body.trim();
     }
 }

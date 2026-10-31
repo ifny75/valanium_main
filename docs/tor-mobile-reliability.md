@@ -1,5 +1,8 @@
 # Mobile connection recovery and profile updates
 
+The follow-up implementation is described in [Tor delivery v2](tor-delivery-v2.md):
+entrance racing, queue priority, profile thumbnails, timings and scheduled background delivery.
+
 The Activity previously unregistered the only network callback in `onStop`.
 The foreground service could keep an obsolete WebSocket while the default
 network changed. Re-entering with `connect` reported the old session instead

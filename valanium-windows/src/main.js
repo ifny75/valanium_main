@@ -1,5 +1,8 @@
 import { createUpdater } from "./updater.js";
 import { wallpaperPhoto, prepareWallpaper } from "./wallpaper.js";
+import { avatarThumbnail } from "./avatar.js";
+let avatarThumbnailPending=false;
+let avatarEditGeneration=0;
 let wallpaperPhotoUrl = "";
 import { tr, trTemplate, getLanguage, getLocale, setLanguage } from "./i18n.js";
 /*
@@ -1884,6 +1887,10 @@ function peerOf(conversation) {
 
 const callChecks = new Map();
 const handlers = {
+  diagnostics(event) {
+    const labels={connection:tr("Подключение"),authentication:tr("Авторизация"),queue:tr("Очередь"),acknowledgement:tr("Подтверждение сервера")};
+    $("delivery-timings").textContent=Object.entries(event.report||{}).filter(([key,value])=>labels[key]&&value?.count).map(([key,v])=>`${labels[key]}: ${v.last_ms} ms · p50 ${v.p50_ms} · p95 ${v.p95_ms}`).join("\n")||tr("Замеров пока нет");
+  },
   status(event) {
     if (!event.has_identity) {
       showScreen(localStorage.getItem(ONBOARDING_COMPLETE) === "1" ? "screen-entry" : "screen-language");
@@ -2249,6 +2256,10 @@ const handlers = {
   profile(event) {
     state.profiles.set(event.device, event);
     if (event.device === state.device) {
+      if(!avatarThumbnailPending&&event.avatar_base64){
+        avatarThumbnailPending=true;const generation=avatarEditGeneration;
+        avatarThumbnail(event.avatar_mime,event.avatar_base64).then(data=>{if(data&&generation===avatarEditGeneration&&state.profiles.get(state.device)?.avatar_base64===event.avatar_base64)return submit({type:"profile_set",avatar_mime:"image/jpeg",avatar_base64:data});}).catch(()=>{}).finally(()=>{avatarThumbnailPending=false;});
+      }
       state.chatCode = event.chat_code;
       $("my-chat-code").textContent = event.chat_code;
       $("profile-chat-code").textContent = event.chat_code;
@@ -2664,6 +2675,7 @@ function loadPreferences() {
 }
 
 let preferences = loadPreferences();
+$("delivery-diagnostics").addEventListener("click",()=>submit({type:"diagnostics"}));
 function displayWallpaperPhoto(blob) {
   const previous=wallpaperPhotoUrl;
   wallpaperPhotoUrl=blob?URL.createObjectURL(blob):"";
@@ -3116,7 +3128,7 @@ const WORK_MAX_SIDE = 1600;
 /** Потолок base64 у фотографии в сообщении. */
 const PHOTO_MAX_BASE64 = 700000;
 /** У аватара свой потолок: сервер принимает не больше 256 КиБ после декода. */
-const AVATAR_MAX_BASE64 = 340000;
+const AVATAR_MAX_BASE64 = 80000;
 /** Минимальная сторона кадра: меньше уже не кадрирование, а промах. */
 const MIN_CROP = 48;
 
@@ -3227,8 +3239,9 @@ function positionCrop() {
 function renderPhoto(maxBase64, startQuality) {
   const crop = editor.crop;
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(crop.width));
-  canvas.height = Math.max(1, Math.round(crop.height));
+  const scale=Math.min(1,(editor.target === "avatar" || editor.target === "channel-icon" ? 384 : 1600)/Math.max(crop.width,crop.height));
+  canvas.width = Math.max(1, Math.round(crop.width*scale));
+  canvas.height = Math.max(1, Math.round(crop.height*scale));
 
   const ctx = canvas.getContext("2d", { alpha: false });
   ctx.fillStyle = "#000";
@@ -3475,6 +3488,7 @@ $("editor-send").addEventListener("click", async () => {
       return;
     }
     closeEditor();
+    avatarEditGeneration++;
     await submit({ type: "profile_set", avatar_mime: "image/jpeg", avatar_base64: data });
     toast(tr("Аватар загружается…"));
     return;

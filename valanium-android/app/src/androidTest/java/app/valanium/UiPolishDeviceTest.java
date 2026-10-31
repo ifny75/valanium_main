@@ -120,6 +120,15 @@ public final class UiPolishDeviceTest extends InstrumentationTestCase {
         assertEquals(Color.RED,output.getPixel(8,10));assertEquals(Color.YELLOW,output.getPixel(32,34));
         output.recycle();source.recycle();
     }
+    public void testAvatarExportUsesACompactThumbnail() throws Exception {
+        Activity activity=start();Bitmap source=Bitmap.createBitmap(1600,1000,Bitmap.Config.ARGB_8888);source.eraseColor(0xff397ba8);
+        try{
+            PhotoEditor editor=new PhotoEditor(activity,source,1f,80_000,384,(body,width,height)->{});
+            call(editor,"rebuildWork",new Class<?>[]{});call(editor,"resetCrop",new Class<?>[]{});
+            Object rendered=call(editor,"render",new Class<?>[]{});assertNotNull(rendered);
+            assertEquals(384,field(rendered,"width"));assertEquals(384,field(rendered,"height"));
+        }finally{getInstrumentation().runOnMainSync(activity::finish);}
+    }
     public void testLargePhotoCanRotateAgainWithoutRecyclingItsSource() throws Exception {
         Activity activity=start();
         Bitmap source=Bitmap.createBitmap(2048,1536,Bitmap.Config.ARGB_8888);
