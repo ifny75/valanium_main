@@ -41,6 +41,10 @@ pub enum CoreError {
     StoreLocked,
     #[error("store not initialised")]
     NoCredentials,
+    #[error("encrypted channel state is missing; reconnect to repair it")]
+    MissingGroup,
+    #[error("this profile is already open in another client")]
+    StoreInUse,
     #[error("storage failure")]
     Storage(#[from] rusqlite::Error),
     #[error("encoding failure")]

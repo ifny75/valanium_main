@@ -293,6 +293,7 @@ fn start_engine(app: &AppHandle, core: &Arc<Core>, password: Vec<u8>) -> Result<
     )
     .map_err(|err| match err {
         valanium_core::CoreError::StoreLocked => "неверный пароль".to_string(),
+        valanium_core::CoreError::StoreInUse => "Этот профиль уже открыт в другой копии Valanium. Закройте её и повторите.".to_string(),
         other => other.to_string(),
     })?;
     *slot = Some(engine);

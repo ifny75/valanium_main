@@ -358,11 +358,13 @@ impl Engine {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         let (tx, rx) = mpsc::unbounded_channel();
+        let ownership = crate::engine_lock::acquire(&db_path)?;
         let store = Store::open(&db_path, &password)?;
 
         let thread = std::thread::Builder::new()
             .name("valanium-core".into())
             .spawn(move || {
+                let _ownership = ownership;
                 let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                     Ok(runtime) => runtime,
                     Err(_) => {
@@ -997,6 +999,7 @@ async fn announce_presence(
         let Ok(key): std::result::Result<[u8; KEY_LEN], _> = raw.clone().try_into() else { continue };
         // Без заведённой беседы канала нет, а заводить её ради статуса незачем.
         let Ok(Some(group_id)) = store.conversation_with(&raw) else { continue };
+        if matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)){continue;}
 
         let waiting = PendingSend {
             device: key,
@@ -1059,6 +1062,38 @@ fn adopt_thread(store: &Store, device: &[u8], group_id: &[u8]) -> Result<Vec<u8>
     }
     store.set_thread(group_id, &thread)?;
     Ok(thread)
+}
+
+/// Changing a cryptographic group must keep the existing visible conversation,
+/// including peers whose identity announcement has never arrived.
+fn attach_channel(store: &Store, device: &[u8], group: &[u8]) -> Result<Vec<u8>> {
+    let previous=store.conversation_with(device)?.map(|old|store.thread_of(&old)).transpose()?;
+    store.set_conversation(device,group)?;
+    if let Some(thread)=previous {
+        if thread!=group {store.set_thread(group,&thread)?;}
+        return Ok(thread);
+    }
+    adopt_thread(store,device,group)
+}
+
+const CHANNEL_READY: &str = "\u{2063}VALCTL1:{\"channel_ready\":true}";
+
+/// Only a locally missing state triggers repair, never an unauthenticated
+/// network packet. The new KeyPackage must prove the same pinned device key.
+async fn repair_missing_channels(socket:&mut Socket,store:&Store,mls:&Mls,sink:&EventSink,
+    pending:&mut HashMap<[u8;ID_LEN],Claim>) -> Result<()> {
+    for (peer,group) in store.list_conversations()? {
+        if !matches!(mls.inspect(&group),Err(CoreError::MissingGroup)) {continue;}
+        let Ok(device)=<[u8;KEY_LEN]>::try_from(peer.as_slice()) else {continue};
+        if blocked(store,&hex::encode(device))||!pin_allows_or_reports(store,sink,&device)? {continue;}
+        if pending.values().any(|claim|matches!(claim,Claim::Start(waiting) if waiting.device==device)) {continue;}
+        let reference:[u8;ID_LEN]=random_bytes(ID_LEN).try_into().unwrap();
+        pending.insert(reference,Claim::Start(PendingSend{device,body:CHANNEL_READY.into(),stored:true}));
+        if let Err(error)=send(socket,proto::keypkg_claim_frame(&reference,&device)).await {
+            pending.remove(&reference);return Err(error);
+        }
+    }
+    Ok(())
 }
 
 /// Сводит все беседы одной личности в одну нить.
@@ -1200,6 +1235,7 @@ async fn announce_devices(
 
     let mut sent_any = false;
     for (peer, group_id) in store.list_conversations()? {
+        if matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)){continue;}
         let device = hex::encode(&peer);
         if told.contains(&device) {
             continue;
@@ -1266,6 +1302,7 @@ async fn grant_missing(
         let Ok(key): std::result::Result<[u8; KEY_LEN], _> = raw.clone().try_into() else { continue };
         // Беседы нет — значит и канала нет. Выдадим, когда она появится.
         let Ok(Some(group_id)) = store.conversation_with(&raw) else { continue };
+        if matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)){continue;}
 
         let (pass, hash) = crate::access::new_pass();
         send(socket, proto::pass_create_frame(&hash, false, 0)?).await?;
@@ -1304,6 +1341,7 @@ async fn grant_missing(
                 continue;
             };
             let Ok(Some(group_id)) = store.conversation_with(&raw) else { continue };
+        if matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)){continue;}
 
             let waiting = PendingSend {
                 device: peer,
@@ -1533,6 +1571,7 @@ async fn rekey_stale(
 
     let mut changed = false;
     for (_peer, group_id) in store.list_conversations()? {
+        if matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)){continue;}
         let key = hex::encode(&group_id);
         let last = done.get(&key).copied();
 
@@ -2460,6 +2499,7 @@ async fn pump(
     let mut lookup_queue: VecDeque<(String, [u8; 32], [u8; 32])> = VecDeque::new();
 
     if authenticated {
+        repair_missing_channels(&mut socket,store,mls,sink,&mut pending).await?;
         // Докладываем ровно недостающее. Раньше полная пачка уходила на каждый
         // вход: пакеты копились, упирались в потолок хранилища, и сервер начинал
         // рвать соединение на каждом подключении — связь не жила дольше одного
@@ -3326,6 +3366,7 @@ async fn pump(
                 flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
             }
             _ = ticker.tick() => {
+                if authenticated { repair_missing_channels(&mut socket,store,mls,sink,&mut pending).await?; }
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
                 if authenticated {
                     flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
@@ -3566,9 +3607,11 @@ async fn on_envelope(
             }
             remember_stranger(store, sink, &device, "написал первым");
 
-            store.set_conversation(&peer_device, &group_id)?;
-            let thread = adopt_thread(store, &peer_device, &group_id)?;
-            persist(store, mls, sink);
+            let thread = store.atomic(|| {
+                let thread=attach_channel(store,&peer_device,&group_id)?;
+                store.save_mls(&mls.signer_public(),&mls.snapshot())?;
+                Ok(thread)
+            })?;
             check_membership(mls, store, &group_id, sink);
             sink(Event::ConversationStarted {
                 peer_device: device,
@@ -3585,6 +3628,7 @@ async fn on_envelope(
                 // Заблокированный не попадает ни в базу, ни на экран. Проверка
                 // стоит здесь, а не в интерфейсе, именно поэтому: спрятать
                 // сообщение мало, его не должно быть на диске.
+                store.save_mls(&mls.signer_public(),&mls.snapshot())?;
                 return send(socket, proto::ack_frame(&envelope.id)).await;
             }
             let text = String::from_utf8_lossy(&plaintext);
@@ -3708,6 +3752,9 @@ async fn on_envelope(
                     }
                     None => {}
                 }
+                // Control frames advance the receive ratchet too. ACK only
+                // after that state is durable, including unknown extensions.
+                store.save_mls(&mls.signer_public(),&mls.snapshot())?;
                 return send(socket, proto::ack_frame(&envelope.id)).await;
             }
             // В канале пишет только владелец. Это соглашение клиентов, а не
@@ -4012,9 +4059,11 @@ async fn on_key_package(
             return Ok(());
         }
     };
-    store.set_conversation(&waiting.device, &group_id)?;
-    let thread = adopt_thread(store, &waiting.device, &group_id)?;
-    persist(store, mls, sink);
+    let thread=store.atomic(|| {
+        let thread=attach_channel(store,&waiting.device,&group_id)?;
+        store.save_mls(&mls.signer_public(),&mls.snapshot())?;
+        Ok(thread)
+    })?;
     // Отправитель узнаёт идентификатор беседы тем же событием, что и
     // получатель: интерфейсу иначе некуда класть исходящие сообщения.
     sink(Event::ConversationStarted {
@@ -4150,10 +4199,10 @@ async fn deliver(
         return Ok(());
     }
     match store.conversation_with(&waiting.device)? {
-        Some(group_id) => {
+        Some(group_id) if !matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)) => {
             encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed).await
         }
-        None => {
+        _ => {
             // Беседы ещё нет: просим KeyPackage и досылаем сообщение по ответу.
             // Билет здесь никак не поможет — сообщение уйдёт уже потом, из
             // on_key_package, своим отдельным заходом за sealed sender.
@@ -4597,6 +4646,72 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_engine_can_write_a_profile_and_shutdown_releases_it() {
+        let directory=std::env::temp_dir().join(format!("valanium-one-writer-{}",std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();let path=directory.join("account.db").to_string_lossy().into_owned();
+        let sink:EventSink=Arc::new(|_|{});
+        let first=Engine::start(path.clone(),b"test-only".to_vec(),sink.clone()).unwrap();
+        assert!(matches!(Engine::start(path.clone(),b"test-only".to_vec(),sink.clone()),Err(CoreError::StoreInUse)));
+        first.shutdown();
+        Engine::start(path,b"test-only".to_vec(),sink).unwrap().shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_missing_channel_is_repaired_without_losing_history_or_the_other_group() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=TempStore::new("missing-channel");
+        let (credentials,_old,mut bob,device,old_group)=established_pair(&store.0);
+        store.0.insert_message(&[91;ID_LEN],&old_group,true,1,b"saved history").unwrap();
+        let mut lost=Mls::create(&credentials.device).unwrap();
+        let other_key=keys::SecretKey::generate();let other=Mls::create(&other_key).unwrap();
+        let other_package=other.key_packages(1).unwrap().remove(0);
+        let (healthy_group,_)=lost.start_conversation(&other_package,&other_key.public()).unwrap();
+        store.0.set_conversation(&other_key.public(),&healthy_group).unwrap();
+        store.0.save_mls(&lost.signer_public(),&lost.snapshot()).unwrap();
+        let (pipe,peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let mut socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let mut observer=WebSocketStream::from_raw_socket(peer,Role::Server,None).await;
+        let sink:EventSink=Arc::new(|_|{});let mut pending=HashMap::new();
+        repair_missing_channels(&mut socket,&store.0,&lost,&sink,&mut pending).await.unwrap();
+        assert_eq!(pending.len(),1);
+        repair_missing_channels(&mut socket,&store.0,&lost,&sink,&mut pending).await.unwrap();assert_eq!(pending.len(),1);
+        let request=observer.next().await.unwrap().unwrap().into_data();assert_eq!(request[0],op::KEYPKG_CLAIM);
+        let reference=*pending.keys().next().unwrap();let package=bob.key_packages(1).unwrap().remove(0);
+        let mut response=reference.to_vec();response.push(1);response.extend_from_slice(&package);
+        on_key_package(&mut socket,&response,&store.0,&mut lost,&sink,&mut pending,&mut Vec::new(),Some(SealedSenderCtx{required:true})).await.unwrap();
+        let repaired=store.0.conversation_with(&device).unwrap().unwrap();assert_ne!(repaired,old_group);
+        assert_eq!(store.0.thread_of(&repaired).unwrap(),old_group);
+        assert_eq!(store.0.list_messages(&old_group,100,None).unwrap()[0].body,b"saved history");
+        assert!(lost.inspect(&healthy_group).is_ok());
+        let queue=crate::anon_queue::load(&store.0).unwrap();assert_eq!(queue.len(),2);
+        assert!(matches!(bob.process(&queue[0].ciphertext).unwrap(),Incoming::Joined{..}));
+        assert!(matches!(bob.process(&queue[1].ciphertext).unwrap(),Incoming::Message{..}));
+        let reply=bob.encrypt(&repaired,b"phone to desktop after repair",&credentials.device_pub()).unwrap();
+        let mut restored=load_or_create_mls(&store.0,&credentials).unwrap();
+        assert!(matches!(restored.process(&reply).unwrap(),Incoming::Message{plaintext,..} if plaintext==b"phone to desktop after repair"));
+        assert!(restored.inspect(&healthy_group).is_ok());
+    }
+
+    #[tokio::test]
+    async fn acknowledged_controls_save_the_receive_ratchet_before_restart() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=TempStore::new("durable-control");
+        let (credentials,mut alice,mut bob,_device,group)=established_pair(&store.0);
+        let original=store.0.load_mls().unwrap().unwrap().1;
+        let ciphertext=bob.encrypt(&group,CHANNEL_READY.as_bytes(),&credentials.device_pub()).unwrap();
+        let (pipe,_peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let mut socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let sink:EventSink=Arc::new(|_|{});
+        let mut envelope=vec![82;ID_LEN];envelope.extend_from_slice(&1u64.to_be_bytes());envelope.extend_from_slice(&ciphertext);
+        on_envelope(&mut socket,&envelope,&store.0,&mut alice,&sink,&mut crate::calls::Pending::default()).await.unwrap();
+        let saved=store.0.load_mls().unwrap().unwrap().1;assert_ne!(saved,original);
+        let reply=bob.encrypt(&group,b"after restart",&credentials.device_pub()).unwrap();
+        let mut restored=load_or_create_mls(&store.0,&credentials).unwrap();
+        assert!(matches!(restored.process(&reply).unwrap(),Incoming::Message{plaintext,..} if plaintext==b"after restart"));
+        assert!(store.0.list_messages(&group,100,None).unwrap().is_empty());
+    }
 
     #[tokio::test(start_paused = true)]
     async fn silent_open_socket_is_reconnected_instead_of_staying_online() {

@@ -137,11 +137,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bob = Client::start(&dir.join("bob.db"), resume)?;
     alice.command(json!({"type":"directory_set","device":bob.device,"standing":"approved"}));
     bob.command(json!({"type":"directory_set","device":alice.device,"standing":"approved"}));
+    let baseline = if args.iter().any(|v|v=="--repair-missing") {
+        let store=valanium_core::store::Store::open(dir.join("alice.db").to_str().unwrap(),b"disposable-qa-only")?;
+        Some(store.load_mls()?.ok_or("Missing test snapshot")?)
+    } else {None};
     let run = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis();
     exchange(&alice, &bob, &format!("first-contact-{run}"))?;
     exchange(&bob, &alice, &format!("reply-{run}"))?;
+    if let Some((public,snapshot))=baseline {
+        alice.engine.take().unwrap().shutdown();
+        {
+            let store=valanium_core::store::Store::open(dir.join("alice.db").to_str().unwrap(),b"disposable-qa-only")?;
+            store.save_mls(&public,&snapshot)?;
+        }
+        alice=Client::start(&dir.join("alice.db"),true)?;
+        bob.wait(|e|e["type"]=="conversation_started" && e["peer_device"]==alice.device)?;
+        exchange(&bob,&alice,&format!("repaired-phone-to-pc-{run}"))?;
+        exchange(&alice,&bob,&format!("repaired-pc-to-phone-{run}"))?;
+        println!("Missing desktop channel repaired after restart; bidirectional delivery verified");
+    }
     if args.iter().any(|v| v == "--maximum-privacy") {
         for client in [&alice, &bob] {
             client.command(json!({"type":"privacy_maximize"}));

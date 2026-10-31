@@ -463,7 +463,7 @@ impl Mls {
     fn load(&self, group_id: &[u8]) -> Result<MlsGroup> {
         let mut group = MlsGroup::load(self.provider.storage(), &GroupId::from_slice(group_id))
             .map_err(|_| CoreError::Mls("mls load group".into()))?
-            .ok_or(CoreError::NoCredentials)?;
+            .ok_or(CoreError::MissingGroup)?;
 
         // Беседы, заведённые до добивки, донастраиваются на месте. Иначе она
         // появилась бы только в новых, а защищать надо в первую очередь те, в
