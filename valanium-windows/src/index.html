@@ -531,7 +531,9 @@
               <button data-wallpaper="grid" type="button" aria-label="Сетка"><i></i><span>Сетка</span></button>
               <button data-wallpaper="dots" type="button" aria-label="Точки"><i></i><span>Точки</span></button>
               <button data-wallpaper="rays" type="button" aria-label="Лучи"><i></i><span>Лучи</span></button>
+              <button id="wallpaper-custom" data-wallpaper="custom" type="button" class="hidden"><i id="wallpaper-custom-preview"></i><span>Свое фото</span></button>
             </div>
+            <div class="setting-actions"><button id="wallpaper-upload" class="ghost-button" type="button">Загрузить фото</button><button id="wallpaper-remove" type="button" class="ghost-button hidden">Удалить фото</button><input id="wallpaper-file" type="file" accept="image/jpeg,image/png,image/webp" hidden /></div>
           </div>
           <label class="setting-range"><span><b>Насыщенность обоев</b></span><input id="wallpaper-range" type="range" min="10" max="100" value="45" /><output id="wallpaper-value">45%</output></label>
         </div>

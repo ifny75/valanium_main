@@ -1,4 +1,9 @@
 export default {
+  "Удалить фото": "Remove photo",
+  "Не удалось загрузить обои": "Could not load wallpaper",
+  "Свое фото": "My photo",
+  "Загрузить фото": "Upload photo",
+
   "Кто может вам написать. Сервер не ставит конверты посторонних в очередь. Перед ограничением входящих дождитесь обмена пропусками: оба устройства должны быть подключены.": "Choose who can contact you. The server does not queue messages from others. Before restricting incoming messages, keep both devices connected until they have exchanged contact passes.",
   "Копировать": "Copy",
   "Язык": "Language",

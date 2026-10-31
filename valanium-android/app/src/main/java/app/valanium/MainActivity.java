@@ -299,6 +299,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
     private static final int AVATAR_PICK_REQUEST = 1002;
     private static final int PHOTO_PICK_REQUEST = 1003;
+    private static final int WALLPAPER_PICK_REQUEST = 1004;
+    private Bitmap customWallpaperBitmap;
+    private View chatWallpaperLayer;
+    private Button customWallpaperSelect, customWallpaperRemove;
     private static final int MICROPHONE_PERMISSION_REQUEST = 1004;
     private static final int VERIFICATION_IMAGE_REQUEST = 1005;
     private String verificationImagePeer;
@@ -729,6 +733,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             Insets ime = windowInsets.getInsets(WindowInsets.Type.ime());
             view.setPadding(dp(16), bars.top, dp(16),
                     Math.max(bars.bottom, ime.bottom) + dp(8));
+            layoutChatWallpaper();
             layoutStatusBarPanel(view, bars.top);
             view.post(this::layoutTopBars);
             if (ime.bottom > 0 && screenConversation.getVisibility() == View.VISIBLE) {
@@ -1511,6 +1516,31 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void wireWallpaper() {
+        LinearLayout grid=findViewById(R.id.wallpaper_grid);
+        LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
+        customWallpaperSelect=new Button(this);customWallpaperSelect.setText(I18n.t("Свое фото"));
+        customWallpaperSelect.setOnClickListener(v->{
+            if(customWallpaperBitmap==null){chooseSystemImage(WALLPAPER_PICK_REQUEST);return;}
+            appearancePreferences.edit().putString("wallpaper","custom").apply();applyWallpaper();
+        });
+        Button upload=new Button(this);upload.setText(I18n.t("Загрузить фото"));
+        upload.setOnClickListener(v->chooseSystemImage(WALLPAPER_PICK_REQUEST));
+        customWallpaperRemove=new Button(this);customWallpaperRemove.setText(I18n.t("Удалить фото"));
+        customWallpaperRemove.setOnClickListener(v->{
+            if(customWallpaperFile().exists()&&!customWallpaperFile().delete()){toast(I18n.t("Не удалось загрузить обои"));return;}
+            customWallpaperBitmap=null;
+            if("custom".equals(wallpaperName()))appearancePreferences.edit().putString("wallpaper","none").apply();
+            applyWallpaper();
+        });
+        for(Button button:new Button[]{customWallpaperSelect,upload,customWallpaperRemove}){
+            button.setTextSize(11);button.setAllCaps(false);button.setPadding(dp(6),dp(2),dp(6),dp(2));
+            actions.addView(button,new LinearLayout.LayoutParams(0,dp(48),1));
+        }
+        LinearLayout parent=(LinearLayout)grid.getParent();parent.addView(actions,parent.indexOfChild(grid)+1);
+        if(customWallpaperFile().isFile())new Thread(()->{
+            Bitmap image=BitmapFactory.decodeFile(customWallpaperFile().getAbsolutePath());
+            runOnUiThread(()->{customWallpaperBitmap=image;applyWallpaper();});
+        },"valanium-wallpaper-load").start();
         SeekBar intensity = findViewById(R.id.wallpaper_intensity);
         intensity.setProgress(wallpaperIntensity());
         intensity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -1578,7 +1608,21 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Кладёт обои под ленту сообщений. */
     private void applyWallpaper() {
-        View host = findViewById(R.id.messages_scroll);
+        android.widget.FrameLayout root=findViewById(R.id.app_root);
+        if(chatWallpaperLayer==null&&root!=null){
+            chatWallpaperLayer=new View(this);chatWallpaperLayer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            root.addView(chatWallpaperLayer,0,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            chatWallpaperLayer.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
+                v.setTranslationX(-l);v.setTranslationY(-t);
+            });
+            root.setClipToPadding(false);
+            root.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->layoutChatWallpaper());
+        }
+        View host = chatWallpaperLayer;
+        View messages=findViewById(R.id.messages_scroll);
+        if(messages!=null)messages.setBackground(null);
+        View conversation=findViewById(R.id.screen_conversation);
+        if(conversation!=null)conversation.setBackground(null);
         if (host != null) {
             Drawable pattern = wallpaperPattern(wallpaperName(),
                     getResources().getDisplayMetrics().widthPixels);
@@ -1586,8 +1630,41 @@ public final class MainActivity extends Activity implements Events.Listener {
                 pattern.setAlpha(Math.round(wallpaperIntensity() * 255 / 100f));
             }
             host.setBackground(pattern);
+            host.setVisibility(currentScreen==screenConversation?View.VISIBLE:View.GONE);
+            root.post(this::layoutChatWallpaper);
         }
         renderWallpaperGrid();
+        if(customWallpaperSelect!=null){
+            customWallpaperSelect.setVisibility(customWallpaperBitmap==null?View.GONE:View.VISIBLE);
+            customWallpaperSelect.setSelected("custom".equals(wallpaperName()));
+            customWallpaperRemove.setVisibility(customWallpaperBitmap==null?View.GONE:View.VISIBLE);
+        }
+    }
+
+    private void layoutChatWallpaper(){
+        View root=findViewById(R.id.app_root);
+        if(chatWallpaperLayer==null||root==null||root.getWidth()==0)return;
+        ViewGroup.LayoutParams params=chatWallpaperLayer.getLayoutParams();
+        if(params.width!=root.getWidth()||params.height!=root.getHeight()){
+            params.width=root.getWidth();params.height=root.getHeight();chatWallpaperLayer.setLayoutParams(params);
+        }
+        chatWallpaperLayer.setTranslationX(-chatWallpaperLayer.getLeft());
+        chatWallpaperLayer.setTranslationY(-chatWallpaperLayer.getTop());
+    }
+
+    private File customWallpaperFile(){return new File(getFilesDir(),"chat-wallpaper.jpg");}
+
+    private void saveCustomWallpaper(Bitmap image) throws IOException {
+        android.util.AtomicFile file=new android.util.AtomicFile(customWallpaperFile());
+        java.io.FileOutputStream output=file.startWrite();
+        try {
+            if(!image.compress(Bitmap.CompressFormat.JPEG,85,output))throw new IOException("Wallpaper encoding failed");
+            file.finishWrite(output);
+        } catch(Exception error){file.failWrite(output);throw new IOException(error);}
+        runOnUiThread(()->{
+            customWallpaperBitmap=image;
+            appearancePreferences.edit().putString("wallpaper","custom").apply();applyWallpaper();
+        });
     }
 
     /**
@@ -1599,16 +1676,22 @@ public final class MainActivity extends Activity implements Events.Listener {
     private Drawable wallpaperPattern(String name, int base) {
         int accent = accentColor();
         switch (name) {
+            case "custom":
+                return customWallpaperBitmap==null?null:new AvatarDrawable(customWallpaperBitmap,0);
             case "aurora":
                 return new LayerDrawable(new Drawable[]{
                         glow(accent, base, 0.12f, 0f, 0.40f, 1.5f),
                         glow(accent, base, 0.88f, 1f, 0.26f, 1.4f),
+                        glow(accent, base, 1f, 0f, 0.18f, 1.5f),
+                        glow(accent, base, 0f, 1f, 0.18f, 1.5f),
                 });
             case "mesh":
                 return new LayerDrawable(new Drawable[]{
                         glow(accent, base, 0.22f, 0.28f, 0.34f, 0.9f),
                         glow(accent, base, 0.78f, 0.72f, 0.24f, 0.85f),
                         glow(accent, base, 0.55f, 0.12f, 0.18f, 0.75f),
+                        glow(accent, base, 0f, 1f, 0.14f, 1.6f),
+                        glow(accent, base, 1f, 0f, 0.14f, 1.6f),
                 });
             case "grid":
             case "dots":
@@ -1964,7 +2047,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             autoOpenDatabase();
             return;
         }
-        if ((requestCode != AVATAR_PICK_REQUEST && requestCode != PHOTO_PICK_REQUEST)
+        if ((requestCode != AVATAR_PICK_REQUEST && requestCode != PHOTO_PICK_REQUEST && requestCode != WALLPAPER_PICK_REQUEST)
                 || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         final boolean avatar = requestCode == AVATAR_PICK_REQUEST;
         // Декодирование — в фоне: большой снимок иначе подвешивает интерфейс.
@@ -1986,7 +2069,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 }catch(IOException ignored){}
                 final Bitmap source=Bitmap.createBitmap(decoded,0,0,decoded.getWidth(),decoded.getHeight(),orientation,true);
                 if(source!=decoded)decoded.recycle();
-                runOnUiThread(() -> openEditor(source, avatar));
+                if(requestCode==WALLPAPER_PICK_REQUEST)saveCustomWallpaper(source);
+                else runOnUiThread(() -> openEditor(source, avatar));
             } catch (Exception error) {
                 runOnUiThread(() -> toast(I18n.t("Не удалось прочитать изображение")));
             }
@@ -3580,6 +3664,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void show(View screen) {
         currentScreen = screen;
+        if(chatWallpaperLayer!=null)chatWallpaperLayer.setVisibility(screen==screenConversation?View.VISIBLE:View.GONE);
         if (screen == screenConversation) composer.requestFocus();
         updateSystemTopSurface();
         if (tabBar != null) updateTabBar(screen);

@@ -272,6 +272,22 @@ body[data-wallpaper="dots"]{--wallpaper-image:
 body[data-wallpaper="rays"]{--wallpaper-image:
   repeating-linear-gradient(115deg,color-mix(in srgb,var(--accent) 15%,transparent) 0 8px,transparent 8px 30px)}
 
+/* Cover every corner of the chat, including wide and portrait windows. */
+body[data-wallpaper="custom"]{--wallpaper-image:var(--custom-wallpaper-image,none)}
+body:not([data-wallpaper="none"]) #screen-main .chat-panel::before{display:block}
+body[data-wallpaper="custom"] .chat-panel::before{background-size:cover;background-position:center;background-repeat:no-repeat}
+#wallpaper-custom-preview{background-size:cover;background-position:center}
+#wallpaper-grid{grid-template-columns:repeat(auto-fit,minmax(58px,1fr))}
+body[data-wallpaper="aurora"]{--wallpaper-image:
+  radial-gradient(ellipse at top left,color-mix(in srgb,var(--accent) 36%,transparent),transparent 75%),
+  radial-gradient(ellipse at bottom right,color-mix(in srgb,var(--accent) 30%,transparent),transparent 75%),
+  radial-gradient(ellipse at top right,color-mix(in srgb,var(--accent) 16%,transparent),transparent 80%),
+  radial-gradient(ellipse at bottom left,color-mix(in srgb,var(--accent) 16%,transparent),transparent 80%)}
+body[data-wallpaper="mesh"]{--wallpaper-image:
+  radial-gradient(ellipse at 20% 20%,color-mix(in srgb,var(--accent) 30%,transparent),transparent 85%),
+  radial-gradient(ellipse at 80% 80%,color-mix(in srgb,var(--accent) 24%,transparent),transparent 85%),
+  linear-gradient(135deg,color-mix(in srgb,var(--accent) 10%,transparent),color-mix(in srgb,var(--accent) 5%,transparent))}
+
 .storage-report{margin:11px 0 0;color:var(--text);font-size:11.5px;line-height:1.7;white-space:pre-line}
 /* Предупреждение о файле переноса. Полоса, а не мелкий текст: этот файл — весь аккаунт, и прочитать это должны раньше, чем нажмут кнопку. */
 /* Значок с пояснением у карточки маршрута.

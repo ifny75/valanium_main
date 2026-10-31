@@ -1,4 +1,6 @@
 import { createUpdater } from "./updater.js";
+import { wallpaperPhoto, prepareWallpaper } from "./wallpaper.js";
+let wallpaperPhotoUrl = "";
 import { tr, trTemplate, getLanguage, getLocale, setLanguage } from "./i18n.js";
 /*
   Адреса onion-входов здесь нет намеренно.
@@ -2662,6 +2664,30 @@ function loadPreferences() {
 }
 
 let preferences = loadPreferences();
+function displayWallpaperPhoto(blob) {
+  const previous=wallpaperPhotoUrl;
+  wallpaperPhotoUrl=blob?URL.createObjectURL(blob):"";
+  document.documentElement.style.setProperty("--custom-wallpaper-image",blob?`url("${wallpaperPhotoUrl}")`:"none");
+  $("wallpaper-custom").classList.toggle("hidden",!blob);
+  $("wallpaper-remove").classList.toggle("hidden",!blob);
+  $("wallpaper-custom-preview").style.backgroundImage=blob?`url("${wallpaperPhotoUrl}")`:"none";
+  if(previous)URL.revokeObjectURL(previous);
+}
+wallpaperPhoto().then(blob=>{displayWallpaperPhoto(blob);}).catch(()=>toast(tr("Не удалось загрузить обои")));
+$("wallpaper-upload").addEventListener("click",()=>$("wallpaper-file").click());
+$("wallpaper-file").addEventListener("change",async()=>{
+  const file=$("wallpaper-file").files?.[0];$("wallpaper-file").value="";if(!file)return;
+  $("wallpaper-upload").disabled=true;
+  try {
+    const photo=await prepareWallpaper(file);await wallpaperPhoto(photo);displayWallpaperPhoto(photo);
+    preferences.wallpaper="custom";savePreferences();applyPreferences();
+  } catch {toast(tr("Не удалось загрузить обои"));}
+  finally {$("wallpaper-upload").disabled=false;}
+});
+$("wallpaper-remove").addEventListener("click",async()=>{
+  try {await wallpaperPhoto(null);displayWallpaperPhoto(null);if(preferences.wallpaper==="custom")preferences.wallpaper="none";savePreferences();applyPreferences();}
+  catch {toast(tr("Не удалось загрузить обои"));}
+});
 
 function savePreferences() {
   localStorage.setItem("valanium.preferences", JSON.stringify(preferences));
