@@ -78,6 +78,16 @@ public final class UiPolishDeviceTest extends InstrumentationTestCase {
                 view.dispatchTouchEvent(up);up.recycle();
                 RectF after=(RectF)call(view,"cropOnScreen",new Class<?>[]{});
                 assertEquals("Dragging a zoomed photo keeps the crop frame fixed",screen.left,after.left,1f);
+                for(float[] step:new float[][]{{4,0,0},{2,view.getWidth(),view.getHeight()},
+                        {5,0,view.getHeight()},{1,view.getWidth(),0}}){
+                    RectF beforeZoom=new RectF((RectF)call(view,"cropOnScreen",new Class<?>[]{}));
+                    call(view,"zoomTo",new Class<?>[]{float.class,float.class,float.class},step[0],step[1],step[2]);
+                    RectF afterZoom=(RectF)call(view,"cropOnScreen",new Class<?>[]{});
+                    assertEquals("Pinching at an edge keeps the frame fixed",beforeZoom.left,afterZoom.left,1f);
+                    assertEquals(beforeZoom.top,afterZoom.top,1f);
+                    assertEquals(beforeZoom.right,afterZoom.right,1f);
+                    assertEquals(beforeZoom.bottom,afterZoom.bottom,1f);
+                }
                 crop=(RectF)field(editor,"crop");assertTrue(crop.left>=0&&crop.top>=0&&crop.right<=800&&crop.bottom<=600);
                 Object rendered=call(editor,"render",new Class<?>[]{});assertNotNull(rendered);
                 assertEquals(field(rendered,"width"),field(rendered,"height"));
@@ -94,6 +104,21 @@ public final class UiPolishDeviceTest extends InstrumentationTestCase {
         Thread.sleep(300);Bitmap screenshot=getInstrumentation().getUiAutomation().takeScreenshot();
         try(FileOutputStream output=new FileOutputStream(new File(activity.getExternalFilesDir(null),"photo-polish-qa.png"))){screenshot.compress(Bitmap.CompressFormat.PNG,100,output);}screenshot.recycle();
         getInstrumentation().runOnMainSync(activity::finish);
+    }
+    public void testSmallAvatarScalesAcrossItsWholeBounds() {
+        Bitmap source=Bitmap.createBitmap(2,2,Bitmap.Config.ARGB_8888);
+        source.setPixel(0,0,Color.RED);source.setPixel(1,0,Color.GREEN);
+        source.setPixel(0,1,Color.BLUE);source.setPixel(1,1,Color.YELLOW);
+        AvatarDrawable avatar=new AvatarDrawable(source,0);
+        Bitmap output=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(output);avatar.setBounds(0,0,64,64);avatar.draw(canvas);
+        assertEquals(Color.RED,output.getPixel(8,8));assertEquals(Color.GREEN,output.getPixel(56,8));
+        assertEquals(Color.BLUE,output.getPixel(8,56));assertEquals(Color.YELLOW,output.getPixel(56,56));
+        canvas.drawColor(Color.TRANSPARENT,android.graphics.PorterDuff.Mode.CLEAR);
+        avatar.setBounds(4,6,36,38);avatar.draw(canvas);
+        assertEquals(Color.TRANSPARENT,output.getPixel(0,0));
+        assertEquals(Color.RED,output.getPixel(8,10));assertEquals(Color.YELLOW,output.getPixel(32,34));
+        output.recycle();source.recycle();
     }
     public void testLargePhotoCanRotateAgainWithoutRecyclingItsSource() throws Exception {
         Activity activity=start();

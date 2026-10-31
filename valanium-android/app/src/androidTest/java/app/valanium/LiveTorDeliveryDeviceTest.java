@@ -64,6 +64,13 @@ public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
             alice.send(new JSONObject().put("type","directory_set").put("device",bob.device).put("standing","approved"));
             bob.send(new JSONObject().put("type","directory_set").put("device",alice.device).put("standing","approved"));
             exchange(alice,bob,"phone-first");exchange(bob,alice,"phone-reply");
+            alice.send(new JSONObject().put("type","privacy_set").put("privacy",new JSONObject()
+                .put("profile_avatar",new JSONObject().put("scope","approved").put("allow",new org.json.JSONArray()).put("deny",new org.json.JSONArray()))));
+            String image="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=";
+            alice.send(new JSONObject().put("type","profile_set").put("avatar_mime","image/png").put("avatar_base64",image));
+            alice.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&image.equals(e.optString("avatar_base64")));
+            bob.send(new JSONObject().put("type","profile_get").put("query",alice.device));
+            bob.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&image.equals(e.optString("avatar_base64")));
             alice.send(new JSONObject().put("type","call_probe").put("recipient_device",bob.device));
             assertEquals(bob.device,alice.waitFor(e->"call_status".equals(e.optString("type"))&&"media_unavailable".equals(e.optString("status"))).getString("peer_device"));
             alice.send(new JSONObject().put("type","profile_get").put("query",bob.device));
