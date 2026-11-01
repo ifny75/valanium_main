@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 import type { Metadata } from 'next';
+import './articles/opsec/opsec.css';
 import { DynamicHeader } from './components/dynamic-header';
 import { SupportDialog } from './components/support-dialog';
 import { SERVICES, MESSENGER_LOGO } from './services';
@@ -184,6 +185,7 @@ export default function Home() {
       </section>
 
       <section className="apps-home shell" id="apps"><div><span className="section-eyebrow"><i /> Приложения Valanium</span><h2>Для повседневных задач.</h2><p>Gallery и Calculator: чистый интерфейс, открытый код и APK с нашего сервера.</p></div><a className="stage-button stage-button-primary" href="/apps">Все приложения ↗</a></section>
+      <section className="opsec-home shell"><div><span className="section-eyebrow"><i /> Библиотека Valanium</span><h2>Приватность начинается с привычек.</h2><p>Практическое руководство по OPSEC: аккаунты, цифровой след, метаданные, ОС и почта. Читайте на сайте или сохраните PDF.</p></div><a className="stage-button" href="/articles/opsec">Читать руководство <ButtonArrow /></a></section>
       <section className="donation-home shell"><div><h2>Помогите поддерживать Valanium</h2><p>На поддержку серверов и развитие приложений можно прислать донат. Любая сумма помогает сохранять проект независимым.</p></div><SupportDialog variant="header" /></section>
 
       <section className="hub-closing shell">
@@ -211,6 +213,7 @@ export default function Home() {
       <footer className="site-footer shell">
         <span>© 2026 Valanium · AGPL-3.0</span>
         <nav aria-label="Служебные ссылки">
+          <a href="/articles/opsec">Руководство по OPSEC</a>
           <a href="/status">Статус сети</a>
           <a href="/privacy">Политика конфиденциальности</a>
           <a href="/terms">Соглашение</a>
