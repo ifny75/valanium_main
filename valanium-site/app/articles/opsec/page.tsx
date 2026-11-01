@@ -6,7 +6,7 @@ import { ButtonArrow } from '../../components/animated-heading';
 import sections from './content.json';
 import './opsec.css';
 
-const pdf = '/guides/opsec-internet-security-v2.pdf';
+const pdf = '/api/guides/opsec';
 const title = 'OPSEC и безопасность в интернете';
 export const metadata: Metadata = {
   title,
@@ -34,7 +34,7 @@ export default function OpsecArticle() {
       <div className="opsec-meta"><span>Практическое руководство</span><span>32 страницы</span><time dateTime="2026-11-01">01.11.2026</time><span>На русском</span></div>
       <div className="opsec-actions">
         <a className="stage-button stage-button-primary" href="#contents">Читать руководство <ButtonArrow /></a>
-        <a className="stage-button" href={pdf} download="OPSEC_Internet_Security_Guide_v2.pdf">Скачать PDF ↓</a>
+        <a className="stage-button" href={`${pdf}?download=1`} download="OPSEC_Internet_Security_Guide_v2.pdf">Скачать PDF ↓</a>
       </div>
       <p className="opsec-file-note">Оригинальный документ · PDF · 32 страницы</p>
       <div className="opsec-orbit" aria-hidden="true"><i /><i /><i /><span>МЕНЬШЕ<br />ЦИФРОВОГО<br /><em>СЛЕДА.</em></span></div>
@@ -48,7 +48,7 @@ export default function OpsecArticle() {
             <span>{String(i + 1).padStart(2, '0')}</span>{section.title}
           </a>)}</nav>
         </details>
-        <a className="opsec-aside-download" href={pdf} download="OPSEC_Internet_Security_Guide_v2.pdf">Скачать руководство ↓</a>
+        <a className="opsec-aside-download" href={`${pdf}?download=1`} download="OPSEC_Internet_Security_Guide_v2.pdf">Скачать руководство ↓</a>
       </aside>
       <article className="opsec-article" data-no-translate lang="ru">
         <div className="opsec-intro"><span>СНАЧАЛА — МОДЕЛЬ УГРОЗ</span><p>Защита строится на привычках, а не на одной программе.</p><small>Веб-версия предоставленного руководства от 01.11.2026, включая дополнение об операционных системах и почте. Содержание и ссылки сохранены; оригинальное оформление доступно в PDF.</small></div>
@@ -65,7 +65,7 @@ export default function OpsecArticle() {
               : /^(?:exiftool |mat2 )/.test(block.text ?? '') ? <pre key={bi}><code>{block.text}</code></pre>
               : <p className={block.text?.startsWith('•') ? 'opsec-bullet' : undefined} key={bi}>{linked(block.text ?? '')}</p>)}
         </section>)}
-        <div className="opsec-end"><h2>Сохраните под рукой.</h2><p>Полное руководство в исходном оформлении — для чтения без подключения к сети.</p><a className="stage-button stage-button-primary" href={pdf} download="OPSEC_Internet_Security_Guide_v2.pdf">Скачать PDF ↓</a></div>
+        <div className="opsec-end"><h2>Сохраните под рукой.</h2><p>Полное руководство в исходном оформлении — для чтения без подключения к сети.</p><a className="stage-button stage-button-primary" href={`${pdf}?download=1`} download="OPSEC_Internet_Security_Guide_v2.pdf">Скачать PDF ↓</a></div>
       </article>
     </div>
     <footer className="site-footer shell"><span>© 2026 Valanium</span><nav aria-label="Служебные ссылки"><a href="/">На главную</a><a href="/privacy">Политика конфиденциальности</a><a href="#top">Наверх ↑</a></nav></footer>

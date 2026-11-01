@@ -8,3 +8,5 @@ SHA-256: `4ad419e5a35eea72c1b782a20f47a1ab58b8e782e15f2426c1a32978bfc51c69`.
 `app/articles/opsec/content.json` stores semantic headings, paragraphs, and table rows. Page headers, footers, redundant PDF contents pages and cover pages are replaced by the site header and linked web contents. Source page links remain available for every chapter. All 32 source reference URLs are preserved as external links. The supplied Russian article is explicitly marked `lang="ru"` and excluded from the site's text replacement translator; the surrounding site controls have English translations.
 
 Verification: production build, TypeScript, source-to-web token comparison (only the 32 standalone chapter number badges removed), 32 unique section anchors, 18 tables, narrow viewport overflow check, byte-for-byte PDF hash check.
+
+`/api/guides/opsec` serves the original bytes with explicit PDF MIME type and inline disposition for source-page links; `?download=1` sets attachment disposition for download buttons.
