@@ -30,6 +30,7 @@ pub enum Command {
     /// Foreground resume: probe the live socket before deciding to reconnect.
     ProbeConnection,
     Diagnostics,
+    RepairChannel { recipient_device:String },
     Disconnect,
     /// `recipient_device` — hex публичного ключа устройства получателя.
     Send { recipient_device: String, body: String },

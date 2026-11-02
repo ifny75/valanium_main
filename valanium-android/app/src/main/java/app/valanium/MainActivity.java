@@ -4861,6 +4861,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 getString(R.string.clear_chat),
                 getString(R.string.delete_chat),
                 getString(R.string.block),
+                I18n.t("Восстановить доставку"),
         };
         new AlertDialog.Builder(this)
                 .setTitle(displayName(device))
@@ -4880,6 +4881,11 @@ public final class MainActivity extends Activity implements Events.Listener {
                                     () -> {
                                         if (conversation != null) submit(Commands.deleteConversation(conversation));
                                     });
+                            break;
+                        case 3:
+                            confirm(I18n.t("Восстановить доставку?"),
+                                    I18n.t("Будет создан новый защищённый канал с тем же собеседником. Аккаунт и история сохранятся. Непрочитанные старые сообщения может потребоваться отправить повторно."),
+                                    () -> { try { submit(new JSONObject().put("type","repair_channel").put("recipient_device",device).toString()); } catch (Exception ignored) {} });
                             break;
                         default:
                             confirm(I18n.t("Заблокировать?"),

@@ -208,5 +208,8 @@
   "Очередь": "Queue",
   "Подтверждение сервера": "Server acknowledgement",
   "Задержки доставки": "Delivery timings",
-  "Авторизация": "Authentication"
+  "Авторизация": "Authentication",
+  "Восстановить доставку": "Repair delivery",
+  "Восстановить доставку?": "Repair delivery?",
+  "Будет создан новый защищённый канал с тем же собеседником. Аккаунт и история сохранятся. Непрочитанные старые сообщения может потребоваться отправить повторно.": "A new secure channel will be created with the same contact. Your account and history will be preserved. Old unread messages may need to be resent."
 }

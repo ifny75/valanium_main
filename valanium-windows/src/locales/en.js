@@ -1,4 +1,8 @@
 export default {
+  "Восстановить доставку": "Repair delivery",
+  "Восстановить доставку?": "Repair delivery?",
+  "Будет создан новый защищённый канал с тем же собеседником. Аккаунт и история сохранятся. Непрочитанные старые сообщения может потребоваться отправить повторно.": "A new secure channel will be created with the same contact. Your account and history will be preserved. Old unread messages may need to be resent.",
+
   "Авторизация": "Authentication",
   "Периодически, около 15 минут": "Periodically, about 15 minutes",
   "Замеров пока нет": "No measurements yet",

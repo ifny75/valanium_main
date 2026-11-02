@@ -17,6 +17,8 @@ pub(crate) enum Kind {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Envelope {
+    #[serde(default)]
+    pub authenticated: bool,
     #[serde(default = "normal_priority")]
     pub priority: u8,
     #[serde(default)]
@@ -182,7 +184,7 @@ mod tests {
     }
     #[test] fn an_aged_attachment_is_not_starved(){let mut image=sample(1);image.priority=2;image.queued_at=1;assert_eq!(ready(&[image,sample(2)],&Default::default(),1)[0].client_ref,[1;16]);}
     fn sample(id: u8) -> Envelope {
-        Envelope { priority:1,queued_at:0,client_ref: [id; 16], device: [2; 32], conversation: vec![4],
+        Envelope { authenticated:false, priority:1,queued_at:0,client_ref: [id; 16], device: [2; 32], conversation: vec![4],
             logical_id: Some(format!("message-{id}")), ciphertext: vec![3; 256],
             kind: Kind::Message, expires_at: None }
     }

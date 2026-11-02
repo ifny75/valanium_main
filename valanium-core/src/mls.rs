@@ -79,6 +79,7 @@ pub struct Mls {
 /// спрятали бы и середину, но стоили бы до двенадцати килобайт на сообщение и
 /// требовали бы своего слоя поверх MLS — то есть согласования с собеседником.
 const PADDING_BLOCK: usize = 256;
+const RETAINED_EPOCHS: usize = 3;
 
 impl Mls {
     /// Создаёт новое MLS-состояние и привязывает его к ключу устройства.
@@ -173,6 +174,7 @@ impl Mls {
             .ciphersuite(CIPHERSUITE)
             // Дерево едет внутри Welcome: другого канала у получателя нет.
             .use_ratchet_tree_extension(true)
+            .max_past_epochs(RETAINED_EPOCHS)
             .padding_size(PADDING_BLOCK)
             .build();
 
@@ -204,6 +206,7 @@ impl Mls {
             .ciphersuite(CIPHERSUITE)
             // Дерево едет внутри Welcome: другого канала у получателя нет.
             .use_ratchet_tree_extension(true)
+            .max_past_epochs(RETAINED_EPOCHS)
             .padding_size(PADDING_BLOCK)
             .build();
 
@@ -468,7 +471,7 @@ impl Mls {
         // Беседы, заведённые до добивки, донастраиваются на месте. Иначе она
         // появилась бы только в новых, а защищать надо в первую очередь те, в
         // которых уже переписываются.
-        if group.configuration().padding_size() != PADDING_BLOCK {
+        if group.configuration() != &join_config() {
             group
                 .set_configuration(self.provider.storage(), &join_config())
                 .map_err(|_| CoreError::Mls("mls set config".into()))?;
@@ -499,7 +502,8 @@ impl Mls {
 
 /// Настройки, с которыми беседа живёт после вступления.
 fn join_config() -> MlsGroupJoinConfig {
-    MlsGroupJoinConfig::builder().padding_size(PADDING_BLOCK).build()
+    MlsGroupJoinConfig::builder().use_ratchet_tree_extension(true).max_past_epochs(RETAINED_EPOCHS)
+            .padding_size(PADDING_BLOCK).build()
 }
 
 fn snapshot_of(group: &MlsGroup) -> Result<Snapshot> {
@@ -1054,4 +1058,14 @@ mod tests {
         assert!(Mls::restore(&alice_device, &public, &snapshot[..snapshot.len() / 2]).is_err());
         assert!(Mls::restore(&alice_device, &public, &[]).is_err());
     }
+    #[test]
+    fn stability_late_offline_message_decrypts_after_rotation_and_restart() {
+        let(mut alice,alice_device,mut bob,bob_device)=pair();
+        let (group,welcome)=alice.start_conversation(&bob.key_packages(1).unwrap().remove(0),&bob_device.public()).unwrap();bob.process(&welcome).unwrap();
+        let late=bob.encrypt(&group,b"sent before rotation",&alice_device.public()).unwrap();
+        let commit=alice.rekey(&group).unwrap();bob.process(&commit).unwrap();
+        let mut restored=Mls::restore(&alice_device,&alice.signer_public(),&alice.snapshot()).unwrap();
+        assert!(matches!(restored.process(&late).unwrap(),Incoming::Message{plaintext,..} if plaintext==b"sent before rotation"));
+    }
+
 }

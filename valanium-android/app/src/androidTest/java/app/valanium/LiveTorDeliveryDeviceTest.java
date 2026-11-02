@@ -83,6 +83,9 @@ public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
             bob.send(new JSONObject().put("type","network_changed"));
             bob.waitFor(e->"authenticated".equals(e.optString("type")));
             exchange(alice,bob,"after-network-reconnect");
+            alice.send(new JSONObject().put("type","repair_channel").put("recipient_device",bob.device));
+            bob.waitFor(e->"conversation_started".equals(e.optString("type"))&&alice.device.equals(e.optString("peer_device")));
+            exchange(alice,bob,"after-channel-repair");exchange(bob,alice,"repair-reply");
             bob.pending.removeIf(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device")));
             alice.send(new JSONObject().put("type","profile_set").put("avatar_mime",JSONObject.NULL).put("avatar_base64",JSONObject.NULL));
             bob.waitFor(e->"profile".equals(e.optString("type"))&&alice.device.equals(e.optString("device"))&&e.isNull("avatar_base64"));
@@ -96,6 +99,13 @@ public final class LiveTorDeliveryDeviceTest extends InstrumentationTestCase {
             JSONObject b=bob.waitFor(e->"verification".equals(e.optString("type")));
             assertEquals(a.getString("qr_payload"),b.getString("qr_payload"));
             assertEquals(a.getString("safety_number"),b.getString("safety_number"));
+            for(Client client:new Client[]{alice,bob}) {
+                client.send(new JSONObject().put("type","disconnect"));
+                client.waitFor(e->"disconnected".equals(e.optString("type")));
+                client.send(new JSONObject().put("type","connect").put("url","valanium://auto"));
+                client.waitFor(e->"authenticated".equals(e.optString("type")));
+            }
+            exchange(alice,bob,"auto-durable-forward");exchange(bob,alice,"auto-durable-reply");
             bob.send(new JSONObject().put("type","diagnostics"));
             JSONObject timings=bob.waitFor(e->"diagnostics".equals(e.optString("type"))).getJSONObject("report");
             assertTrue(timings.getJSONObject("connection").getInt("count")>=2);

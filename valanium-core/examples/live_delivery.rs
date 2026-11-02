@@ -96,7 +96,7 @@ impl Client {
             events,
             device: String::new(),
         };
-        client.command(json!({"type":if resume { "connect" } else { "register" },"url":"valanium://onion","handle":null,"invite":null}));
+        client.command(json!({"type":if resume { "connect" } else { "register" },"url":std::env::var("VALANIUM_QA_ROUTE").unwrap_or_else(|_|"valanium://onion".into()),"handle":null,"invite":null}));
         client.authenticated()?;
         Ok(client)
     }
@@ -133,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "VALANIUM_TOR_SOCKS",
         args.get(2).ok_or("local SOCKS required")?,
     );
+    if args.iter().any(|arg|arg=="--auto"){std::env::set_var("VALANIUM_QA_ROUTE","valanium://auto");}
     let mut alice = Client::start(&dir.join("alice.db"), resume)?;
     let mut bob = Client::start(&dir.join("bob.db"), resume)?;
     alice.command(json!({"type":"directory_set","device":bob.device,"standing":"approved"}));

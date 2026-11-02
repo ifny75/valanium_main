@@ -13,6 +13,7 @@ public final class BackgroundConnectionDeviceTest extends InstrumentationTestCas
     }
     public void testNetworkWatcherSurvivesBackgroundAndResume() throws Exception {
         Context context=getInstrumentation().getTargetContext();assertEquals("app.valanium.qa",context.getPackageName());
+        String oldMode=BackgroundDelivery.mode(context);
         context.getSharedPreferences("appearance",0).edit().putString("background_delivery","persistent").commit();
         Activity activity=getInstrumentation().startActivitySync(new Intent(context,MainActivity.class)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
@@ -27,6 +28,13 @@ public final class BackgroundConnectionDeviceTest extends InstrumentationTestCas
             getInstrumentation().waitForIdleSync();Thread.sleep(400);
             assertSame("Resume must not duplicate the network watcher",watcher,field("networkCallback"));
             assertTrue(ValaniumService.core().isOpen());
-        } finally {getInstrumentation().runOnMainSync(activity::finish);}
+        } finally {
+            getInstrumentation().runOnMainSync(activity::finish);
+            getInstrumentation().waitForIdleSync();
+            context.stopService(new Intent(context,ValaniumService.class));
+            for(int i=0;i<50&&ValaniumService.active();i++)Thread.sleep(100);
+            BackgroundDelivery.cancel(context);
+            context.getSharedPreferences("appearance",0).edit().putString("background_delivery",oldMode).commit();
+        }
     }
 }

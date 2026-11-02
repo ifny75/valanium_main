@@ -5577,6 +5577,14 @@ $("peer-block").addEventListener("click", () => {
     () => submit({ type: "directory_set", device, standing: "blocked" }));
 });
 
+$("peer-repair").addEventListener("click", () => {
+  const recipient_device = peerCard;
+  closePeerCard();
+  if (!recipient_device) return;
+  confirmAction(tr("Восстановить доставку?"), tr("Будет создан новый защищённый канал с тем же собеседником. Аккаунт и история сохранятся. Непрочитанные старые сообщения может потребоваться отправить повторно."),
+    () => submit({type:"repair_channel", recipient_device}));
+});
+
 $("peer-clear").addEventListener("click", () => {
   const conversation = conversationOf(peerCard);
   closePeerCard();

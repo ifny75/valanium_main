@@ -267,6 +267,7 @@ enum Entry {
 }
 
 /// Отправка, ждущая KeyPackage собеседника либо восстановления соединения.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct PendingSend {
     device: [u8; KEY_LEN],
     body: String,
@@ -277,6 +278,28 @@ struct PendingSend {
 
 /// Не ушедшее из-за обрыва.
 type Outbox = Vec<PendingSend>;
+
+const PENDING_SENDS: &str = "pending_sends_v1";
+fn pending_sends(store:&Store)->Result<Outbox>{
+    store.load_setting(PENDING_SENDS)?.map(|raw|serde_json::from_slice(&raw).map_err(CoreError::from)).unwrap_or_else(||Ok(Vec::new()))
+}
+fn remember_send(store:&Store,waiting:&PendingSend)->Result<()> {
+    let mut queue=pending_sends(store)?;
+    if queue.iter().any(|item|item.device==waiting.device&&item.body==waiting.body){return Ok(());}
+    if queue.len()>=128 || queue.iter().map(|item|item.body.len()).sum::<usize>()+waiting.body.len()>16*1024*1024 {return Err(CoreError::Rejected("pending_send_queue_full".into()));}
+    queue.push(waiting.clone());store.save_setting(PENDING_SENDS,&serde_json::to_vec(&queue)?)
+}
+fn forget_send(store:&Store,waiting:&PendingSend)->Result<()> {
+    let mut queue=pending_sends(store)?;
+    queue.retain(|item|item.device!=waiting.device||item.body!=waiting.body);
+    store.save_setting(PENDING_SENDS,&serde_json::to_vec(&queue)?)
+}
+
+fn cancel_pending_thread(store:&Store,thread:&[u8])->Result<()> {
+    let mut queue=pending_sends(store)?;
+    queue.retain(|item|store.conversation_with(&item.device).ok().flatten().and_then(|group|store.thread_of(&group).ok()).as_deref()!=Some(thread));
+    store.save_setting(PENDING_SENDS,&serde_json::to_vec(&queue)?)
+}
 
 /// Зачем мы просили KeyPackage.
 ///
@@ -307,6 +330,7 @@ struct Live {
     ticket_request_until: Option<tokio::time::Instant>,
     anonymous_queued: bool,
     calls: crate::calls::Pending,
+    direct_inflight: HashMap<[u8; ID_LEN], tokio::time::Instant>,
     anon_inflight: HashMap<[u8; ID_LEN], tokio::task::AbortHandle>,
     anon_retries: HashMap<[u8; ID_LEN], (tokio::time::Instant, u32)>,
     route_cooldowns: HashMap<String, tokio::time::Instant>,
@@ -327,6 +351,7 @@ impl Drop for Live {
 fn invalidate_network(live: &mut Live, outcomes: &mut mpsc::UnboundedReceiver<AnonOutcome>) {
     live.prewarming.abort_all();
     live.prepared.clear();
+    live.direct_inflight.clear();
     for (_,task) in live.anon_inflight.drain() { task.abort(); }
     while outcomes.try_recv().is_ok() {}
     live.anon_retries.clear();
@@ -484,7 +509,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             sink(username_event(store));
         }
         Command::Diagnostics => match crate::latency::report(store) {
-            Ok(mut report)=>{report["pending_envelopes"]=serde_json::json!(crate::anon_queue::load(store).map(|q|q.len()).unwrap_or(0));sink(Event::Diagnostics{report});},Err(error)=>fail(sink,"storage",&error.to_string()),
+            Ok(mut report)=>{match crate::anon_queue::load(store).and_then(|queue|Ok(queue.len()+pending_sends(store)?.len())) {Ok(count)=>{report["pending_envelopes"]=serde_json::json!(count);sink(Event::Diagnostics{report});},Err(error)=>fail(sink,"storage",&error.to_string())}},Err(error)=>fail(sink,"storage",&error.to_string()),
         },
 
         Command::RecoveryCode => match store.load_credentials() {
@@ -569,7 +594,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
         Command::AccessGet => sink(access_event(store)),
 
         Command::ClearConversation { conversation } => match hex::decode(conversation) {
-            Ok(id) => match crate::anon_queue::cancel_thread(store, &id).and_then(|_| store.delete_conversation(&id)) {
+            Ok(id) => match crate::anon_queue::cancel_thread(store, &id).and_then(|_|cancel_pending_thread(store,&id)).and_then(|_| store.delete_conversation(&id)) {
                 Ok(_) => sink(Event::ConversationCleared {
                     conversation: conversation.clone(),
                     forgotten: false,
@@ -580,7 +605,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
         },
 
         Command::DeleteConversation { conversation } => match hex::decode(conversation) {
-            Ok(id) => match crate::anon_queue::forget_thread(store, &id).and_then(|_| store.forget_conversation(&id)) {
+            Ok(id) => match crate::anon_queue::forget_thread(store, &id).and_then(|_|cancel_pending_thread(store,&id)).and_then(|_| store.forget_conversation(&id)) {
                 Ok(()) => sink(Event::ConversationCleared {
                     conversation: conversation.clone(),
                     forgotten: true,
@@ -1609,6 +1634,8 @@ async fn rekey_stale(
     let mut changed = false;
     for (_peer, group_id) in store.list_conversations()? {
         if matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)){continue;}
+        if mls.members(&group_id)?.iter().min().copied()!=Some(mls.device_pub()) {continue;}
+        if crate::anon_queue::load(store)?.iter().any(|item|item.conversation==group_id || store.thread_of(&group_id).ok().as_ref()==Some(&item.conversation)) {continue;}
         let key = hex::encode(&group_id);
         let last = done.get(&key).copied();
 
@@ -1623,18 +1650,16 @@ async fn rekey_stale(
             continue;
         }
 
-        match mls.rekey(&group_id) {
-            Ok(commit) => {
-                persist(store, mls, sink);
-                fan_out(socket, store, mls, &group_id, &commit, None, None).await?;
-                done.insert(key, now);
-                changed = true;
-            }
+        let before=mls.snapshot(); let signer=mls.signer_public();
+        let result=async {
+            let commit=mls.rekey(&group_id)?;
+            fan_out(socket,store,mls,&group_id,&commit,None,None).await
+        }.await;
+        match result {
+            Ok(()) => {done.insert(key,now);changed=true;}
             Err(err) => {
-                // Одна беседа не должна мешать остальным: причин может быть
-                // много — от испорченного состояния до чужого коммита,
-                // пришедшего раньше нашего.
-                fail(sink, "rekey", &err.to_string());
+                *mls=Mls::restore(&store.load_credentials()?.device,&signer,&before)?;
+                fail(sink,"rekey",&err.to_string());
             }
         }
     }
@@ -2120,6 +2145,7 @@ async fn session(
     let mut entry = entry;
     let mut backoff = 1u64;
     let mut live = Live::default();
+    live.outbox=match pending_sends(store){Ok(queue)=>queue,Err(error)=>return fail(sink,"storage",&error.to_string())};
     live.require_anonymous = url == ONION_ROUTE_URL || url.contains(".onion");
     // Один канал на всю сессию, а не на каждое соединение: исход анонимной
     // отправки может прийти уже после того, как основное соединение оборвалось
@@ -2174,6 +2200,7 @@ async fn session(
             route = (route + 1) % routes.len();
         }
         invalidate_network(&mut live,&mut anon_rx);
+        match pending_sends(store){Ok(waiting)=>live.outbox=waiting,Err(error)=>return fail(sink,"storage",&error.to_string())}
         if wait_before_retry(backoff, store, sink, commands).await == Pause::Closed {
             return;
         }
@@ -2592,8 +2619,8 @@ async fn pump(
         if needed > 0 {
             match mls.key_packages(needed) {
                 Ok(packages) => {
+                    store.save_mls(&mls.signer_public(),&mls.snapshot())?;
                     send(&mut socket, proto::keypkg_publish_frame(&packages)).await?;
-                    persist(store, mls, sink);
                 }
                 Err(err) => fail(sink, "mls_key_packages", &err.to_string()),
             }
@@ -2636,19 +2663,6 @@ async fn pump(
 
         sync_server_privacy(&mut socket, store, &mut pending_username).await?;
 
-        // Меняем свой ключ в беседах, где он давно не менялся.
-        //
-        // Здесь же, при подключении, а не по таймеру в фоне: коммит всё равно
-        // нужно отправить, а отправлять его некуда, пока нет соединения.
-        if let Err(err) = rekey_stale(&mut socket, store, mls, sink).await {
-            if is_transport(&err) {
-                return Ok(Outcome::Retry);
-            }
-            // Не повод рвать связь: переписка работает и на прежней эпохе,
-            // а попытка повторится на следующем заходе.
-            fail(sink, "rekey", &err.to_string());
-        }
-
         // Дозанимаем своё имя дорогим хешем, если этого ещё не делали.
         //
         // Сервер не может пересчитать хеш сам — имени он не знает и знать не
@@ -2686,13 +2700,19 @@ async fn pump(
     let idle_timeout = Duration::from_secs((greeting.heartbeat_sec * 3).clamp(30, 180));
     let mut last_received = tokio::time::Instant::now();
     let mut probe: Option<(tokio::time::Instant,Vec<u8>)> = None;
+    let mut claims_since: Option<tokio::time::Instant> = None;
 
     loop {
         let anonymous_deadline = if authenticated && greeting.sealed_sender {
             next_anonymous_maintenance(live, live.anonymous_queued)
         } else { None };
+        if pending.is_empty(){claims_since=None;}else if claims_since.is_none(){claims_since=Some(tokio::time::Instant::now());}
+        let claims_deadline=claims_since.map(|at|at+Duration::from_secs(45));
+        let direct_deadline = live.direct_inflight.values().copied().min();
         let prewarming_active = !live.prewarming.is_empty();
         tokio::select! {
+            _ = wait_anonymous_retry(claims_deadline) => return Err(CoreError::Transport("Key package response timed out; reconnecting".into())),
+            _ = wait_anonymous_retry(direct_deadline) => return Err(CoreError::Transport("Delivery acknowledgement timed out; reconnecting".into())),
             _ = tokio::time::sleep_until(probe.as_ref().map(|p|p.0).unwrap_or(last_received+idle_timeout)), if probe.is_some() => {
                 return Err(CoreError::Transport("Resume probe timed out; reconnecting".into()));
             }
@@ -2860,7 +2880,7 @@ async fn pump(
                         sink(Event::Disconnected { reason: err.to_string() });
                         return Ok(Outcome::Retry);
                     }
-                    if authenticated && matches!(proto::split(&data), Ok((op::ENVELOPE | op::KEYPKG, _))) {
+                    if authenticated && matches!(proto::split(&data), Ok((op::ENVELOPE | op::KEYPKG | op::SEND_OK | op::QUEUE_DONE, _))) {
                         if let Err(err) = grant_missing(&mut socket, store, mls, sink, live).await {
                             fail(sink, "pass_grant", &err.to_string());
                         }
@@ -2886,6 +2906,8 @@ async fn pump(
                     }
                     if matches!(command, Command::ClearConversation { .. } | Command::DeleteConversation { .. }) {
                         cancel_removed_anonymous(store, live)?;
+                        let kept=pending_sends(store)?;
+                        pending.retain(|_,claim| !matches!(claim,Claim::Start(item) if !kept.iter().any(|saved|saved.device==item.device&&saved.body==item.body)));
                     }
                     continue;
                 }
@@ -3423,6 +3445,27 @@ async fn pump(
                             fail(sink, "send", &err.to_string());
                         }
                     }
+                    Command::RepairChannel{recipient_device} => {
+                        let result=(||->Result<[u8;KEY_LEN]>{
+                            ensure_pin_allows(store,&recipient_device)?;
+                            let device:[u8;KEY_LEN]=hex::decode(&recipient_device).map_err(|_|CoreError::BadFrame)?.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                            if blocked(store,&recipient_device){return Err(CoreError::Rejected("peer_blocked".into()));}
+                            if store.conversation_with(&device)?.is_none(){return Err(CoreError::Rejected("conversation_missing".into()));}
+                            Ok(device)
+                        })();
+                        match result {
+                            Ok(device)=>{
+                                let reference:[u8;ID_LEN]=random_bytes(ID_LEN).try_into().unwrap();
+                                if !pending.values().any(|claim|matches!(claim,Claim::Start(item) if item.device==device)) {
+                                    let waiting=PendingSend{device,body:CHANNEL_READY.into(),stored:true};
+                                    remember_send(store,&waiting)?;
+                                    pending.insert(reference,Claim::Start(waiting));
+                                    send(&mut socket,proto::keypkg_claim_frame(&reference,&device)).await?;
+                                }
+                            },
+                            Err(error)=>fail(sink,"channel_repair",&error.to_string()),
+                        }
+                    }
                     Command::NetworkChanged => return Ok(Outcome::Retry),
                     Command::ProbeConnection => {
                         if probe.is_none() {
@@ -3472,7 +3515,13 @@ async fn pump(
                 flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
             }
             _ = ticker.tick() => {
-                if authenticated { repair_missing_channels(&mut socket,store,mls,sink,&mut pending).await?; }
+                if authenticated {
+                    repair_missing_channels(&mut socket,store,mls,sink,&mut pending).await?;
+                    for waiting in pending_sends(store)? {
+                        if pending.values().any(|claim|matches!(claim,Claim::Start(item) if item.device==waiting.device&&item.body==waiting.body)){continue;}
+                        deliver(&mut socket,store,mls,sink,&mut pending,waiting,&mut live.outbox,Some(&mut SealedSenderCtx{required:live.require_anonymous})).await?;
+                    }
+                }
                 send(&mut socket, proto::frame(op::PING, &[])).await?;
                 if authenticated {
                     flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
@@ -3531,7 +3580,7 @@ async fn on_frame(
     let (opcode, body) = proto::split(data)?;
     match opcode {
         op::PONG => {}
-        op::QUEUE_DONE => sink(Event::QueueDone),
+        op::QUEUE_DONE => { rekey_stale(socket,store,mls,sink).await?; sink(Event::QueueDone); },
         op::ENVELOPE => on_envelope(socket, body, store, mls, sink, &mut live.calls).await?,
         op::KEYPKG => {
             let sealed = Some(SealedSenderCtx { required: live.require_anonymous });
@@ -3595,6 +3644,11 @@ async fn on_frame(
                 let (thread, id, device): (Vec<u8>, String, Vec<u8>) = serde_json::from_slice(&raw)?;
                 crate::delivery::accepted(store, &thread, &id, &device)?;
                 emit_delivery(store, sink, &thread, &id)?;
+            }
+            if live.direct_inflight.remove(&client_ref).is_some() {
+                let completed=crate::anon_queue::load(store)?.into_iter().find(|item|item.client_ref==client_ref);
+                crate::anon_queue::acknowledge(store,&client_ref)?;
+                if let Some(item)=completed {if let Some(id)=item.logical_id {emit_delivery(store,sink,&item.conversation,&id)?;}}
             }
             sink(Event::Accepted {
                 client_ref: hex::encode(client_ref),
@@ -4044,29 +4098,18 @@ async fn fan_out_prioritized(socket:&mut Socket,store:&Store,mls:&Mls,group_id:&
     let me = mls.device_pub();
     let members: Vec<_> = mls.members(group_id)?.into_iter()
         .filter(|member| *member != me && Some(*member) != skip).collect();
-    store.save_mls(&mls.signer_public(), &mls.snapshot())?;
-    if anonymous_required(store)? {
-        let envelopes = members.into_iter().map(|device| crate::anon_queue::Envelope { priority, queued_at:now_millis(),
+    let _ = socket;
+    store.atomic(|| {
+        store.save_mls(&mls.signer_public(), &mls.snapshot())?;
+        let authenticated = !anonymous_required(store)?;
+        let envelopes = members.into_iter().map(|device| crate::anon_queue::Envelope { authenticated, priority, queued_at:now_millis(),
             client_ref: random_bytes(ID_LEN).try_into().expect("random id length"),
             device, conversation: group_id.to_vec(), logical_id: message_id.map(str::to_owned),
             ciphertext: payload.to_vec(), expires_at: Some(now_millis() + i64::from(DEFAULT_TTL_SEC) * 1000),
             kind: if message_id.is_some() { crate::anon_queue::Kind::Message } else { crate::anon_queue::Kind::Essential },
         }).collect();
-        return crate::anon_queue::enqueue_batch(store, envelopes);
-    }
-    for member in members {
-        if member == me || Some(member) == skip {
-            continue;
-        }
-        let mut client_ref = [0u8; ID_LEN];
-        client_ref.copy_from_slice(&random_bytes(ID_LEN));
-        send(
-            socket,
-            proto::send_frame(&client_ref, &member, DEFAULT_TTL_SEC, payload),
-        )
-        .await?;
-    }
-    Ok(())
+        crate::anon_queue::enqueue_batch(store, envelopes)
+    })
 }
 
 /// Рассказывает участникам, как группа называется.
@@ -4155,7 +4198,7 @@ async fn on_key_package(
     sink: &EventSink,
     pending: &mut HashMap<[u8; ID_LEN], Claim>,
     outbox: &mut Outbox,
-    mut sealed: Option<SealedSenderCtx>,
+    sealed: Option<SealedSenderCtx>,
 ) -> Result<()> {
     let (client_ref, package) = proto::parse_keypkg(body)?;
     let Some(claim) = pending.remove(&client_ref) else {
@@ -4180,34 +4223,29 @@ async fn on_key_package(
         }
     };
 
-    // Привязку пакета к устройству проверяет сам MLS-слой: сервер мог подсунуть
-    // чужой, и тогда start_conversation откажется его брать.
-    let (group_id, welcome) = match mls.start_conversation(&package, &waiting.device) {
-        Ok(result) => result,
-        Err(err) => {
-            fail(sink, "key_package", &err.to_string());
-            return Ok(());
-        }
-    };
-    let thread=store.atomic(|| {
-        let thread=attach_channel(store,&waiting.device,&group_id)?;
-        store.save_mls(&mls.signer_public(),&mls.snapshot())?;
-        Ok(thread)
-    })?;
-    // Отправитель узнаёт идентификатор беседы тем же событием, что и
-    // получатель: интерфейсу иначе некуда класть исходящие сообщения.
-    sink(Event::ConversationStarted {
-        peer_device: hex::encode(waiting.device),
-        conversation: hex::encode(&thread),
-    });
-
-    // Сначала приглашение, потом само сообщение — порядок важен: без Welcome
-    // получателю нечем расшифровать.
-    if let Err(err) = send_envelope(socket, store, &waiting.device, &welcome, &thread).await {
-        outbox.push(waiting);
-        return Err(err);
+    let _=(outbox,sealed);
+    let before=mls.snapshot();let signer=mls.signer_public();
+    let result=(||->Result<Vec<u8>>{
+        let (group_id,welcome)=mls.start_conversation(&package,&waiting.device)?;
+        store.atomic(|| {
+            let thread=attach_channel(store,&waiting.device,&group_id)?;
+            store.save_mls(&mls.signer_public(),&mls.snapshot())?;
+            queue_essential(store,&waiting.device,&welcome,&thread)?;
+            queue_private_message(store,mls,&group_id,&waiting)?;
+            for remaining in pending_sends(store)?.into_iter().filter(|item|item.device==waiting.device) {
+                queue_private_message(store,mls,&group_id,&remaining)?;
+            }
+            Ok(thread)
+        })
+    })();
+    match result {
+        Ok(thread)=>{
+            sink(Event::ConversationStarted{peer_device:hex::encode(waiting.device),conversation:hex::encode(&thread)});
+            if let Some(id)=content_json(&waiting.body).and_then(|v|v.get("id")?.as_str().map(str::to_owned)){emit_delivery(store,sink,&thread,&id)?;}
+            Ok(())
+        },
+        Err(error)=>{*mls=Mls::restore(&store.load_credentials()?.device,&signer,&before)?;fail(sink,"key_package",&error.to_string());Ok(())}
     }
-    encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed.as_mut()).await
 }
 
 /// Все устройства человека, которому адресовано сообщение.
@@ -4325,17 +4363,20 @@ async fn deliver(
     outbox: &mut Outbox,
     sealed: Option<&mut SealedSenderCtx>,
 ) -> Result<()> {
+    if blocked(store,&hex::encode(waiting.device)){forget_send(store,&waiting)?;return Ok(());}
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
     }
     match store.conversation_with(&waiting.device)? {
-        Some(group_id) if !matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)) => {
+        Some(group_id) if waiting.body != CHANNEL_READY && !matches!(mls.inspect(&group_id),Err(CoreError::MissingGroup)) => {
             encrypt_and_send(socket, store, mls, sink, &group_id, waiting, outbox, sealed).await
         }
         _ => {
             // Беседы ещё нет: просим KeyPackage и досылаем сообщение по ответу.
             // Билет здесь никак не поможет — сообщение уйдёт уже потом, из
             // on_key_package, своим отдельным заходом за sealed sender.
+            remember_send(store,&waiting)?;
+            if pending.values().any(|claim|matches!(claim,Claim::Start(item) if item.device==waiting.device)){return Ok(());}
             let mut client_ref = [0u8; ID_LEN];
             client_ref.copy_from_slice(&random_bytes(ID_LEN));
             let device = waiting.device;
@@ -4366,46 +4407,13 @@ async fn encrypt_and_send(
     if !pin_allows_or_reports(store, sink, &waiting.device)? {
         return Ok(());
     }
-    if sealed.as_ref().is_some_and(|ctx| ctx.required) || anonymous_required(store)? {
-        queue_private_message(store, mls, group_id, &waiting)?;
-        if let Some(id) = content_json(&waiting.body).and_then(|v| v.get("id")?.as_str().map(str::to_owned)) {
-            emit_delivery(store, sink, &store.thread_of(group_id)?, &id)?;
-        }
-        return Ok(());
+    if sealed.as_ref().is_some_and(|ctx|ctx.required) && !anonymous_required(store)? {
+        return Err(CoreError::Rejected("anonymous_policy_mismatch".into()));
     }
-    let device = &waiting.device;
-    let body = waiting.body.as_str();
-
-    // Отказ здесь — не сбой отправки, а сигнал: состав беседы не тот, кому мы
-    // собирались писать. Открытый текст в такую группу уходить не должен.
-    let ciphertext = match mls.encrypt(group_id, &crate::padding::pad(body.as_bytes()), device) {
-        Ok(ciphertext) => ciphertext,
-        Err(CoreError::Anomaly(detail)) => {
-            sink(Event::Anomaly { kind: "send_blocked".into(), detail });
-            return Ok(());
-        }
-        Err(other) => return Err(other),
-    };
-    store.save_mls(&mls.signer_public(), &mls.snapshot())?;
-    let client_ref: [u8; ID_LEN] = random_bytes(ID_LEN).try_into().unwrap();
-    let thread = store.thread_of(group_id)?;
-    if !waiting.stored {
-        store.insert_message(&client_ref, &thread, true, now_millis(), body.as_bytes())?;
-    }
-    if let Some(id) = content_json(body).and_then(|v| v.get("id")?.as_str().map(str::to_owned)) {
-        crate::delivery::track(store, &thread, &id, device, None)?;
-        crate::delivery::sending(store,&thread,&id,device)?;
-        store.save_setting(&format!("delivery-ref:{}", hex::encode(client_ref)),
-            &serde_json::to_vec(&(thread.clone(), id, device.to_vec()))?)?;
-    }
-
-    if let Err(err) =
-        send(socket, proto::send_frame(&client_ref, device, DEFAULT_TTL_SEC, &ciphertext)).await
-    {
-        // Шифротекст этой эпохи уже не пригодится — при досылке текст будет
-        // зашифрован заново, поэтому в ящик кладётся именно открытый текст.
-        outbox.push(PendingSend { device: *device, body: waiting.body, stored: true });
-        return Err(err);
+    let _ = (socket, outbox);
+    queue_private_message(store, mls, group_id, &waiting)?;
+    if let Some(id) = content_json(&waiting.body).and_then(|v| v.get("id")?.as_str().map(str::to_owned)) {
+        emit_delivery(store, sink, &store.thread_of(group_id)?, &id)?;
     }
     Ok(())
 }
@@ -4418,6 +4426,10 @@ fn message_priority(body:&str)->u8{
 fn queue_private_message(store: &Store, mls: &mut Mls, group_id: &[u8], waiting: &PendingSend) -> Result<()> {
     if !permits_activity(store, &waiting.body, &waiting.device)? { return Ok(()); }
     ensure_pin_allows(store, &hex::encode(waiting.device))?;
+    let thread=store.thread_of(group_id)?;
+    if let Some(id)=content_json(&waiting.body).and_then(|v|v.get("id")?.as_str().map(str::to_owned)) {
+        if crate::anon_queue::load(store)?.iter().any(|item|item.conversation==thread&&item.device==waiting.device&&item.logical_id.as_deref()==Some(&id)) {forget_send(store,waiting)?;return Ok(());}
+    }
     let before = mls.snapshot();
     let signer = mls.signer_public();
     let ciphertext = mls.encrypt(group_id, &crate::padding::pad(waiting.body.as_bytes()), &waiting.device)?;
@@ -4432,12 +4444,13 @@ fn queue_private_message(store: &Store, mls: &mut Mls, group_id: &[u8], waiting:
         if !waiting.stored && !control && !ephemeral {
             store.insert_message(&client_ref, &thread, true, now, waiting.body.as_bytes())?;
         }
-        crate::anon_queue::enqueue(store, crate::anon_queue::Envelope { priority:message_priority(&waiting.body), queued_at:now_millis(),
+        crate::anon_queue::enqueue(store, crate::anon_queue::Envelope { authenticated:!anonymous_required(store)?, priority:message_priority(&waiting.body), queued_at:now_millis(),
             client_ref, device: waiting.device, conversation: thread, logical_id, ciphertext,
             kind: if ephemeral { crate::anon_queue::Kind::Ephemeral } else if control {
                 crate::anon_queue::Kind::Essential } else { crate::anon_queue::Kind::Message },
             expires_at: Some(now + if matches!(crate::access::parse_signal(&waiting.body),Some(crate::access::Control::Call(_))) { crate::calls::TTL_MS } else if ephemeral { 15_000 } else { i64::from(DEFAULT_TTL_SEC) * 1000 }),
-        })
+        })?;
+        forget_send(store,waiting)
     });
     if result.is_err() {
         // The database savepoint rolled back; the in-memory ratchet must too.
@@ -4647,8 +4660,9 @@ fn spawn_anon_send(
 }
 
 fn cancel_removed_anonymous(store: &Store, live: &mut Live) -> Result<()> {
-    if live.anon_inflight.is_empty() { return Ok(()); }
+    if live.anon_inflight.is_empty() && live.direct_inflight.is_empty() { return Ok(()); }
     let queued: HashSet<_> = crate::anon_queue::load(store)?.iter().map(|item| item.client_ref).collect();
+    live.direct_inflight.retain(|id,_|queued.contains(id));
     live.anon_inflight.retain(|id, task| {
         if queued.contains(id) { true } else { task.abort(); false }
     });
@@ -4742,7 +4756,8 @@ async fn wait_anonymous_retry(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-/// Retry only through anonymous onion connections; keep storage until ACK.
+/// Durable delivery: onion entries never use AUTH, even after switching to Auto.
+/// Only entries explicitly created in Relay/Auto may use the authenticated socket.
 async fn flush_anonymous(
     socket: &mut Socket,
     store: &Store,
@@ -4751,9 +4766,6 @@ async fn flush_anonymous(
     available: bool,
     outcomes: &mpsc::UnboundedSender<AnonOutcome>,
 ) -> Result<()> {
-    if !available {
-        return Ok(());
-    }
     crate::anon_queue::bound_legacy_lifetimes(store, now_millis(), i64::from(DEFAULT_TTL_SEC) * 1000)?;
     let pending = crate::anon_queue::load(store)?;
     for item in &pending {
@@ -4763,15 +4775,33 @@ async fn flush_anonymous(
     }
     let queue = crate::anon_queue::prune_expired(store, now_millis())?;
     live.anonymous_queued = !queue.is_empty();
-    maintain_anonymous_prewarm(store, live);
     let queued: HashSet<_> = queue.iter().map(|item| item.client_ref).collect();
     live.anon_retries.retain(|id, _| queued.contains(id));
     if queue.is_empty() { return Ok(()); }
-    request_anonymous_tickets(socket, live).await?;
     let now = tokio::time::Instant::now();
-    let inflight = live.anon_inflight.keys().copied().chain(live.anon_retries.iter()
+    let direct_allowed = !live.require_anonymous && !anonymous_required(store)?;
+    let mut active: HashSet<_> = live.direct_inflight.keys().chain(live.anon_inflight.keys()).copied().collect();
+    let pins=load_pins_checked(store)?;
+    active.extend(queue.iter().filter(|item|blocked(store,&hex::encode(item.device))||pins.blocks_device(&hex::encode(item.device))).map(|item|item.client_ref));
+    let send_slots=4usize.saturating_sub(live.direct_inflight.len()+live.anon_inflight.len());
+    if direct_allowed {
+        for envelope in crate::anon_queue::ready(&queue,&active,send_slots) {
+            if !envelope.authenticated || blocked(store,&hex::encode(envelope.device)) { continue; }
+            if let Some(id)=&envelope.logical_id {crate::delivery::sending(store,&envelope.conversation,id,&envelope.device)?;}
+            send(socket,proto::send_frame(&envelope.client_ref,&envelope.device,DEFAULT_TTL_SEC,&envelope.ciphertext)).await?;
+            live.direct_inflight.insert(envelope.client_ref,now+Duration::from_secs(45));
+            active.insert(envelope.client_ref);
+        }
+    }
+    live.anonymous_queued=queue.iter().any(|item| !item.authenticated || !direct_allowed);
+    if !available || !live.anonymous_queued { return Ok(()); }
+    maintain_anonymous_prewarm(store, live);
+    request_anonymous_tickets(socket, live).await?;
+    let inflight = active.into_iter().chain(live.anon_retries.iter()
         .filter(|(_, (until, _))| *until > now).map(|(id, _)| *id)).collect();
     for envelope in crate::anon_queue::ready(&queue, &inflight, 4usize.saturating_sub(live.anon_inflight.len())) {
+        if direct_allowed && envelope.authenticated { continue; }
+        if blocked(store,&hex::encode(envelope.device)){continue;}
         if live.tickets.is_empty() { break; }
         let ready = live.prepared.pop_front();
         // A building socket will wake pump when ready. Do not start another
@@ -4800,16 +4830,17 @@ async fn flush_anonymous(
 
 /// Служебный кадр MLS (Welcome, коммит) едет тем же конвертом, что и сообщения.
 async fn send_envelope(socket: &mut Socket, store: &Store, device: &[u8; KEY_LEN], payload: &[u8], conversation: &[u8]) -> Result<()> {
+    let _=socket;
+    queue_essential(store,device,payload,conversation)
+}
+fn queue_essential(store:&Store,device:&[u8;KEY_LEN],payload:&[u8],conversation:&[u8])->Result<()> {
     let mut client_ref = [0u8; ID_LEN];
     client_ref.copy_from_slice(&random_bytes(ID_LEN));
-    if anonymous_required(store)? {
-        return crate::anon_queue::enqueue(store, crate::anon_queue::Envelope { priority:1, queued_at:now_millis(),
-            client_ref, device: *device, ciphertext: payload.to_vec(), conversation: conversation.to_vec(),
-            logical_id: None, kind: crate::anon_queue::Kind::Essential,
-            expires_at: Some(now_millis() + i64::from(DEFAULT_TTL_SEC) * 1000),
-        });
-    }
-    send(socket, proto::send_frame(&client_ref, device, DEFAULT_TTL_SEC, payload)).await
+    crate::anon_queue::enqueue(store, crate::anon_queue::Envelope { authenticated:!anonymous_required(store)?, priority:0, queued_at:now_millis(),
+        client_ref, device: *device, ciphertext: payload.to_vec(), conversation: conversation.to_vec(),
+        logical_id: None, kind: crate::anon_queue::Kind::Essential,
+        expires_at: Some(now_millis() + i64::from(DEFAULT_TTL_SEC) * 1000),
+    })
 }
 
 async fn send(socket: &mut Socket, frame: Vec<u8>) -> Result<()> {
@@ -5050,7 +5081,7 @@ mod tests {
     async fn anonymous_send_waits_for_existing_prewarm_and_uses_it_without_auth() {
         use tokio_tungstenite::tungstenite::protocol::Role;
         let store = Store::open(":memory:", b"prewarm-test").unwrap();
-        let envelope = crate::anon_queue::Envelope { priority:1, queued_at:now_millis(), client_ref: [1; ID_LEN], device: [2; KEY_LEN],
+        let envelope = crate::anon_queue::Envelope { authenticated:false, priority:1, queued_at:now_millis(), client_ref: [1; ID_LEN], device: [2; KEY_LEN],
             conversation: vec![4], logical_id: None, ciphertext: vec![3; 256],
             kind: crate::anon_queue::Kind::Essential, expires_at: Some(now_millis() + 60_000) };
         crate::anon_queue::enqueue(&store, envelope.clone()).unwrap();
@@ -5093,7 +5124,7 @@ mod tests {
         let store = Store::open(":memory:", b"prewarm-wakeup").unwrap();
         let credentials = Credentials::generate(); store.save_credentials(&credentials).unwrap();
         let mut mls = load_or_create_mls(&store, &credentials).unwrap();
-        crate::anon_queue::enqueue(&store, crate::anon_queue::Envelope { priority:1, queued_at:now_millis(),
+        crate::anon_queue::enqueue(&store, crate::anon_queue::Envelope { authenticated:false, priority:1, queued_at:now_millis(),
             client_ref: [1; ID_LEN], device: [2; KEY_LEN], conversation: vec![4],
             logical_id: None, ciphertext: vec![3; 256], kind: crate::anon_queue::Kind::Essential,
             expires_at: Some(now_millis() + 60_000),
@@ -5345,7 +5376,7 @@ mod tests {
     fn full_queue_rolls_back_ratchet_and_own_history_as_well_as_delivery_state() {
         let store = TempStore::new("atomic-send");
         let (_, mut alice, mut bob, device, group) = established_pair(&store.0);
-        let filler: Vec<_> = (0..128).map(|n| crate::anon_queue::Envelope { priority:1, queued_at:now_millis(),
+        let filler: Vec<_> = (0..128).map(|n| crate::anon_queue::Envelope { authenticated:false, priority:1, queued_at:now_millis(),
             client_ref: [n; ID_LEN], device, conversation: group.clone(), logical_id: None,
             ciphertext: vec![0; 256], kind: crate::anon_queue::Kind::Essential, expires_at: None,
         }).collect();
@@ -5526,7 +5557,7 @@ mod tests {
     #[tokio::test]
     async fn anonymous_failure_preserves_durable_envelope() {
         let store = TempStore::new("anonymous-failure");
-        let envelope = crate::anon_queue::Envelope { priority:1, queued_at:now_millis(),
+        let envelope = crate::anon_queue::Envelope { authenticated:false, priority:1, queued_at:now_millis(),
             client_ref: [1; ID_LEN], device: [2; KEY_LEN], ciphertext: vec![3; 256],
             conversation: vec![4], logical_id: None, kind: crate::anon_queue::Kind::Message, expires_at: None,
         };
@@ -5959,5 +5990,136 @@ mod tests {
         store.remember_peer_identity(&[8u8; KEY_LEN], &[stranger]).unwrap();
 
         assert_eq!(recipients(store, &mine), vec![mine], "чужое устройство просочилось");
+    }    #[tokio::test]
+    async fn stability_relay_keeps_exact_ciphertext_until_matching_ack_and_never_sends_onion_via_auth() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=TempStore::new("relay-durable");let(_,mut alice,mut bob,device,group)=established_pair(&store.0);
+        store.0.save_setting(DELIVERY_POLICY_KEY,b"explicit_relay").unwrap();
+        let body="\u{2063}OBS1:{\"v\":1,\"type\":\"text\",\"id\":\"durable-relay\",\"text\":\"hello\"}";
+        let waiting=PendingSend{device,body:body.into(),stored:false};
+        remember_send(&store.0,&waiting).unwrap();queue_private_message(&store.0,&mut alice,&group,&waiting).unwrap();
+        assert!(pending_sends(&store.0).unwrap().is_empty());
+        let original=crate::anon_queue::load(&store.0).unwrap()[0].clone();assert!(original.authenticated);
+        let(pipe,peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let mut socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let mut server=WebSocketStream::from_raw_socket(peer,Role::Server,None).await;
+        let sink:EventSink=Arc::new(|_|{});let(mut live,mut pending)=(Live::default(),HashMap::new());let(tx,_rx)=mpsc::unbounded_channel();
+        flush_anonymous(&mut socket,&store.0,&sink,&mut live,false,&tx).await.unwrap();
+        let sent=server.next().await.unwrap().unwrap().into_data();assert_eq!(sent[0],op::SEND);assert!(live.direct_inflight.contains_key(&original.client_ref));
+        assert_eq!(crate::anon_queue::load(&store.0).unwrap()[0],original);
+        invalidate_network(&mut live,&mut mpsc::unbounded_channel().1);
+        flush_anonymous(&mut socket,&store.0,&sink,&mut live,false,&tx).await.unwrap();
+        assert_eq!(server.next().await.unwrap().unwrap().into_data(),sent);
+        let mut ack=original.client_ref.to_vec();ack.extend_from_slice(&[8;ID_LEN]);
+        on_frame(&mut socket,&proto::frame(op::SEND_OK,&ack),&store.0,&mut alice,&sink,&mut pending,&mut live,false,&tx).await.unwrap();
+        assert!(crate::anon_queue::load(&store.0).unwrap().is_empty());
+        assert!(matches!(bob.process(&original.ciphertext).unwrap(),Incoming::Message{..}));
+        let mut onion=original;onion.client_ref=[4;ID_LEN];onion.authenticated=false;
+        crate::anon_queue::enqueue(&store.0,onion).unwrap();
+        flush_anonymous(&mut socket,&store.0,&sink,&mut live,false,&tx).await.unwrap();assert!(live.direct_inflight.is_empty());
     }
+
+    #[tokio::test]
+    async fn stability_only_one_rotation_owner_and_queue_full_rolls_back_epoch() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (store,mut alice,mut bob,device,group)=loop {
+            let store=TempStore::new("rotate-owner");let(_,alice,bob,device,group)=established_pair(&store.0);
+            if alice.device_pub()<device {break(store,alice,bob,device,group);}
+        };
+        let(pipe,_peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let mut socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let sink:EventSink=Arc::new(|_|{});
+        let peer_store=TempStore::new("rotate-peer");peer_store.0.set_conversation(&alice.device_pub(),&group).unwrap();
+        peer_store.0.save_mls(&bob.signer_public(),&bob.snapshot()).unwrap();
+        peer_store.0.save_setting(REKEYED_KEY,&serde_json::to_vec(&std::collections::BTreeMap::from([(hex::encode(&group),0i64)])).unwrap()).unwrap();
+        let before=bob.inspect(&group).unwrap().epoch;
+        rekey_stale(&mut socket,&peer_store.0,&mut bob,&sink).await.unwrap();assert_eq!(bob.inspect(&group).unwrap().epoch,before);assert!(crate::anon_queue::load(&peer_store.0).unwrap().is_empty());
+        let(owner,other,owner_store)=(&mut alice,&mut bob,&store.0);let _=device;
+        owner_store.save_setting(REKEYED_KEY,&serde_json::to_vec(&std::collections::BTreeMap::from([(hex::encode(&group),0i64)])).unwrap()).unwrap();
+        let before=owner.inspect(&group).unwrap().epoch_authenticator;
+        let filler:Vec<_>=(0..128).map(|n|crate::anon_queue::Envelope{authenticated:false,priority:1,queued_at:0,client_ref:[n;ID_LEN],device:[9;KEY_LEN],conversation:vec![1],logical_id:None,ciphertext:vec![3],kind:crate::anon_queue::Kind::Message,expires_at:None}).collect();
+        crate::anon_queue::enqueue_batch(owner_store,filler).unwrap();
+        rekey_stale(&mut socket,owner_store,owner,&sink).await.unwrap();assert_eq!(owner.inspect(&group).unwrap().epoch_authenticator,before);
+        for n in 0..128 {crate::anon_queue::acknowledge(owner_store,&[n;ID_LEN]).unwrap();}
+        rekey_stale(&mut socket,owner_store,owner,&sink).await.unwrap();let queue=crate::anon_queue::load(owner_store).unwrap();assert_eq!(queue.len(),1);
+        other.process(&queue[0].ciphertext).unwrap();assert_eq!(owner.inspect(&group).unwrap().epoch_authenticator,other.inspect(&group).unwrap().epoch_authenticator);
+    }
+
+    #[tokio::test]
+    async fn stability_first_message_waits_durably_for_keys_without_duplicate_claims() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=TempStore::new("first-intent");let credentials=Credentials::generate();store.0.save_credentials(&credentials).unwrap();
+        let mut alice=load_or_create_mls(&store.0,&credentials).unwrap();let key=keys::SecretKey::generate();let mut bob=Mls::create(&key).unwrap();let device=key.public();
+        let(pipe,_peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let mut socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let sink:EventSink=Arc::new(|_|{});let mut pending=HashMap::new();let mut outbox=Vec::new();
+        for id in ["first","second"] {
+            let body=format!("\u{2063}OBS1:{}",serde_json::json!({"v":1,"type":"text","id":id,"text":id}));
+            deliver(&mut socket,&store.0,&mut alice,&sink,&mut pending,PendingSend{device,body,stored:false},&mut outbox,None).await.unwrap();
+        }
+        assert_eq!(pending.len(),1);assert_eq!(pending_sends(&store.0).unwrap().len(),2);
+        let reference=*pending.keys().next().unwrap();let mut empty=reference.to_vec();empty.push(0);
+        on_key_package(&mut socket,&empty,&store.0,&mut alice,&sink,&mut pending,&mut outbox,None).await.unwrap();
+        assert_eq!(pending_sends(&store.0).unwrap().len(),2);assert!(pending.is_empty());
+        // Simulate connection/process restart: replay only from encrypted storage.
+        for waiting in pending_sends(&store.0).unwrap(){deliver(&mut socket,&store.0,&mut alice,&sink,&mut pending,waiting,&mut outbox,None).await.unwrap();}
+        assert_eq!(pending.len(),1);let reference=*pending.keys().next().unwrap();let mut response=reference.to_vec();response.push(1);response.extend_from_slice(&bob.key_packages(1).unwrap().remove(0));
+        on_key_package(&mut socket,&response,&store.0,&mut alice,&sink,&mut pending,&mut outbox,None).await.unwrap();
+        for waiting in pending_sends(&store.0).unwrap(){deliver(&mut socket,&store.0,&mut alice,&sink,&mut pending,waiting,&mut outbox,None).await.unwrap();}
+        assert!(pending_sends(&store.0).unwrap().is_empty());let queue=crate::anon_queue::load(&store.0).unwrap();assert_eq!(queue.len(),3);
+        bob.process(&queue[0].ciphertext).unwrap();for item in &queue[1..]{assert!(matches!(bob.process(&item.ciphertext).unwrap(),Incoming::Message{..}));}
+    }
+
+    #[tokio::test(start_paused=true)]
+    async fn stability_missing_ack_reconnects_even_with_healthy_heartbeats() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=TempStore::new("missing-relay-ack");let(credentials,mut alice,_bob,device,group)=established_pair(&store.0);
+        store.0.save_setting(DELIVERY_POLICY_KEY,b"explicit_relay").unwrap();
+        queue_private_message(&store.0,&mut alice,&group,&PendingSend{device,body:"hello".into(),stored:false}).unwrap();
+        let(pipe,peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let mut server=WebSocketStream::from_raw_socket(peer,Role::Server,None).await;
+        let server_task=tokio::spawn(async move{let mut tick=tokio::time::interval(Duration::from_secs(2));loop{tokio::select!{
+            _=tick.tick()=>{if server.send(Message::Binary(proto::frame(op::PONG,&[]))).await.is_err(){break;}},
+            frame=server.next()=>{if frame.is_none(){break;}}
+        }}});
+        let(_tx,mut commands)=mpsc::unbounded_channel();let(outcomes,mut incoming)=mpsc::unbounded_channel();let mut live=Live::default();
+        let greeting=Greeting{heartbeat_sec:30,invite_entry:true,ton_entry:false,profiles:false,decor:false,devices:false,sealed_sender:false};
+        let handshake=Handshake::Authenticated{key_packages:Some(KEY_PACKAGES_PER_CONNECT),device_id:hex::encode(credentials.device_pub()),admin:false};
+        let sink:EventSink=Arc::new(|_|{});let started=tokio::time::Instant::now();
+        let result=pump(socket,&store.0,&mut alice,&sink,&mut commands,greeting,handshake,&mut live,outcomes,&mut incoming).await;
+        assert!(matches!(result,Err(CoreError::Transport(ref message)) if message.contains("acknowledgement")));
+        assert!(started.elapsed()<=Duration::from_secs(46));assert_eq!(crate::anon_queue::load(&store.0).unwrap().len(),1);server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn stability_repair_diverged_channel_preserves_identity_history_and_peer_binding() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store=TempStore::new("diverged-repair");let(credentials,mut alice,mut bob,device,group)=established_pair(&store.0);
+        store.0.insert_message(&[88;ID_LEN],&group,true,1,b"existing history").unwrap();
+        alice.rekey(&group).unwrap();bob.rekey(&group).unwrap();
+        let bad=bob.encrypt(&group,b"cannot decrypt before repair",&credentials.device_pub()).unwrap();assert!(alice.process(&bad).is_err());
+        let(pipe,_peer)=tokio::io::duplex(65536);let transport:Box<dyn NetworkStream>=Box::new(pipe);
+        let mut socket=WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(transport),Role::Client,None).await;
+        let waiting=PendingSend{device,body:CHANNEL_READY.into(),stored:true};remember_send(&store.0,&waiting).unwrap();
+        let reference=[54;ID_LEN];let mut pending=HashMap::from([(reference,Claim::Start(waiting))]);
+        let mut response=reference.to_vec();response.push(1);response.extend_from_slice(&bob.key_packages(1).unwrap().remove(0));
+        let sink:EventSink=Arc::new(|_|{});on_key_package(&mut socket,&response,&store.0,&mut alice,&sink,&mut pending,&mut Vec::new(),None).await.unwrap();
+        let repaired=store.0.conversation_with(&device).unwrap().unwrap();assert_ne!(group,repaired);
+        assert_eq!(store.0.thread_of(&repaired).unwrap(),group);assert_eq!(store.0.load_credentials().unwrap().identity_pub(),credentials.identity_pub());
+        assert_eq!(store.0.list_messages(&group,10,None).unwrap()[0].body,b"existing history");
+        for item in crate::anon_queue::load(&store.0).unwrap(){bob.process(&item.ciphertext).unwrap();}
+        let reply=bob.encrypt(&repaired,b"working again",&credentials.device_pub()).unwrap();assert!(matches!(alice.process(&reply).unwrap(),Incoming::Message{plaintext,..} if plaintext==b"working again"));
+    }
+
+    #[test]
+    fn stability_duplicate_guard_is_per_device_not_shared_history_thread() {
+        let store=TempStore::new("shared-thread-send");let(_,mut alice,_bob,device,group)=established_pair(&store.0);
+        let key=keys::SecretKey::generate();let other=Mls::create(&key).unwrap();let package=other.key_packages(1).unwrap().remove(0);
+        let(second,_)=alice.start_conversation(&package,&key.public()).unwrap();store.0.set_conversation(&key.public(),&second).unwrap();store.0.set_thread(&second,&group).unwrap();
+        let body="\u{2063}OBS1:{\"type\":\"text\",\"id\":\"same-logical-id\",\"text\":\"all devices\"}";
+        for(device,channel) in [(device,group),(key.public(),second)]{queue_private_message(&store.0,&mut alice,&channel,&PendingSend{device,body:body.into(),stored:false}).unwrap();}
+        assert_eq!(crate::anon_queue::load(&store.0).unwrap().len(),2);
+    }
+
 }
