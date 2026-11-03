@@ -430,4 +430,10 @@
     <string name="tablet_private">Пространство\nдля личного.</string>
     <string name="tablet_keys">Ваши ключи. Ваши разговоры.</string>
     <string name="calls_preview">Звонки · предварительная версия</string>
+    <string name="notification_content_mode">Содержимое уведомлений</string>
+    <string name="notification_content_hidden">Скрыто</string>
+    <string name="notification_content_sender">Отправитель</string>
+    <string name="notification_content_text">Текст</string>
+    <string name="notification_content_both">Отправитель и текст</string>
+    <string name="notification_sender_label">Отправитель</string>
 </resources>

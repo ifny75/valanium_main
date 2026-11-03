@@ -2189,6 +2189,18 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Переключатель и выбор задержки в настройках. */
     private void wireAppLock() {
+        findViewById(R.id.notification_content_mode).setOnClickListener(view -> {
+            String[] labels = {getString(R.string.notification_content_hidden), getString(R.string.notification_content_sender),
+                    getString(R.string.notification_content_text), getString(R.string.notification_content_both)};
+            android.content.SharedPreferences preferences = getSharedPreferences("notification_privacy", MODE_PRIVATE);
+            int current = preferences.getInt("content_mode", 0);
+            if (current < 0 || current >= labels.length) current = 0;
+            new AlertDialog.Builder(this).setTitle(R.string.notification_content_mode)
+                    .setSingleChoiceItems(labels, current, (dialog, which) -> {
+                        preferences.edit().putInt("content_mode", which).apply();
+                        dialog.dismiss();
+                    }).setNegativeButton(R.string.cancel, null).show();
+        });
         LocalSecretStore secrets = new LocalSecretStore(this);
         Switch lock = findViewById(R.id.app_lock);
         View after = findViewById(R.id.app_lock_after);

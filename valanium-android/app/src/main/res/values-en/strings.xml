@@ -430,4 +430,10 @@
     <string name="tablet_private">Room for\nprivacy.</string>
     <string name="tablet_keys">Your keys. Your conversations.</string>
     <string name="calls_preview">Calls · preview</string>
+    <string name="notification_content_mode">Notification contents</string>
+    <string name="notification_content_hidden">Hidden</string>
+    <string name="notification_content_sender">Sender</string>
+    <string name="notification_content_text">Text</string>
+    <string name="notification_content_both">Sender and text</string>
+    <string name="notification_sender_label">Sender</string>
 </resources>
