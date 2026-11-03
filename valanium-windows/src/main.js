@@ -202,13 +202,18 @@ function showDesktopNotification({ title, text, device = null, avatarOf = null }
   // Звук играет сама карточка, а не это окно: уведомление — это она, и звучать
   // должно ровно то, что показалось. Окно приложения при этом может быть
   // свёрнуто или закрыто на другой рабочий стол.
+  const mode = preferences?.notificationContent ?? "hidden";
+  const showSender = mode === "sender" || mode === "both";
+  const showText = mode === "text" || mode === "both";
+  const face = showSender ? (avatarOf ?? device) : null;
+  const profile = face ? profileFor(face) : null;
   invoke("show_desktop_notification", {
     payload: {
-      title: "Valanium",
-      text: "",
-      initials: "V",
-      avatarMime: null,
-      avatarBase64: null,
+      title: showSender ? title : "Valanium",
+      text: showText ? text : "",
+      initials: face ? initials(face) : "V",
+      avatarMime: profile?.avatar_mime ?? null,
+      avatarBase64: profile?.avatar_base64 ?? null,
       // Кому принадлежит уведомление: по щелчку карточка откроет эту беседу.
       device,
       color: preferences?.notificationColor ?? "graphite",
@@ -2643,6 +2648,7 @@ const preferenceDefaults = {
   notificationColor: "graphite",
   notificationPosition: "top",
   notificationSound: true,
+  notificationContent: "hidden",
 };
 
 const ROUTE_MIGRATION_NOTICE = "valanium.route-migrated-from-multihop";
@@ -2805,6 +2811,9 @@ function applyPreferences() {
   $("toggle-voice-autoplay").classList.toggle("on", preferences.voiceAutoplay);
   $("auto-scale-toggle").classList.toggle("on", preferences.autoScale);
   $("notification-sound-toggle").classList.toggle("on", preferences.notificationSound);
+  for (const button of document.querySelectorAll("#notification-content [data-notification-content]")) {
+    button.classList.toggle("active", button.dataset.notificationContent === preferences.notificationContent);
+  }
   $("notification-size-range").value = String(preferences.notificationSize);
   $("notification-size-value").textContent = `${preferences.notificationSize}%`;
   for (const button of document.querySelectorAll("#notification-colors [data-notification-color]")) {
@@ -2965,6 +2974,14 @@ $("autostart-toggle").addEventListener("click", async () => {
     renderAutostart();
   }
 });
+
+for (const button of document.querySelectorAll("#notification-content [data-notification-content]")) {
+  button.addEventListener("click", () => {
+    preferences.notificationContent = button.dataset.notificationContent;
+    applyPreferences();
+    savePreferences();
+  });
+}
 
 $("notification-sound-toggle").addEventListener("click", () => {
   preferences.notificationSound = !preferences.notificationSound;
