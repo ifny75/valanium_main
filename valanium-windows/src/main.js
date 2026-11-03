@@ -199,18 +199,16 @@ function notificationText(content) {
 function showDesktopNotification({ title, text, device = null, avatarOf = null }) {
   // Аватар — того, кто написал; беседа по щелчку — та, где он написал. В
   // группе это разные вещи.
-  const face = avatarOf ?? device;
-  const profile = face ? profileFor(face) : null;
   // Звук играет сама карточка, а не это окно: уведомление — это она, и звучать
   // должно ровно то, что показалось. Окно приложения при этом может быть
   // свёрнуто или закрыто на другой рабочий стол.
   invoke("show_desktop_notification", {
     payload: {
-      title,
-      text,
-      initials: face ? initials(face) : "O",
-      avatarMime: profile?.avatar_mime ?? null,
-      avatarBase64: profile?.avatar_base64 ?? null,
+      title: "Valanium",
+      text: "",
+      initials: "V",
+      avatarMime: null,
+      avatarBase64: null,
       // Кому принадлежит уведомление: по щелчку карточка откроет эту беседу.
       device,
       color: preferences?.notificationColor ?? "graphite",

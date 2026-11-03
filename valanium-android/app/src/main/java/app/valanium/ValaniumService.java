@@ -271,9 +271,7 @@ public final class ValaniumService extends Service {
                     : new Notification.Builder(context);
             Notification notification = builder
                     .setSmallIcon(R.drawable.ic_messenger_status)
-                    .setContentTitle(context.getString(R.string.notification_new_message))
-                    .setContentText(preview)
-                    .setStyle(new Notification.BigTextStyle().bigText(preview))
+                    .setContentTitle(context.getString(R.string.app_name))
                     .setCategory(Notification.CATEGORY_MESSAGE)
                     .setVisibility(Notification.VISIBILITY_PRIVATE)
                     .setContentIntent(content)
