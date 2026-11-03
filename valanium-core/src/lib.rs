@@ -33,6 +33,8 @@ pub mod profile;
 pub mod proto;
 pub mod recovery;
 pub mod store;
+#[cfg(feature = "full-db-encryption")]
+mod encrypted_sqlite;
 pub mod totp;
 
 pub use error::{CoreError, Result};

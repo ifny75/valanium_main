@@ -274,6 +274,9 @@ impl Store {
     /// Открывает или создаёт базу. Неверный пароль обнаруживается при первом
     /// же чтении запечатанной записи, а не молчаливо.
     pub fn open(path: &str, password: &[u8]) -> Result<Self> {
+        #[cfg(feature = "full-db-encryption")]
+        let connection = crate::encrypted_sqlite::open(path, password)?;
+        #[cfg(not(feature = "full-db-encryption"))]
         let connection = Connection::open(path)?;
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;")?;
         connection.execute_batch(SCHEMA)?;
@@ -843,10 +846,14 @@ mod tests {
             let store = Store::open(db.path(), b"right").unwrap();
             store.save_credentials(&Credentials::generate()).unwrap();
         }
-        let store = Store::open(db.path(), b"wrong").unwrap();
-        // Строка на месте, но расшифровать её нечем.
-        assert!(store.has_credentials().unwrap());
-        assert!(matches!(store.load_credentials(), Err(CoreError::StoreLocked)));
+        #[cfg(feature = "full-db-encryption")]
+        assert!(matches!(Store::open(db.path(), b"wrong"), Err(CoreError::StoreLocked)));
+        #[cfg(not(feature = "full-db-encryption"))]
+        {
+            let store = Store::open(db.path(), b"wrong").unwrap();
+            assert!(store.has_credentials().unwrap());
+            assert!(matches!(store.load_credentials(), Err(CoreError::StoreLocked)));
+        }
     }
 
     #[test]
@@ -949,8 +956,13 @@ mod tests {
             let store = Store::open(db.path(), b"right").unwrap();
             store.save_mls(b"public", b"secret").unwrap();
         }
-        let store = Store::open(db.path(), b"wrong").unwrap();
-        assert!(matches!(store.load_mls(), Err(CoreError::StoreLocked)));
+        #[cfg(feature = "full-db-encryption")]
+        assert!(matches!(Store::open(db.path(), b"wrong"), Err(CoreError::StoreLocked)));
+        #[cfg(not(feature = "full-db-encryption"))]
+        {
+            let store = Store::open(db.path(), b"wrong").unwrap();
+            assert!(matches!(store.load_mls(), Err(CoreError::StoreLocked)));
+        }
     }
 
     #[test]

@@ -11,6 +11,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
 default = []
+# Opt-in until legacy migration and platform key lifecycle are integrated.
+full-db-encryption = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
 # Платный вход через TON. Логика цела и покрыта тестами, но в сборку по
 # умолчанию не входит: пока вход только по инвайтам.
 ton = []
