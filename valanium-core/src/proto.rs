@@ -32,6 +32,8 @@ pub mod op {
     pub const USERNAME_FOUND: u8 = 0x25;
     pub const ACCESS_OK: u8 = 0x2a;
     pub const ADMIN_OK: u8 = 0x2c;
+    /// Ответы бывших открытых каналов. Клиент их больше не запрашивает и
+    /// игнорирует, коды не переиспользуются.
     pub const CHANNEL_OK: u8 = 0x32;
     pub const CHANNEL_POST: u8 = 0x33;
     pub const DEVICE_OK: u8 = 0x3f;
@@ -61,17 +63,6 @@ pub mod op {
     /// Кадры владельца сервера. Права проверяет сервер по ключу личности.
     pub const ADMIN_GET: u8 = 0x2b;
     pub const ADMIN_ACTION: u8 = 0x2d;
-    /// Открытые каналы. Шифрования здесь нет — см. Command::ChannelPublish.
-    pub const CHANNEL_CREATE: u8 = 0x34;
-    pub const CHANNEL_PUBLISH: u8 = 0x35;
-    pub const CHANNEL_LIST: u8 = 0x36;
-    pub const CHANNEL_FEED: u8 = 0x37;
-    pub const CHANNEL_SUB: u8 = 0x38;
-    pub const CHANNEL_FIND: u8 = 0x39;
-    pub const CHANNEL_DELETE_POST: u8 = 0x3a;
-    pub const CHANNEL_DELETE: u8 = 0x3b;
-    pub const CHANNEL_UPDATE: u8 = 0x3c;
-    pub const CHANNEL_ADMIN: u8 = 0x3d;
     pub const DEVICE_REVOKE_OTHERS: u8 = 0x3e;
     /// Свои собственные устройства: личность сервер берёт из сессии.
     pub const DEVICE_LIST: u8 = 0x42;
@@ -440,10 +431,6 @@ pub fn profile_decor_sealed_frame(sealed: &str) -> Result<Vec<u8>> {
 
 /// Кадры каналов. Тело собирается из того, что дал интерфейс: у канала нет
 /// шифрования, и прятать здесь нечего — прятать надо было бы в диалоге.
-pub fn channel_frame(opcode: u8, body: &serde_json::Value) -> Result<Vec<u8>> {
-    json_frame(opcode, body)
-}
-
 pub fn admin_get_frame(offset: u64) -> Result<Vec<u8>> {
     json_frame(op::ADMIN_GET, &serde_json::json!({ "offset": offset }))
 }

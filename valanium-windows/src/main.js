@@ -817,18 +817,8 @@ async function boot() {
  * тексту в нём надо понять, чего человек хочет — отфильтровать список или
  * написать новому собеседнику.
  */
-/**
- * Ссылка на публичный канал: `valanium.com/channel/notes`.
- *
- * Отдельного обработчика протокола в системе нет, и заводить его ради этого —
- * значит просить у человека установку и права. Вставленная в поле ссылка
- * открывает канал ничуть не хуже.
- */
-const CHANNEL_LINK = /^(?:https?:\/\/)?(?:www\.)?getvalanium\.xyz\/channel\/([a-z][a-z0-9_]{2,29})\/?$/i;
-
 function looksLikeAddress(raw) {
-  return CHANNEL_LINK.test(raw)
-    || /^OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/i.test(raw)
+  return /^OBS-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/i.test(raw)
     || /^[0-9a-f]{64}$/i.test(raw);
 }
 
@@ -844,14 +834,6 @@ $("form-omni").addEventListener("submit", (event) => {
   const raw = $("omni").value.trim();
   // Enter в поле поиска не должен ничего открывать: там просто слово.
   if (!looksLikeAddress(raw)) return;
-  const link = CHANNEL_LINK.exec(raw);
-  if (link) {
-    $("omni").value = "";
-    hideSearchResult();
-    openTab("channels");
-    submit({ type: "channel_find", handle: link[1].toLowerCase() });
-    return;
-  }
   // Новый контакт открывается по коду чата или адресу устройства.
   const peer = raw.toLowerCase();
   const chatCode = raw.toUpperCase();
@@ -926,13 +908,6 @@ function profileColor(key) {
 function paintName(node, device) {
   const profile = profileFor(device);
   node.textContent = displayName(device);
-  const glyph = emblemGlyph(profile?.emblem);
-  if (glyph) {
-    const mark = document.createElement("span");
-    mark.className = "emblem";
-    mark.textContent = glyph;
-    node.append(mark);
-  }
   // Цвет достаётся подложке аватара, а не буквам: см. paintTint.
   node.style.color = "";
 }
@@ -946,9 +921,8 @@ function paintName(node, device) {
  */
 function paintTint(node, color) {
   if (!node) return;
-  const value = profileColor(color);
-  node.style.setProperty("--tint", value || "transparent");
-  node.classList.toggle("tinted", Boolean(value));
+  node.style.setProperty("--tint", "transparent");
+  node.classList.remove("tinted");
 }
 
 /**
@@ -962,6 +936,7 @@ function paintTint(node, color) {
 const AVATAR_PALETTE = [
   ["#8b6ff6", "#5e4fdb"], ["#ff7a54", "#ee4a4f"], ["#ffb952", "#ff843d"],
   ["#50ccab", "#2d99bc"], ["#5c8ef7", "#7259de"], ["#e65eb1", "#9a51d2"],
+  ["#40bede", "#2979d6"], ["#9ed65c", "#34a86e"],
 ];
 
 /** Хеш строки по правилу Java: тот же индекс палитры, что на телефоне. */
@@ -973,19 +948,9 @@ function javaHash(text) {
   return hash;
 }
 
-function mixHex(color, onto, amount) {
-  const parse = (hex) => [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16));
-  const [red, green, blue] = parse(color);
-  const [red2, green2, blue2] = parse(onto);
-  const channel = (one, two) => Math.round(one * amount + two * (1 - amount))
-    .toString(16).padStart(2, "0");
-  return `#${channel(red, red2)}${channel(green, green2)}${channel(blue, blue2)}`;
-}
-
-function avatarGradient(seed, tint) {
-  // Выбранный цвет профиля перебивает палитру: человек назначил его сам.
-  if (tint) return `linear-gradient(135deg,${mixHex(tint, "#ffffff", 0.78)},${mixHex(tint, "#000000", 0.78)})`;
-  const [start, end] = AVATAR_PALETTE[Math.abs(javaHash(seed) % AVATAR_PALETTE.length)];
+function avatarGradient(seed) {
+  const size = AVATAR_PALETTE.length;
+  const [start, end] = AVATAR_PALETTE[((javaHash(seed || "") % size) + size) % size];
   return `linear-gradient(135deg,${start},${end})`;
 }
 
@@ -1001,7 +966,7 @@ function applyAvatar(node, device) {
   const text = initials(device);
   node.textContent = text;
   node.classList.remove("has-avatar", "tinted");
-  node.style.backgroundImage = avatarGradient(text, profileColor(profile?.color));
+  node.style.backgroundImage = avatarGradient(device);
 }
 
 /**
@@ -1226,7 +1191,6 @@ function selectConversation(peer) {
   renderReplyBar();
   showTyping(peer, typingPeers.has(peer));
   refreshPeerState();
-  showChannelPanel(false);
   $("chat-header").classList.remove("hidden");
   $("form-send").classList.remove("hidden");
   $("chat-empty").classList.add("hidden");
@@ -1963,64 +1927,6 @@ const handlers = {
     // База сменилась целиком — перечитываем то, что показано на экране.
     submit({ type: "status" });
     submit({ type: "conversations" });
-  },
-
-  channels(event) {
-    const report = event.report ?? {};
-    if (Array.isArray(report.channels)) {
-      channels.clear();
-      for (const channel of report.channels) channels.set(channel.id, channel);
-      renderChannelList();
-    }
-    if (report.found !== undefined) {
-      if (report.found) {
-        channels.set(report.found.id, report.found);
-        renderChannelList();
-        openChannelFeed(report.found.id);
-      } else {
-        toast(trTemplate`Канала @${report.query} нет`);
-      }
-    }
-    if (report.closed) {
-      channels.delete(report.closed);
-      renderChannelList();
-      if (openChannel === report.closed) {
-        openChannel = null;
-        showChannelPanel(false);
-        $("chat-empty").classList.remove("hidden");
-        $("chat-header").classList.remove("hidden");
-        toast(report.handle ? trTemplate`Канал @${report.handle} закрыт` : tr("Канал закрыт"));
-      }
-    }
-    if (report.updated) {
-      channels.set(report.updated.id, report.updated);
-      renderChannelList();
-      // Открытая панель настроек показывает состав редакции: он только что
-      // мог измениться этим же ответом.
-      channelSettingsModal?.__paintAdmins?.();
-      if (openChannel === report.updated.id) {
-        channelOldest = null;
-        openChannelFeed(report.updated.id);
-      }
-    }
-    if (report.opened) openChannelFeed(report.opened.id);
-    if (report.channel && report.posts) renderChannel(report);
-    // Опубликованное и убранное показываем перечитыванием ленты: так на экране
-    // ровно то, что лежит на сервере, а не то, что мы надеемся там увидеть.
-    if (report.published || report.removed !== undefined) {
-      channelOldest = null;
-      openChannelFeed(report.channel ?? openChannel);
-    }
-  },
-
-  channel_post(event) {
-    const report = event.report ?? {};
-    if (report.channel === openChannel) {
-      channelOldest = null;
-      openChannelFeed(openChannel);
-      return;
-    }
-    toast(trTemplate`@${report.handle}: новый пост`);
   },
 
   group(event) {
@@ -3480,22 +3386,6 @@ for (const id of ["editor-brightness", "editor-contrast", "editor-saturation", "
 $("editor-send").addEventListener("click", async () => {
   const quality = Number($("editor-quality").value) / 100;
 
-  if (editor.target === "channel-icon") {
-    const { data, tooBig } = renderPhoto(AVATAR_MAX_BASE64, quality);
-    if (tooBig) {
-      toast(tr("Значок не помещается — уменьшите кадр"));
-      return;
-    }
-    closeEditor();
-    await submit({
-      type: "channel_update",
-      channel: openChannel,
-      icon: { mime: "image/jpeg", base64: data },
-    });
-    toast(tr("Значок канала загружается…"));
-    return;
-  }
-
   if (editor.target === "avatar") {
     const { data, tooBig } = renderPhoto(AVATAR_MAX_BASE64, quality);
     if (tooBig) {
@@ -3845,7 +3735,7 @@ const PRIVACY_GROUPS = [
   {
     title: tr("Профиль и поиск"),
     rules: [
-      { key: "profile_avatar", label: tr("Аватар"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
+      { key: "profile_avatar", label: tr("Аватар"), hint: "", scopes: ["everyone", "approved", "contacts", "nobody"] },
       { key: "profile_name", label: tr("Имя профиля"), hint: "", scopes: ["everyone", "contacts", "nobody"] },
     ],
   },
@@ -4805,10 +4695,9 @@ function requestCard(device, entry) {
   return card;
 }
 
-/** Переключает раздел списка. Отдельной функцией: ссылка на канал открывает
- *  вкладку «Публичные» сама, не дожидаясь нажатия. */
+/** Переключает раздел списка. */
 function openTab(list) {
-  const order = ["chats", "requests", "channels"];
+  const order = ["chats", "requests"];
   const active = document.querySelector("#section-tabs button.active")?.dataset.list ?? "chats";
   const sidebar = document.querySelector("#screen-main .sidebar");
   if (sidebar && active !== list) {
@@ -4821,202 +4710,10 @@ function openTab(list) {
   }
   $("conversations").classList.toggle("hidden", list !== "chats");
   $("requests").classList.toggle("hidden", list !== "requests");
-  $("channels-pane").classList.toggle("hidden", list !== "channels");
-  if (list === "channels") submit({ type: "channel_list" });
 }
 
 for (const tab of document.querySelectorAll("#section-tabs button[data-list]")) {
   tab.addEventListener("click", () => openTab(tab.dataset.list));
-}
-
-// --- каналы ---------------------------------------------------------------------
-
-/**
- * Открытая лента, которую ведёт один человек.
- *
- * Единственное место в приложении, где содержимое уходит на сервер незашифрованным,
- * — и потому единственное, где интерфейс обязан об этом сказать. Канал открыт по
- * своей природе: подписаться может кто угодно, а значит ключ достался бы любому
- * желающему. Молчать об этом было бы обманом, поэтому предупреждение висит над
- * лентой, а не спрятано в настройках.
- */
-const channels = new Map();
-let openChannel = null;
-let channelOldest = null;
-let channelSettingsModal = null;
-
-function renderChannelList() {
-  const list = $("channels");
-  list.replaceChildren();
-  if (channels.size === 0) {
-    const empty = document.createElement("li");
-    empty.className = "empty-list";
-    empty.textContent = tr("Публичных каналов пока нет. Заведите свой или найдите чужой по имени.");
-    list.appendChild(empty);
-    return;
-  }
-  for (const channel of channels.values()) {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "conversation-button";
-    if (openChannel === channel.id) item.classList.add("active");
-
-    const avatar = document.createElement("span");
-    avatar.className = "conversation-avatar";
-    paintChannelIcon(avatar, channel);
-
-    const copy = document.createElement("span");
-    copy.className = "conversation-copy";
-    const name = document.createElement("b");
-    name.textContent = channel.title;
-    const handle = document.createElement("span");
-    handle.textContent = `@${channel.handle}${channel.owner ? tr(" · ваш") : ""}`;
-    copy.append(name, handle);
-
-    button.append(avatar, copy);
-    button.addEventListener("click", () => openChannelFeed(channel.id));
-    item.appendChild(button);
-    list.appendChild(item);
-  }
-}
-
-function openChannelFeed(id, before = null) {
-  openChannel = id;
-  if (before === null) channelOldest = null;
-  submit({ type: "channel_feed", channel: id, before });
-}
-
-function showChannelPanel(show) {
-  $("channel-panel").classList.toggle("hidden", !show);
-  if (!show) return;
-  // Панель канала и переписка занимают одно место — показывать оба нельзя.
-  $("chat-empty").classList.add("hidden");
-  $("messages").classList.add("hidden");
-  $("form-send").classList.add("hidden");
-  $("chat-header").classList.add("hidden");
-}
-
-function renderChannel(report) {
-  const channel = report.channel;
-  if (!channel) return;
-  channels.set(channel.id, channel);
-  openChannel = channel.id;
-  showChannelPanel(true);
-
-  $("channel-title").textContent = channel.title;
-  $("channel-handle").textContent = `@${channel.handle}`;
-  const role = channelRole(channel);
-  if (role !== "reader") {
-    const tag = document.createElement("span");
-    tag.className = "channel-role";
-    tag.textContent = role === "owner" ? tr("ваш канал") : tr("вы пишете");
-    $("channel-handle").append(" ", tag);
-  }
-  $("channel-about").textContent = channel.about ?? "";
-  paintChannelIcon($("channel-icon"), channel);
-  // Поле ввода — у тех, кто пишет: у владельца и у позванных им в редакцию.
-  $("channel-composer").classList.toggle("hidden", role === "reader");
-
-  const subscribe = $("channel-subscribe");
-  subscribe.classList.toggle("hidden", Boolean(channel.owner));
-  subscribe.textContent = channel.subscribed ? tr("Отписаться") : tr("Подписаться");
-  $("channel-settings").classList.toggle("hidden", !channel.owner);
-  $("channel-delete").classList.toggle("hidden", !channel.owner);
-
-  const feed = $("channel-feed");
-  if (report.posts.length === 0 && channelOldest === null) {
-    feed.replaceChildren();
-    const empty = document.createElement("li");
-    empty.className = "channel-empty";
-    empty.textContent = channel.owner
-      ? tr("Здесь пока пусто. Напишите первый пост.")
-      : tr("Автор ещё ничего не публиковал.");
-    feed.appendChild(empty);
-  } else {
-    if (channelOldest === null) feed.replaceChildren();
-    for (const post of report.posts) feed.appendChild(postNode(post, channel));
-  }
-  channelOldest = report.posts.length > 0
-    ? report.posts[report.posts.length - 1].seq : channelOldest;
-  $("channel-more").classList.toggle("hidden", !report.more);
-  renderChannelList();
-}
-
-/**
- * Роль в канале.
- *
- * Сервер присылает её полем `role`; `owner` остаётся для старых сборок, где
- * поля ещё нет, — иначе после обновления клиента к неподнятому серверу у
- * владельца пропало бы поле ввода.
- */
-function channelRole(channel) {
-  return channel.role ?? (channel.owner ? "owner" : "reader");
-}
-
-/** Публичная ссылка на канал — то, чем делятся вместо адреса устройства. */
-function channelLink(channel) {
-  return `https://valanium.com/channel/${channel.handle}`;
-}
-
-function paintChannelIcon(node, channel) {
-  if (channel.iconBase64 && channel.iconMime) {
-    node.textContent = "";
-    node.style.backgroundImage = `url(data:${channel.iconMime};base64,${channel.iconBase64})`;
-    node.classList.add("has-avatar");
-    return;
-  }
-  const text = (channel.title || channel.handle).slice(0, 2).toUpperCase();
-  node.textContent = text;
-  node.classList.remove("has-avatar");
-  node.style.backgroundImage = avatarGradient(text, "");
-}
-
-function postNode(post, channel) {
-  const item = document.createElement("li");
-  item.dataset.post = post.id;
-
-  const body = document.createElement("div");
-  body.className = "body";
-  body.textContent = post.body;
-
-  const time = document.createElement("time");
-  time.textContent = new Date(post.createdAt).toLocaleString();
-
-  item.append(body, time);
-
-  /*
-    Пометка о неподтверждённом авторстве.
-
-    Канал открыт, и его содержимое видит сервер — это принято. Но кто написал
-    пост, решает подпись, а не сервер: ядро сверяет её с ключом владельца,
-    который мы запомнили при первой встрече с каналом. Не сошлось — говорим
-    прямо, потому что именно так выглядел бы пост, написанный за владельца.
-
-    Ставим пометку, а не прячем пост: у старых клиентов подписи нет вовсе, и
-    прятать их записи значило бы соврать про то, что канал пуст.
-  */
-  if (post.verified === false) {
-    const mark = document.createElement("small");
-    mark.className = "post-unverified";
-    mark.textContent = tr("авторство не подтверждено");
-    mark.title = tr("Пост не подписан ключом владельца канала: так выглядит и")
-      + tr(" запись старого клиента, и запись, сделанная за владельца.");
-    item.appendChild(mark);
-  }
-  if (channel.owner) {
-    const drop = document.createElement("button");
-    drop.type = "button";
-    drop.className = "drop";
-    drop.textContent = tr("Убрать");
-    drop.addEventListener("click", () => {
-      confirmAction(tr("Убрать пост?"),
-        tr("Он исчезнет у всех читателей канала. Отменить это нечем."),
-        () => submit({ type: "channel_delete_post", channel: channel.id, post: post.id }));
-    });
-    item.appendChild(drop);
-  }
-  return item;
 }
 
 // --- перенос аккаунта -----------------------------------------------------------
@@ -5082,82 +4779,6 @@ $("import-file").addEventListener("change", async () => {
     () => submit({ type: "account_import", password, data: contents }));
 });
 
-/**
- * Карточка канала.
- *
- * То же, что показывает Telegram по нажатию на шапку: чем канал является,
- * по какой ссылке он открывается и сколько его читают. Отдельным окном, а не
- * строкой в шапке: сведений набирается на экран, и в шапке им тесно.
- */
-function openChannelInfo() {
-  const channel = channels.get(openChannel);
-  if (!channel) return;
-
-  const role = channelRole(channel);
-  const modal = document.createElement("div");
-  modal.className = "modal";
-
-  const rows = [
-    [tr("Подписчики"), plural(channel.subscribers ?? 0, tr("человек"), tr("человека"), tr("человек"))],
-    [tr("Постов"), String(channel.posts ?? 0)],
-  ];
-  // Состав редакции знает только владелец — сервер её остальным и не отдаёт.
-  if (role === "owner" && Array.isArray(channel.admins)) {
-    rows.push([tr("Редакция"), channel.admins.length === 0
-      ? tr("только вы")
-      : plural(channel.admins.length, tr("человек"), tr("человека"), tr("человек"))]);
-  }
-  rows.push([tr("Заведён"), new Date(channel.createdAt).toLocaleDateString(getLocale())]);
-
-  modal.innerHTML = `<div class="modal-card channel-info">`
-    + `<div class="channel-info-head">`
-    + `<span class="channel-icon" data-icon></span>`
-    + `<div><b data-title></b><small data-subs></small></div>`
-    + `</div>`
-    + trTemplate`<button class="link-preview" data-link type="button" title="Скопировать ссылку">`
-    + trTemplate`<span class="link-preview-copy"><small>Ссылка на канал</small><b data-link-text></b></span>`
-    + `<span class="ui-icon icon-discussion"></span></button>`
-    + `<p class="channel-info-about" data-about></p>`
-    + `<dl class="channel-info-rows">`
-    + rows.map(([name, value]) =>
-      `<div><dt>${name}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")
-    + `</dl>`
-    + `<div class="setting-actions peer-actions">`
-    + trTemplate`<button class="ghost-button" data-close>Закрыть</button>`
-    + (role === "reader" && channel.subscribed
-      ? trTemplate`<button class="ghost-button danger" data-leave>Отписаться</button>` : "")
-    + (role === "owner"
-      ? trTemplate`<button class="ghost-button" data-settings>Настроить</button>` : "")
-    + `</div></div>`;
-
-  modal.querySelector("[data-title]").textContent = channel.title;
-  modal.querySelector("[data-subs]").textContent =
-    plural(channel.subscribers ?? 0, tr("подписчик"), tr("подписчика"), tr("подписчиков"));
-  modal.querySelector("[data-link-text]").textContent = channelLink(channel).replace(/^https:\/\//, "");
-  const about = modal.querySelector("[data-about]");
-  about.textContent = channel.about ?? "";
-  about.classList.toggle("hidden", !channel.about);
-  paintChannelIcon(modal.querySelector("[data-icon]"), channel);
-
-  const close = () => modal.remove();
-  modal.querySelector("[data-close]").addEventListener("click", close);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) close();
-  });
-  modal.querySelector("[data-link]").addEventListener("click", () =>
-    copyText(channelLink(channel), tr("Ссылка на канал скопирована")));
-  modal.querySelector("[data-leave]")?.addEventListener("click", () => {
-    submit({ type: "channel_subscribe", channel: channel.id, subscribe: false });
-    close();
-  });
-  modal.querySelector("[data-settings]")?.addEventListener("click", () => {
-    close();
-    $("channel-settings").click();
-  });
-
-  document.body.appendChild(modal);
-}
-
 /** Число со словом в нужном падеже: «1 подписчик», «2 подписчика», «5 подписчиков». */
 function plural(count, one, few, many) {
   const tail = count % 100;
@@ -5173,225 +4794,6 @@ function escapeHtml(raw) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[ch]);
 }
-
-$("channel-open-info").addEventListener("click", openChannelInfo);
-$("channel-open-info-copy").addEventListener("click", openChannelInfo);
-$("channel-open-info-copy").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    openChannelInfo();
-  }
-});
-
-$("channel-link").addEventListener("click", () => {
-  const channel = channels.get(openChannel);
-  if (channel) copyText(channelLink(channel), tr("Ссылка на канал скопирована"));
-});
-
-/**
- * Настройки канала: название, описание, значок и редакция.
- *
- * Имя канала (`@handle`) здесь не меняется намеренно: на нём держится ссылка,
- * которой уже могли поделиться. Нужно другое имя — это другой канал.
- */
-$("channel-settings").addEventListener("click", () => {
-  const channel = channels.get(openChannel);
-  if (!channel || !channel.owner) return;
-
-  const modal = document.createElement("div");
-  modal.className = "modal";
-  modal.innerHTML = trTemplate`<div class="modal-card"><div class="modal-header"><h2>Настройки канала</h2></div>`
-    + `<div class="group-form">`
-    + trTemplate`<input data-title type="text" maxlength="64" placeholder="Название" />`
-    + trTemplate`<input data-about type="text" maxlength="280" placeholder="Описание" />`
-    + `<div class="setting-actions">`
-    + trTemplate`<button class="ghost-button" data-icon type="button">Сменить значок</button>`
-    + trTemplate`<button class="ghost-button" data-icon-clear type="button">Убрать значок</button>`
-    + trTemplate`<button class="ghost-button" data-link type="button">Скопировать ссылку</button>`
-    + `</div>`
-    + trTemplate`<small class="decor-label">Кто пишет, кроме вас</small>`
-    + `<ul class="channel-admins" data-admins></ul>`
-    + trTemplate`<input data-invite type="text" placeholder="Позвать писать: OBS-код или адрес" />`
-    + `</div>`
-    + trTemplate`<p class="modal-copy">Позванный пишет посты, но не может ни переименовать канал, ни закрыть его, ни позвать других.</p>`
-    + `<div class="setting-actions peer-actions">`
-    + trTemplate`<button class="ghost-button" data-no>Закрыть</button>`
-    + trTemplate`<button class="ghost-button" data-yes>Сохранить</button></div></div>`;
-
-  modal.querySelector("[data-title]").value = channel.title;
-  modal.querySelector("[data-about]").value = channel.about ?? "";
-
-  const admins = modal.querySelector("[data-admins]");
-  const paintAdmins = () => {
-    const current = channels.get(openChannel);
-    admins.replaceChildren();
-    const list = current?.admins ?? [];
-    if (list.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "channel-empty-admins";
-      empty.textContent = tr("Пока никого — пишете только вы.");
-      admins.appendChild(empty);
-      return;
-    }
-    for (const code of list) {
-      const row = document.createElement("li");
-      const name = document.createElement("span");
-      name.textContent = code;
-      const drop = document.createElement("button");
-      drop.type = "button";
-      drop.textContent = tr("Убрать");
-      drop.addEventListener("click", () =>
-        submit({ type: "channel_admin", channel: current.id, who: code, admin: false }));
-      row.append(name, drop);
-      admins.appendChild(row);
-    }
-  };
-  paintAdmins();
-  // Список обновляется ответом сервера, а не на месте: право писать выдаёт он.
-  modal.__paintAdmins = paintAdmins;
-  channelSettingsModal = modal;
-
-  modal.querySelector("[data-link]").addEventListener("click", () =>
-    copyText(channelLink(channel), tr("Ссылка на канал скопирована")));
-  modal.querySelector("[data-icon]").addEventListener("click", () => $("channel-icon-file").click());
-  modal.querySelector("[data-icon-clear]").addEventListener("click", () =>
-    submit({ type: "channel_update", channel: channel.id, icon: null }));
-
-  modal.querySelector("[data-invite]").addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    const who = event.target.value.trim();
-    if (!who) return;
-    event.target.value = "";
-    submit({ type: "channel_admin", channel: channel.id, who });
-  });
-
-  const close = () => {
-    channelSettingsModal = null;
-    modal.remove();
-  };
-  modal.querySelector("[data-no]").addEventListener("click", close);
-  modal.querySelector("[data-yes]").addEventListener("click", () => {
-    const title = modal.querySelector("[data-title]").value.trim();
-    const about = modal.querySelector("[data-about]").value.trim();
-    if (!title) {
-      toast(tr("Название не может быть пустым"));
-      return;
-    }
-    submit({ type: "channel_update", channel: channel.id, title, about });
-    close();
-  });
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) close();
-  });
-  document.body.appendChild(modal);
-});
-
-$("channel-icon-file").addEventListener("change", () => {
-  const file = $("channel-icon-file").files?.[0];
-  $("channel-icon-file").value = "";
-  // Тот же редактор, что у аватара: значок канала тоже квадратный.
-  if (file) openEditor(file, "channel-icon");
-});
-
-/** Тот же формат, что проверяет сервер. Держим рядом, чтобы не расходились. */
-const CHANNEL_HANDLE = /^[a-z][a-z0-9_]{2,29}$/;
-
-/**
- * Заведение канала.
- *
- * Раньше это были два `prompt()` подряд — окна браузера, в которых нельзя ни
- * показать ссылку, ни объяснить, что канал открытый. Здесь человек видит
- * будущий адрес прямо во время набора имени: адрес — это то, чем он будет
- * делиться, и узнавать его постфактум неправильно.
- */
-$("channel-create").addEventListener("click", () => {
-  const modal = document.createElement("div");
-  modal.className = "modal";
-  modal.innerHTML = trTemplate`<div class="modal-card"><div class="modal-header"><h2>Новый канал</h2></div>`
-    + `<div class="group-form">`
-    + `<div class="handle-field"><i>@</i><input data-handle type="text" placeholder="notes" `
-    + `maxlength="30" autocomplete="off" spellcheck="false" /></div>`
-    + `<div class="link-preview static"><span class="link-preview-copy">`
-    + trTemplate`<small>Ссылка на канал</small><b data-link>valanium.com/channel/…</b></span></div>`
-    + trTemplate`<input data-title type="text" placeholder="Название" maxlength="64" />`
-    + trTemplate`<input data-about type="text" placeholder="Описание, необязательно" maxlength="280" />`
-    + `</div>`
-    + trTemplate`<p class="modal-copy">Канал — открытая лента. Посты лежат на сервере <b>без шифрования</b>`
-    + trTemplate` и видны всем, кто знает ссылку. Личная переписка работает иначе.</p>`
-    + `<div class="setting-actions peer-actions">`
-    + trTemplate`<button class="ghost-button" data-no>Отмена</button>`
-    + trTemplate`<button class="ghost-button" data-yes disabled>Завести</button></div></div>`;
-
-  const handleInput = modal.querySelector("[data-handle]");
-  const link = modal.querySelector("[data-link]");
-  const create = modal.querySelector("[data-yes]");
-
-  const refresh = () => {
-    const handle = handleInput.value.trim().replace(/^@/, "").toLowerCase();
-    const valid = CHANNEL_HANDLE.test(handle);
-    link.textContent = handle === ""
-      ? "valanium.com/channel/…"
-      : `valanium.com/channel/${handle}`;
-    link.classList.toggle("bad", handle !== "" && !valid);
-    create.disabled = !valid || modal.querySelector("[data-title]").value.trim() === "";
-  };
-  handleInput.addEventListener("input", refresh);
-  modal.querySelector("[data-title]").addEventListener("input", refresh);
-
-  const close = () => modal.remove();
-  modal.querySelector("[data-no]").addEventListener("click", close);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) close();
-  });
-  create.addEventListener("click", () => {
-    const about = modal.querySelector("[data-about]").value.trim();
-    submit({
-      type: "channel_create",
-      handle: handleInput.value.trim().replace(/^@/, "").toLowerCase(),
-      title: modal.querySelector("[data-title]").value.trim(),
-      about: about === "" ? null : about,
-    });
-    close();
-  });
-
-  document.body.appendChild(modal);
-  handleInput.focus();
-});
-
-$("channel-find").addEventListener("click", () => {
-  const handle = prompt(tr("Имя канала или ссылка на него:"));
-  if (!handle) return;
-  // Человеку прислали ссылку целиком — незачем заставлять его вырезать имя.
-  const name = handle.trim().replace(/^.*\/channel\//, "").replace(/^@/, "");
-  submit({ type: "channel_find", handle: name });
-});
-
-$("channel-subscribe").addEventListener("click", () => {
-  const channel = channels.get(openChannel);
-  if (!channel) return;
-  submit({ type: "channel_subscribe", channel: channel.id, subscribe: !channel.subscribed });
-});
-
-$("channel-delete").addEventListener("click", () => {
-  const channel = channels.get(openChannel);
-  if (!channel) return;
-  confirmAction(tr("Закрыть канал?"),
-    trTemplate`@${channel.handle} исчезнет вместе со всеми постами и подписками. Отменить это нечем.`,
-    () => submit({ type: "channel_delete", channel: channel.id }));
-});
-
-$("channel-more").addEventListener("click", () => {
-  if (openChannel) openChannelFeed(openChannel, channelOldest);
-});
-
-$("channel-composer").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const text = $("channel-text").value.trim();
-  if (!text || !openChannel) return;
-  $("channel-text").value = "";
-  submit({ type: "channel_publish", channel: openChannel, body: text });
-});
 
 // --- проверка правил на входящем ------------------------------------------------
 

@@ -148,7 +148,9 @@ impl Default for Privacy {
             // Юзернейма по умолчанию нет вовсе; когда человек его заводит, он
             // тем самым и соглашается быть находимым.
             discoverable: Rule::new(Scope::Everyone),
-            profile_avatar: Rule::new(Scope::Contacts),
+            // Accepted conversation partners, not only explicit contacts: almost nobody
+            // adds peers to contacts, so the stricter default meant avatars never arrived.
+            profile_avatar: Rule::new(Scope::Approved),
             profile_name: Rule::new(Scope::Everyone),
             profile_username: Rule::new(Scope::Everyone),
         }

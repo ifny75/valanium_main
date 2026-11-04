@@ -322,7 +322,7 @@
     <string name="admin_section">Панель администратора</string>
     <string name="emblem_label">Значок</string>
     <string name="profile_color_label">Цвет профиля</string>
-    <string name="profile_local_note">Аватар, значок и цвет видны собеседникам. Отпечаток и адрес устройства не отправляются никому.</string>
+    <string name="profile_local_note">Аватар видят собеседники, с которыми вы переписываетесь. Отпечаток и адрес устройства не отправляются никому.</string>
     <string name="enter_sends">Отправлять по Enter</string>
     <string name="enter_sends_hint">Иначе Enter переносит строку, а отправляет кнопка</string>
     <string name="confirm_delete">Спрашивать перед удалением</string>

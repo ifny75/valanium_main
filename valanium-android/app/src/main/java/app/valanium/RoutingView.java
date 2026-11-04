@@ -67,8 +67,31 @@ public final class RoutingView extends View {
 
     public void setOnModeChangedListener(OnModeChangedListener value) { listener = value; }
 
+    /** Card height grows with the system font scale instead of clipping labels. */
+    private float cardHeight() {
+        return Math.max(dp(112), nodeY() + dp(14) + sp(7.2f) + dp(14));
+    }
+
+    /** Node row sits below the title and subtitle, whatever their scaled size. */
+    private float nodeY() {
+        return Math.max(dp(72), subtitleBaseline() + dp(32));
+    }
+
+    private float titleBaseline() { return dp(10) + sp(14); }
+
+    private float subtitleBaseline() { return titleBaseline() + dp(4) + sp(9.5f); }
+
+    /** Distance from the card edge to the outer node centres, wide enough for their labels. */
+    private float edgeInset(String... labels) {
+        paint.setTextSize(sp(7.2f));
+        paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        float widest = dp(27);
+        for (String label : labels) widest = Math.max(widest, paint.measureText(label));
+        return widest / 2f + dp(12);
+    }
+
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
-        int wanted = dp(MODES.length * 112 + (MODES.length - 1) * 8);
+        int wanted = Math.round(MODES.length * cardHeight() + (MODES.length - 1) * dp(8));
         setMeasuredDimension(MeasureSpec.getSize(widthSpec), resolveSize(wanted, heightSpec));
     }
 
@@ -115,11 +138,11 @@ public final class RoutingView extends View {
         paint.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         paint.setTextSize(sp(14));
         paint.setColor(Color.rgb(245, 245, 243));
-        canvas.drawText(getContext().getString(TITLES[index]), dp(14), top + dp(22), paint);
+        canvas.drawText(getContext().getString(TITLES[index]), dp(14), top + titleBaseline(), paint);
         paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         paint.setTextSize(sp(9.5f));
         paint.setColor(Color.rgb(145, 145, 145));
-        canvas.drawText(getContext().getString(SUBTITLES[index]), dp(14), top + dp(38), paint);
+        canvas.drawText(getContext().getString(SUBTITLES[index]), dp(14), top + subtitleBaseline(), paint);
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(1));
@@ -130,16 +153,20 @@ public final class RoutingView extends View {
             canvas.drawCircle(getWidth() - dp(20), top + dp(20), dp(3.5f), paint);
         }
 
-        float y = top + dp(72);
+        float y = top + nodeY();
+        String device = getContext().getString(R.string.route_device);
+        String main = getContext().getString(R.string.route_main);
+        float edge = edgeInset(device, main);
+        float span = getWidth() - edge * 2;
         if (index == 2) {
-            float[] xs = {dp(27), getWidth() * .35f, getWidth() * .65f, getWidth() - dp(27)};
+            float[] xs = {edge, edge + span / 3f, edge + span * 2f / 3f, getWidth() - edge};
             drawLinks(canvas, xs, y, active);
             drawNode(canvas, laptop, xs[0], y, getContext().getString(R.string.route_device));
             drawNode(canvas, tor, xs[1], y, getContext().getString(R.string.route_tor));
             drawNode(canvas, tor, xs[2], y, getContext().getString(R.string.route_onion));
             drawNode(canvas, envelope, xs[3], y, getContext().getString(R.string.route_main));
         } else {
-            float[] xs = {dp(30), getWidth() / 2f, getWidth() - dp(30)};
+            float[] xs = {edge, getWidth() / 2f, getWidth() - edge};
             drawLinks(canvas, xs, y, active);
             drawNode(canvas, laptop, xs[0], y, getContext().getString(R.string.route_device));
             drawNode(canvas, relay, xs[1], y, getContext().getString(
@@ -178,7 +205,7 @@ public final class RoutingView extends View {
         paint.setTextSize(sp(7.2f));
         paint.setColor(Color.rgb(118, 118, 118));
         paint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText(label, x, y + dp(24), paint);
+        canvas.drawText(label, x, y + dp(14) + sp(7.2f), paint);
         if (label.equals(getContext().getString(R.string.route_nl))) {
             drawFlag(canvas, x + dp(13), y + dp(18), true);
         } else if (label.equals(getContext().getString(R.string.route_de))) {

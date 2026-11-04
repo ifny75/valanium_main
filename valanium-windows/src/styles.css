@@ -982,12 +982,15 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
    1920x1080, но те же пропорции должны сохраняться и после resize. */
 #screen-main.app-shell{
   --mock-purple:color-mix(in srgb,var(--accent) 42%,#09000f);
+  --m-bg:#020202;--m-sidebar:#070707;--m-panel:#0f0f0f;--m-raised:#191919;--m-hover:#252525;
+  --m-text-strong:#fff;--m-text:#e4e4e4;--m-muted:#848484;--m-faint:#5a5a5a;--m-line:#292929;
+  --m-ink:255,255,255;--m-glass:15,15,15;--m-out-bg:var(--mock-purple);--m-out-text:#fff;
   grid-template-columns:22% minmax(0,1fr)!important;
-  background:#020202;
+  background:var(--m-bg);
   font-family:"Inter UI","Segoe UI",sans-serif;
 }
 #screen-main .sidebar{
-  border-right:0;background:#070707;backdrop-filter:none;-webkit-backdrop-filter:none;
+  border-right:0;background:var(--m-sidebar);backdrop-filter:none;-webkit-backdrop-filter:none;
 }
 #screen-main .sidebar-top{padding:0 27px 7px}
 #screen-main .brand-row{height:80px;gap:14px}
@@ -999,7 +1002,7 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .brand-copy strong{font:600 25px/1.05 "Unbounded",sans-serif;letter-spacing:-.06em}
 #screen-main .brand-copy span{margin-top:3px;color:var(--accent);font:500 13px/1.2 "Inter UI",sans-serif;letter-spacing:.01em}
 #screen-main .brand-actions{gap:4px}
-#screen-main .brand-actions .icon-button{width:36px;height:36px;color:#e9e9e9}
+#screen-main .brand-actions .icon-button{width:36px;height:36px;color:var(--m-text)}
 #screen-main .brand-actions .ui-icon{width:25px;height:25px}
 #screen-main .brand-actions .icon-plus{
   position:relative;width:26px;height:26px;background:transparent;-webkit-mask:none;mask:none;transform:none;
@@ -1011,23 +1014,23 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .brand-actions .icon-plus::after{width:2px;height:22px}
 
 #screen-main .omni-field{
-  height:29px;margin-top:0;padding:0 9px;border:0;border-radius:15px;background:#0f0f0f;box-shadow:none;
+  height:29px;margin-top:0;padding:0 9px;border:0;border-radius:15px;background:var(--m-panel);box-shadow:none;
 }
-#screen-main .omni-field:focus-within{border:0;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
-#screen-main .omni-field>.ui-icon{width:16px;height:16px;color:#4b4b4b}
-#screen-main .omni-field input{font:400 11.5px/1 "Inter UI",sans-serif;color:#ddd}
-#screen-main .omni-field input::placeholder{color:#4a4a4a}
+#screen-main .omni-field:focus-within{border:0;box-shadow:0 0 0 1px rgba(var(--m-ink),.08)}
+#screen-main .omni-field>.ui-icon{width:16px;height:16px;color:var(--m-faint)}
+#screen-main .omni-field input{font:400 11.5px/1 "Inter UI",sans-serif;color:var(--m-text)}
+#screen-main .omni-field input::placeholder{color:var(--m-faint)}
 
 #screen-main .section-tabs{
   display:grid;grid-template-columns:1.08fr 1.02fr 1.1fr;gap:0;height:25px;margin:0 27px 7px;padding:0;
-  overflow:hidden;border:0;border-radius:13px;background:#0f0f0f;
+  overflow:hidden;border:0;border-radius:13px;background:var(--m-panel);
 }
 #screen-main .section-tabs button{
   justify-content:center;gap:7px;height:25px;padding:0 5px;border:0;border-radius:13px;background:transparent;
-  color:#d5d5d5;font:600 12px/1 "Inter UI",sans-serif;letter-spacing:0;text-transform:none;
+  color:var(--m-text);font:600 12px/1 "Inter UI",sans-serif;letter-spacing:0;text-transform:none;
 }
-#screen-main .section-tabs button.active{background:#252525;color:#fff;box-shadow:none}
-#screen-main .section-tabs .ui-icon{display:inline-block;width:16px;height:16px;color:#fff}
+#screen-main .section-tabs button.active{background:var(--m-hover);color:var(--m-text-strong);box-shadow:none}
+#screen-main .section-tabs .ui-icon{display:inline-block;width:16px;height:16px;color:var(--m-text-strong)}
 #screen-main .section-tabs i{display:none}
 .icon-request{--icon:url("assets/svg/password-protection.svg")}
 .icon-public{--icon:url("assets/svg/spy.svg")}
@@ -1038,17 +1041,17 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .conversation-list li{margin:0 0 7px}
 #screen-main .conversation-button{
   min-height:66px;grid-template-columns:46px minmax(0,1fr) auto;gap:11px;padding:8px 11px;
-  border:0!important;border-radius:18px;background:#101010!important;transform:none!important;
+  border:0!important;border-radius:18px;background:var(--m-panel)!important;transform:none!important;
 }
-#screen-main .conversation-list li.active .conversation-button{background:#191919!important}
+#screen-main .conversation-list li.active .conversation-button{background:var(--m-raised)!important}
 #screen-main .conversation-avatar{width:46px;height:46px;font:600 14px/1 "Inter UI",sans-serif}
 #screen-main .conversation-avatar.group{border-radius:13px;font-size:13px}
 #screen-main .conversation-copy b{display:flex;align-items:center;min-width:0;font:600 15px/1.28 "Inter UI",sans-serif;letter-spacing:-.015em}
-#screen-main .conversation-copy>span{margin-top:4px;color:#686868;font:400 11px/1.25 "Inter UI",sans-serif}
-#screen-main .conversation-copy b .emblem{display:inline-grid;place-items:center;flex:none;margin-left:6px;color:#aaa;font-size:11px;line-height:1}
+#screen-main .conversation-copy>span{margin-top:4px;color:var(--m-faint);font:400 11px/1.25 "Inter UI",sans-serif}
+#screen-main .conversation-copy b .emblem{display:inline-grid;place-items:center;flex:none;margin-left:6px;color:var(--m-muted);font-size:11px;line-height:1}
 #screen-main .conversation-copy b .kind-tag{
-  display:inline-flex;flex:none;max-width:112px;margin:0 0 0 7px;padding:2px 6px;border-color:#292929;
-  color:#777;font:500 9px/1.1 "Inter UI",sans-serif;vertical-align:2px;
+  display:inline-flex;flex:none;max-width:112px;margin:0 0 0 7px;padding:2px 6px;border-color:var(--m-line);
+  color:var(--m-muted);font:500 9px/1.1 "Inter UI",sans-serif;vertical-align:2px;
 }
 #screen-main .badge{background:var(--accent);color:var(--accent-text)}
 
@@ -1066,46 +1069,46 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
   min-height:66px;
   margin:0;
   padding:8px 11px;
-  border:1px solid rgba(255,255,255,.055)!important;
+  border:1px solid rgba(var(--m-ink),.055)!important;
   border-radius:18px;
-  background:linear-gradient(135deg,#171717,#101010 72%)!important;
+  background:linear-gradient(135deg,var(--m-raised),var(--m-panel) 72%)!important;
   transform:none!important;
   transition:border-color .18s ease,background .18s ease,transform .16s ease;
 }
-#screen-main .profile-row::after{content:"›";color:#666;font-size:24px;line-height:1;text-align:right}
-#screen-main .profile-row:hover{border-color:rgba(255,255,255,.12)!important;background:linear-gradient(135deg,#202020,#151515 72%)!important}
+#screen-main .profile-row::after{content:"›";color:var(--m-faint);font-size:24px;line-height:1;text-align:right}
+#screen-main .profile-row:hover{border-color:rgba(var(--m-ink),.12)!important;background:linear-gradient(135deg,var(--m-hover),var(--m-raised) 72%)!important}
 #screen-main .profile-row:active{transform:scale(.985)!important}
 #screen-main .profile-avatar{width:46px;height:46px;font:600 14px/1 "Inter UI",sans-serif;border-radius:50%}
-#screen-main .profile-copy b{display:flex;align-items:center;min-width:0;font:600 15px/1.28 "Inter UI",sans-serif;letter-spacing:-.015em;color:#f4f4f4}
-#screen-main .profile-copy small{display:block;margin-top:4px;color:#858585;font:400 11px/1.25 "Inter UI",sans-serif}
+#screen-main .profile-copy b{display:flex;align-items:center;min-width:0;font:600 15px/1.28 "Inter UI",sans-serif;letter-spacing:-.015em;color:var(--m-text-strong)}
+#screen-main .profile-copy small{display:block;margin-top:4px;color:var(--m-muted);font:400 11px/1.25 "Inter UI",sans-serif}
 #screen-main .owner-dot{display:none}
 
 #screen-main .chat-panel{
-  grid-template-rows:108px auto auto minmax(0,1fr) minmax(89px,max-content);background:#020202;
+  grid-template-rows:108px auto auto minmax(0,1fr) minmax(89px,max-content);background:var(--m-bg);
 }
 #screen-main .chat-panel::before{display:none}
 #screen-main .chat-header{
   grid-column:1;z-index:6;align-self:start;justify-content:space-between;height:57px;margin:25px 10.35% 0;padding:0 17px;border:0;border-radius:25px;
-  background:rgba(15,15,15,.68);backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12);
+  background:rgba(var(--m-glass),.68);backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12);
   box-shadow:0 8px 30px rgba(0,0,0,.22);
 }
 #screen-main .peer{gap:7px}
 #screen-main .peer-avatar{width:35px;height:35px;font-size:12px}
 #screen-main .peer-copy b{display:flex;align-items:center;min-width:0;font:600 16px/1.2 "Inter UI",sans-serif;letter-spacing:-.01em}
 #screen-main .peer-copy b .emblem{display:inline-grid;place-items:center;flex:none;margin-left:6px;color:color-mix(in srgb,var(--accent) 72%,white);font-size:12px;line-height:1}
-#screen-main .peer-copy span{margin-top:3px;color:#606060;font:400 10px/1.2 "Inter UI",sans-serif}
+#screen-main .peer-copy span{margin-top:3px;color:var(--m-faint);font:400 10px/1.2 "Inter UI",sans-serif}
 #screen-main .header-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 #screen-main .header-actions .ghost-button{
   width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border:0;border-radius:50%;
-  color:#dcdcdc;background:transparent;transition:background .16s ease,color .16s ease,transform .12s ease;
+  color:var(--m-text);background:transparent;transition:background .16s ease,color .16s ease,transform .12s ease;
 }
-#screen-main .header-actions .ghost-button:hover:not(:disabled){background:rgba(255,255,255,.08);color:#fff}
+#screen-main .header-actions .ghost-button:hover:not(:disabled){background:rgba(var(--m-ink),.08);color:var(--m-text-strong)}
 #screen-main .header-actions .ghost-button:active:not(:disabled){transform:scale(.94)}
 #screen-main .header-actions .ghost-button span:not(.ui-icon){display:none}
 #screen-main .header-actions .ui-icon{width:22px;height:22px}
-#screen-main .header-actions #verify:disabled{color:#555;cursor:default}
-#screen-main .header-actions .call-button{color:#555;cursor:pointer}
-#screen-main .header-actions .call-button:hover{background:rgba(255,255,255,.05);color:#777}
+#screen-main .header-actions #verify:disabled{color:var(--m-faint);cursor:default}
+#screen-main .header-actions .call-button{color:var(--m-faint);cursor:pointer}
+#screen-main .header-actions .call-button:hover{background:rgba(var(--m-ink),.05);color:var(--m-muted)}
 #screen-main .header-actions .call-button:active{transform:scale(.94)}
 #screen-main .chat-panel:has(#chat-empty:not(.hidden)) .header-actions{opacity:.75}
 #screen-main .chat-panel:has(#chat-empty:not(.hidden)) .chat-header,
@@ -1114,9 +1117,9 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .chat-panel:has(#chat-empty:not(.hidden)) .chat-empty{grid-row:1;padding:0 24px}
 
 #screen-main .chat-empty{padding-bottom:54px}
-#screen-main .empty-icon{width:62px;height:62px;border-color:#272727;border-radius:18px;background:#111;color:#777}
+#screen-main .empty-icon{width:62px;height:62px;border-color:var(--m-line);border-radius:18px;background:var(--m-panel);color:var(--m-muted)}
 #screen-main .chat-empty h2{margin:17px 0 6px;font:600 16px/1.3 "Inter UI",sans-serif;letter-spacing:-.01em}
-#screen-main .chat-empty p{max-width:390px;color:#777;font:400 13px/1.45 "Inter UI",sans-serif}
+#screen-main .chat-empty p{max-width:390px;color:var(--m-muted);font:400 13px/1.45 "Inter UI",sans-serif}
 
 #screen-main .message-list{
   grid-column:1;grid-row:1/6;z-index:1;gap:18px;padding:108px 10.35% var(--composer-space,112px);overflow-x:hidden;
@@ -1128,10 +1131,11 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .message-list::before{margin-top:auto}
 #screen-main .message-list li{
   position:relative;width:fit-content;min-width:72px;max-width:min(43%,515px);margin:0;padding:11px 13px;
-  border:0;border-radius:25px;background:#0f0f0f;color:#f7f7f7;
+  border:0;border-radius:25px;background:var(--m-panel);color:var(--m-text-strong);
 }
 #screen-main .message-list li.in{margin-left:0}
-#screen-main .message-list li.out{align-self:flex-end;background:var(--mock-purple);color:#fff}
+#screen-main .message-list li.out{align-self:flex-end;background:var(--m-out-bg);color:var(--m-out-text)}
+#screen-main .message-list li.out .message-meta,#screen-main .message-list li.out .message-meta time{color:color-mix(in srgb,var(--m-out-text) 68%,transparent)}
 #screen-main .message-avatar{
   position:absolute;bottom:0;width:35px;height:35px;display:grid;place-items:center;border-radius:50%;
   color:#fff;font:600 12px/1 "Inter UI",sans-serif;text-shadow:0 1px 2px rgba(0,0,0,.28);
@@ -1145,16 +1149,16 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .message-list .body a{overflow-wrap:anywhere;word-break:break-word}
 #screen-main .message-image{box-sizing:border-box;max-width:100%;height:auto;object-fit:contain}
 #screen-main .message-list li[data-message-id]{touch-action:pan-y}
-#screen-main .message-meta{gap:4px;margin-top:4px;color:#999;font:500 10px/1 "Inter UI",sans-serif}
-#screen-main .message-meta time{color:#999}
+#screen-main .message-meta{gap:4px;margin-top:4px;color:var(--m-muted);font:500 10px/1 "Inter UI",sans-serif}
+#screen-main .message-meta time{color:var(--m-muted)}
 #screen-main .delivery{font-size:0}
 #screen-main .delivery::after{content:"✓✓";font-size:11px}
 #screen-main .day-divider{
   align-self:center!important;min-width:110px!important;max-width:none!important;margin:0!important;padding:6px 15px!important;
-  border:0!important;border-radius:14px!important;background:#0f0f0f!important;
+  border:0!important;border-radius:14px!important;background:var(--m-panel)!important;
 }
 #screen-main .day-divider::before,#screen-main .day-divider::after{display:none}
-#screen-main .day-divider span{margin:auto;color:#ddd;font:600 11px/1.2 "Inter UI",sans-serif;letter-spacing:0;text-transform:none}
+#screen-main .day-divider span{margin:auto;color:var(--m-text);font:600 11px/1.2 "Inter UI",sans-serif;letter-spacing:0;text-transform:none}
 
 #screen-main .composer-wrap{
   grid-column:1;z-index:4;align-self:end;padding:0 10.35% 31px;border:0;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
@@ -1162,16 +1166,16 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .session-note{display:none}
 #screen-main .composer{
   min-height:57px;grid-template-columns:34px 34px minmax(0,1fr) 34px 34px;align-items:center;gap:5px;
-  padding:0 12px;border:1px solid rgba(255,255,255,.035);border-radius:25px;background:rgba(15,15,15,.7);
+  padding:0 12px;border:1px solid rgba(var(--m-ink),.035);border-radius:25px;background:rgba(var(--m-glass),.7);
   backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12);box-shadow:0 -8px 30px rgba(0,0,0,.18);
 }
-#screen-main .composer:focus-within{border:0;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+#screen-main .composer:focus-within{border:0;box-shadow:0 0 0 1px rgba(var(--m-ink),.08)}
 #screen-main .attach-button{
   width:34px;height:34px;padding:0;border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  background:transparent;color:#777;font-family:"Inter UI",sans-serif;font-size:22px;line-height:1;
+  background:transparent;color:var(--m-muted);font-family:"Inter UI",sans-serif;font-size:22px;line-height:1;
   transition:background .16s ease,color .16s ease,transform .12s ease;
 }
-#screen-main .attach-button:hover:not(:disabled){background:rgba(255,255,255,.08);color:#fff}
+#screen-main .attach-button:hover:not(:disabled){background:rgba(var(--m-ink),.08);color:var(--m-text-strong)}
 #screen-main .attach-button:active:not(:disabled){transform:scale(.94)}
 #screen-main .attach-button:disabled{opacity:.35;cursor:default}
 #screen-main #attach-image{display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;padding-bottom:2px}
@@ -1181,14 +1185,14 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .composer-input textarea{position:relative;z-index:1;width:100%;overflow-wrap:anywhere;scrollbar-width:none}
 #screen-main .composer-input textarea::-webkit-scrollbar{display:none}
 #screen-main .composer-mirror{position:absolute;left:0;right:0;z-index:2;padding:10px 4px;pointer-events:none;white-space:pre-wrap;overflow-wrap:anywhere;color:transparent;font:400 12.5px/1.6 "Inter UI",sans-serif}
-#screen-main .composer-calculation{color:#727272;font-variant-numeric:tabular-nums}
+#screen-main .composer-calculation{color:var(--m-muted);font-variant-numeric:tabular-nums}
 #screen-main #record-voice{display:flex;align-items:center;justify-content:center}
 #screen-main #record-voice .ui-icon{width:19px;height:19px;margin:0;transform:translateY(1.5px)}
 #screen-main .composer textarea,#screen-main .composer textarea:focus{
-  min-height:40px;max-height:130px;padding:10px 4px;border-radius:0!important;color:#eee;
+  min-height:40px;max-height:130px;padding:10px 4px;border-radius:0!important;color:var(--m-text);
   font:400 12.5px/1.6 "Inter UI",sans-serif;
 }
-#screen-main .composer textarea::placeholder{color:#555}
+#screen-main .composer textarea::placeholder{color:var(--m-faint)}
 #screen-main .send-button{
   width:32px;height:32px;padding:0;display:flex;align-items:center;justify-content:center;
   border:0;border-radius:50%;background:var(--accent);color:var(--accent-text);
@@ -1200,10 +1204,10 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .send-button .ui-icon{width:15px;height:15px;margin:0}
 #screen-main .composer.is-recording .composer-input,#screen-main .composer.is-recording #record-voice,#screen-main .composer.is-recording #send{display:none}
 #screen-main .composer.is-recording .recording-bar{grid-column:3/6;width:100%;height:40px;border:0;background:transparent;padding:0 2px 0 7px;animation:recording-inline-in .18s ease both}
-#screen-main .composer.is-recording .recording-bar .ghost-button{border-color:rgba(255,255,255,.06);background:rgba(255,255,255,.025)}
-#screen-main .composer.is-recording .recording-bar .ghost-button:hover{background:rgba(255,255,255,.07)}
+#screen-main .composer.is-recording .recording-bar .ghost-button{border-color:rgba(var(--m-ink),.06);background:rgba(var(--m-ink),.025)}
+#screen-main .composer.is-recording .recording-bar .ghost-button:hover{background:rgba(var(--m-ink),.07)}
 .emoji-scrim{display:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-.emoji-panel{background:#202020;backdrop-filter:none;-webkit-backdrop-filter:none}
+.emoji-panel{background:var(--m-hover);backdrop-filter:none;-webkit-backdrop-filter:none}
 
 #screen-main .section-tabs button{transition:background .2s,color .2s,transform .16s}
 #screen-main .section-tabs button:active{transform:scale(.97)}
@@ -1211,29 +1215,29 @@ body[data-motion="off"] *,body[data-motion="off"] *::before,body[data-motion="of
 #screen-main .conversation-list li{animation:none}
 .image-viewer{position:fixed;inset:var(--titlebar) 0 0;z-index:200;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:58px 32px 28px;background:rgba(0,0,0,.94)}
 .image-viewer img{display:block;max-width:100%;max-height:100%;min-height:0;object-fit:contain;border-radius:8px}
-.image-viewer-close{position:absolute;top:18px;right:22px;width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.16);border-radius:50%;background:#242424;color:#eee}
+.image-viewer-close{position:absolute;top:18px;right:22px;width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(var(--m-ink),.16);border-radius:50%;background:#242424;color:var(--m-text)}
 .image-viewer-close .ui-icon{width:16px;height:16px}
-.image-viewer-caption{max-width:min(780px,100%);margin:0;color:#ddd;font-size:12px;text-align:center;overflow-wrap:anywhere}
+.image-viewer-caption{max-width:min(780px,100%);margin:0;color:var(--m-text);font-size:12px;text-align:center;overflow-wrap:anywhere}
 #screen-main .jump-down{right:4%;bottom:104px}
 
 /* Поиск и проверка пары не режут рабочую область полосами: это такие же
    плавающие островки, как шапка и композер, с сообщениями под blur. */
 #screen-main .chat-search{
   position:absolute;z-index:7;top:94px;left:10.35%;right:10.35%;height:48px;padding:7px 12px;
-  border:1px solid rgba(255,255,255,.055);border-radius:20px;background:rgba(15,15,15,.8);
+  border:1px solid rgba(var(--m-ink),.055);border-radius:20px;background:rgba(var(--m-glass),.8);
   backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12);box-shadow:0 10px 32px rgba(0,0,0,.26);
 }
 #screen-main .chat-search input{font-size:12.5px}
 #screen-main .verification{
   position:absolute;z-index:7;grid-column:1;grid-row:1/6;top:94px;left:10.35%;right:10.35%;grid-template-columns:1fr 1fr;
-  padding:16px 52px 14px 18px;border:1px solid rgba(255,255,255,.055);border-radius:20px;
-  background:rgba(15,15,15,.82);backdrop-filter:blur(20px) saturate(1.12);-webkit-backdrop-filter:blur(20px) saturate(1.12);
+  padding:16px 52px 14px 18px;border:1px solid rgba(var(--m-ink),.055);border-radius:20px;
+  background:rgba(var(--m-glass),.82);backdrop-filter:blur(20px) saturate(1.12);-webkit-backdrop-filter:blur(20px) saturate(1.12);
   box-shadow:0 10px 32px rgba(0,0,0,.26);
 }
 #screen-main .chat-panel:has(.chat-search:not(.hidden)) .verification{top:154px}
-#screen-main .verification>div span{color:#777;font-size:9px;letter-spacing:.04em}
+#screen-main .verification>div span{color:var(--m-muted);font-size:9px;letter-spacing:.04em}
 #screen-main .verification code{margin-top:7px;font-size:12px;line-height:1.5}
-#screen-main .verification p{color:#666}
+#screen-main .verification p{color:var(--m-faint)}
 #screen-main .verification>.icon-button{top:8px;right:9px}
 
 @media(max-width:1200px){
@@ -3244,3 +3248,9 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 .onboarding-brand .messenger-mark,.language-brand .messenger-mark{margin:0}
 #screen-route .onboarding-art,#screen-entry .onboarding-art,#screen-recover .onboarding-art{background:radial-gradient(ellipse at 50% 65%,color-mix(in srgb,var(--accent) 25%,transparent),transparent 70%),var(--bg)}
 #screen-route .onboarding-art::after,#screen-entry .onboarding-art::after,#screen-recover .onboarding-art::after{content:"";display:block;position:absolute;inset:0;width:auto;height:auto;border:0;border-radius:0;opacity:1;transform:none;box-shadow:none;animation:none;background:var(--accent);-webkit-mask:url("assets/msg_icon.svg") center/58% 64% no-repeat;mask:url("assets/msg_icon.svg") center/58% 64% no-repeat;filter:drop-shadow(0 0 32px color-mix(in srgb,var(--accent) 20%,transparent))}
+:root[data-theme="light"] #screen-main.app-shell{
+  --m-bg:#f4f4f5;--m-sidebar:#fafafa;--m-panel:#ececef;--m-raised:#e4e4e8;--m-hover:#d9d9de;
+  --m-text-strong:#111113;--m-text:#1d1d20;--m-muted:#5f5f66;--m-faint:#8a8a91;--m-line:rgba(0,0,0,.12);
+  --m-ink:0,0,0;--m-glass:255,255,255;--m-out-bg:var(--accent);--m-out-text:var(--accent-text);
+}
+:root[data-theme="light"] #screen-main .message-list li.out{border:1px solid var(--m-line)}

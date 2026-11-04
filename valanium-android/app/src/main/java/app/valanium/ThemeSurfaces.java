@@ -18,8 +18,13 @@ final class ThemeSurfaces {
         return Color.alpha(color)>0 && hsv[1]>.12f && hsv[0]>=245 && hsv[0]<=295;
     }
     static int tone(int original,int accent,boolean light) {
-        if(!violet(original))return original;
         float[] hsv=new float[3];Color.colorToHSV(original,hsv);
+        if(!violet(original)){
+            // Dark neutral glass from the dark-first resources would read as a hole on light surfaces.
+            if(light&&Color.alpha(original)>0x40&&hsv[1]<.15f&&hsv[2]<.3f)
+                return Color.argb(Color.alpha(original),(244*94+Color.red(accent)*6)/100,(243*94+Color.green(accent)*6)/100,(247*94+Color.blue(accent)*6)/100);
+            return original;
+        }
         if(hsv[2]>.48f)return Color.argb(Color.alpha(original),Color.red(accent),Color.green(accent),Color.blue(accent));
         int base=light?248:20;
         return Color.argb(Color.alpha(original),(base*92+Color.red(accent)*8)/100,
@@ -50,6 +55,7 @@ final class ThemeSurfaces {
         int id=view.getId();
         // Profile colors and semantic recording/network colors belong to their data.
         if(id==R.id.accent_violet||id==R.id.accent_white||id==R.id.accent_blue||id==R.id.accent_green||id==R.id.accent_coral||id==R.id.profile_avatar||id==R.id.peer_avatar||id==R.id.chat_logo||id==R.id.recording_bar||id==R.id.status||id==R.id.status_dot)return;
+        if(Boolean.TRUE.equals(view.getTag(R.id.self_colored_tag)))return;
         Drawable background=view.getBackground();
         if(background!=null) {
             Object original=view.getTag(R.id.theme_drawable_tag);

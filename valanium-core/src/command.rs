@@ -192,48 +192,6 @@ pub enum Command {
     GroupForget { group: String },
     /// Перечислить свои группы.
     Groups,
-    /// Завести открытый канал: короткое имя, название, описание.
-    ChannelCreate { handle: String, title: String, about: Option<String> },
-    /// Написать в свой канал.
-    ///
-    /// Текст уходит на сервер КАК ЕСТЬ. Канал открыт, подписаться может кто
-    /// угодно, и ключ пришлось бы отдать любому желающему — шифровать вещание
-    /// для неизвестного круга значит обманывать читателя, а не защищать его.
-    /// Поэтому интерфейс обязан помечать канал открытым.
-    ChannelPublish { channel: String, body: String },
-    /// Свои и читаемые каналы.
-    ChannelList,
-    /// Лента канала страницами: `before` — с какого номера идти вглубь.
-    ChannelFeed { channel: String, before: Option<i64> },
-    /// Подписаться или отписаться.
-    ChannelSubscribe { channel: String, subscribe: bool },
-    /// Найти канал по короткому имени.
-    ChannelFind { handle: String },
-    /// Убрать свой пост.
-    ChannelDeletePost { channel: String, post: String },
-    /// Закрыть свой канал целиком: посты и подписки уходят следом.
-    ChannelDelete { channel: String },
-    /// Сменить название, описание или значок своего канала.
-    ///
-    /// Каждое поле необязательно: шлём только то, что человек тронул. Имя
-    /// канала не меняется — на нём держится ссылка, по которой на канал уже
-    /// сослались. `icon: null` снимает значок, отсутствие поля — не трогает.
-    ChannelUpdate {
-        channel: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        title: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        about: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        icon: Option<serde_json::Value>,
-    },
-    /// Позвать человека писать в канал или вернуть его в читатели.
-    ChannelAdmin {
-        channel: String,
-        who: String,
-        #[serde(default = "yes")]
-        admin: bool,
-    },
     /// Отозвать все прочие устройства. Подписывается identity-ключом.
     /// Свои устройства — для экрана «мои устройства».
     ///
@@ -375,13 +333,6 @@ pub enum Event {
     AccountExported { data: String, messages: u64 },
     /// Аккаунт перенесён: столько сообщений легло в базу.
     AccountImported { messages: u64 },
-    /// Ответ по каналам: список, лента, найденный канал — что спросили.
-    ///
-    /// Пересылается как есть: набор полей задаёт сервер, и разбирать его здесь
-    /// значило бы ломать клиент при каждом новом поле.
-    Channels { report: serde_json::Value },
-    /// Новый пост в канале, на который подписаны.
-    ChannelPost { report: serde_json::Value },
     /// Свои устройства. Порядок задаёт ядро — по времени появления.
     Devices {
         devices: Vec<DeviceItem>,
@@ -650,8 +601,3 @@ mod tests {
     }
 }
 
-/// Значение по умолчанию для `ChannelAdmin::admin`: команда без флага зовёт,
-/// а не разжалует.
-fn yes() -> bool {
-    true
-}

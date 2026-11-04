@@ -322,7 +322,7 @@
     <string name="admin_section">Administration</string>
     <string name="emblem_label">Emblem</string>
     <string name="profile_color_label">Profile color</string>
-    <string name="profile_local_note">Your contacts can see your avatar, emblem and color. Your fingerprint and device address are not shared automatically.</string>
+    <string name="profile_local_note">People you chat with can see your avatar. Your fingerprint and device address are not shared automatically.</string>
     <string name="enter_sends">Send with Enter</string>
     <string name="enter_sends_hint">Otherwise Enter starts a new line; use the button to send</string>
     <string name="confirm_delete">Confirm before deleting</string>

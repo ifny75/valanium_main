@@ -32,6 +32,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.EditText;
@@ -136,19 +137,6 @@ public final class MainActivity extends Activity implements Events.Listener {
     private View screenAdmin;
     private View screenChatSettings;
     private View screenData;
-
-    /**
-     * Открытые каналы: лента, которую ведёт один человек.
-     *
-     * Единственное место, где содержимое уходит на сервер незашифрованным, — и
-     * потому единственное, где интерфейс обязан об этом сказать вслух. Канал
-     * открыт по своей природе: подписаться может кто угодно, значит и ключ
-     * достался бы любому. Предупреждение висит над лентой, а не в настройках.
-     */
-    private final Map<String, JSONObject> channels = new LinkedHashMap<>();
-    private View screenChannel;
-    private String openChannel;
-    private Long channelOldest;
 
     /** Нижний островок: три корневых экрана и размытая подложка. */
     private BlurPanel tabBar;
@@ -414,6 +402,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     protected void onCreate(Bundle savedInstanceState) {
         if("light".equals(getSharedPreferences("appearance",0).getString("theme","dark")))super.setTheme(R.style.Valanium_Theme_Light);
         super.onCreate(savedInstanceState);
+        rememberDebugServer();
         configureWindow();
         applyScreenPrivacy(screenPrivacyEnabled());
         setContentView(R.layout.activity_main);
@@ -427,7 +416,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         screenSettings = findViewById(R.id.screen_settings);
         screenPrivacy = findViewById(R.id.screen_privacy);
         screenPrivacySection = findViewById(R.id.screen_privacy_section);
-        screenChannel = findViewById(R.id.screen_channel);
         tabBar = findViewById(R.id.tab_bar);
         screenSecurity = findViewById(R.id.screen_security);
         screenAdmin = findViewById(R.id.screen_admin);
@@ -463,6 +451,8 @@ public final class MainActivity extends Activity implements Events.Listener {
         messageWidthValue = findViewById(R.id.message_width_value);
         settingsPreviewIn = findViewById(R.id.settings_preview_in);
         settingsPreviewOut = findViewById(R.id.settings_preview_out);
+        settingsPreviewIn.setTag(R.id.self_colored_tag, Boolean.TRUE);
+        settingsPreviewOut.setTag(R.id.self_colored_tag, Boolean.TRUE);
         interfaceScale = findViewById(R.id.interface_scale);
         interfaceScaleValue = findViewById(R.id.interface_scale_value);
         compactMessages = findViewById(R.id.compact_messages);
@@ -515,12 +505,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.open_profile_row).setOnClickListener(v -> open(screenProfile));
         findViewById(R.id.chat_code_row).setOnClickListener(v -> copyChatCode());
         findViewById(R.id.nav_chats).setOnClickListener(v -> switchTab(screenChat));
-        findViewById(R.id.channel_back).setOnClickListener(v -> goBack());
-        findViewById(R.id.channel_create).setOnClickListener(v -> askNewChannel());
-        findViewById(R.id.channel_find).setOnClickListener(v -> askFindChannel());
-        findViewById(R.id.channel_subscribe).setOnClickListener(v -> toggleSubscription());
-        findViewById(R.id.channel_send).setOnClickListener(v -> publishPost());
-        findViewById(R.id.channel_close).setOnClickListener(v -> closeChannel());
         findViewById(R.id.nav_settings).setOnClickListener(v -> switchTab(screenSettings));
         findViewById(R.id.nav_profile).setOnClickListener(v -> switchTab(screenProfile));
         findViewById(R.id.security_back).setOnClickListener(v -> goBack());
@@ -713,11 +697,24 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void configureWindow() {
         Window window = getWindow();
-        window.setStatusBarColor(Color.BLACK);
-        window.setNavigationBarColor(Color.BLACK);
-        // Тёмный режим системных иконок уже задан темой. Не запрашиваем
-        // InsetsController до появления DecorView: Android 17 в таком случае
-        // выбрасывает NPE внутри PhoneWindow ещё до setContentView().
+        window.setStatusBarColor(Color.TRANSPARENT);
+        // The app draws behind the navigation bar on every version; a coloured or
+        // contrast-scrimmed bar shows up as a dark block on 3-button phones.
+        window.setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.setNavigationBarContrastEnforced(false);
+            window.setStatusBarContrastEnforced(false);
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            // Before API 30 the IME only reaches window insets with adjustResize plus
+            // a layout-fullscreen decor; adjustNothing left the composer under the keyboard.
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+        // Не запрашиваем InsetsController до появления DecorView: Android 17 в
+        // таком случае выбрасывает NPE внутри PhoneWindow ещё до setContentView().
     }
 
     private void configureInsets() {
@@ -731,19 +728,27 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         root.addOnLayoutChangeListener((view, left, top, right, bottom,
                 oldLeft, oldTop, oldRight, oldBottom) -> layoutTopBars());
-        if (Build.VERSION.SDK_INT < 30) {
-            root.post(this::layoutTopBars);
-            return;
-        }
         root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
-            Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
-            Insets ime = windowInsets.getInsets(WindowInsets.Type.ime());
-            view.setPadding(dp(16), bars.top, dp(16),
-                    Math.max(bars.bottom, ime.bottom) + dp(8));
+            int top;
+            int bottom;
+            boolean keyboard;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
+                Insets ime = windowInsets.getInsets(WindowInsets.Type.ime());
+                top = bars.top;
+                bottom = Math.max(bars.bottom, ime.bottom);
+                keyboard = ime.bottom > 0;
+            } else {
+                // With adjustResize the legacy bottom inset is max(navigation bar, keyboard).
+                top = windowInsets.getSystemWindowInsetTop();
+                bottom = windowInsets.getSystemWindowInsetBottom();
+                keyboard = bottom > windowInsets.getStableInsetBottom() + dp(40);
+            }
+            view.setPadding(dp(16), top, dp(16), bottom + dp(8));
             layoutChatWallpaper();
-            layoutStatusBarPanel(view, bars.top);
+            layoutStatusBarPanel(view, top);
             view.post(this::layoutTopBars);
-            if (ime.bottom > 0 && screenConversation.getVisibility() == View.VISIBLE) {
+            if (keyboard && screenConversation.getVisibility() == View.VISIBLE) {
                 ui.post(() -> scrollToLatest(false));
             }
             return windowInsets;
@@ -1073,9 +1078,25 @@ public final class MainActivity extends Activity implements Events.Listener {
         });
     }
 
+    private boolean debuggable() {
+        return (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    }
+
+    /** Debug-only: `am start --es dev_server ws://127.0.0.1:8787/ws` points QA builds at a local server. */
+    private void rememberDebugServer() {
+        if (!debuggable() || getIntent() == null) return;
+        String url = getIntent().getStringExtra("dev_server");
+        if (url == null) return;
+        getSharedPreferences("appearance", MODE_PRIVATE).edit().putString("dev_server", url).apply();
+    }
+
     private String serverUrl() {
         SharedPreferences preferences = appearancePreferences == null
                 ? getSharedPreferences("appearance", MODE_PRIVATE) : appearancePreferences;
+        if (debuggable()) {
+            String dev = preferences.getString("dev_server", "");
+            if (!dev.isEmpty()) return dev;
+        }
         String mode = preferences.getString(TRANSPORT_KEY, "onion");
         if ("multihop".equals(mode)) return SERVER_BASIC_URL;
         if ("onion".equals(mode)) return SERVER_ONION_URL;
@@ -1084,6 +1105,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void connectSelectedRoute() {
+        if (debuggable() && !appearancePreferences.getString("dev_server", "").isEmpty()) {
+            submit(Commands.connect(serverUrl()));
+            return;
+        }
         if ("onion".equals(appearancePreferences.getString(TRANSPORT_KEY, "onion"))) {
             prewarmTor();
         } else {
@@ -1188,7 +1213,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         copy.addView(title);
         TextView detail = new TextView(this);
         detail.setText(detailText);
-        detail.setTextColor(getColor(R.color.valanium_muted));
+        detail.setTextColor(mutedText());
         detail.setTextSize(10.5f);
         detail.setTypeface(android.graphics.Typeface.MONOSPACE);
         detail.setTextIsSelectable(true);
@@ -1370,6 +1395,15 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
     }
 
+    private GradientDrawable chatRowBackground() {
+        int base = themePanel();
+        GradientDrawable row = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{"black".equals(themeName()) ? base : blend(base, accentColor(), .93f), base});
+        row.setCornerRadius(dp(26));
+        row.setStroke(dp(1), "light".equals(themeName()) ? Color.argb(40, 0, 0, 0) : getColor(R.color.valanium_line));
+        return row;
+    }
+
     private int themePanel() {
         switch (themeName()) {
             case "black": return Color.rgb(7, 7, 7);
@@ -1387,6 +1421,14 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
     }
 
+    private int mutedText() {
+        return "light".equals(themeName()) ? Color.rgb(91, 83, 105) : getColor(R.color.valanium_muted);
+    }
+
+    private int dimText() {
+        return "light".equals(themeName()) ? Color.rgb(118, 110, 130) : getColor(R.color.valanium_dim);
+    }
+
     private int themeText() {
         return "light".equals(themeName()) ? Color.rgb(16, 16, 16) : Color.rgb(245, 245, 243);
     }
@@ -1394,6 +1436,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void setTheme(String name) {
         appearancePreferences.edit().putString("theme", name).apply();
         applyTheme();
+        renderWallpaperGrid();
         applyDividers();
         applyAccent();
         reloadHistory();
@@ -1418,17 +1461,22 @@ public final class MainActivity extends Activity implements Events.Listener {
         // Верхняя панель начинается сразу под системными значками; одинаковый
         // цвет убирает видимый шов и превращает их в одну полноширинную шапку.
         updateSystemTopSurface();
-        getWindow().setNavigationBarColor(background);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        boolean lightBars = "light".equals(themeName());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             android.view.WindowInsetsController controller =
                     getWindow().getInsetsController();
             if (controller != null) {
-                int light = "light".equals(themeName())
-                        ? android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                        : 0;
-                controller.setSystemBarsAppearance(light,
-                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                controller.setSystemBarsAppearance(lightBars ? mask : 0, mask);
             }
+        } else {
+            View decor = getWindow().getDecorView();
+            int flags = decor.getSystemUiVisibility()
+                    & ~(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            if (lightBars) flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            decor.setSystemUiVisibility(flags);
         }
         ThemeSurfaces.apply(root, accentColor(), "light".equals(themeName()));
         applyThemeText(findViewById(R.id.app_root));
@@ -1444,6 +1492,8 @@ public final class MainActivity extends Activity implements Events.Listener {
      * переключения отличить «был белым» от «стал чёрным» было бы нечем.
      */
     private void applyThemeText(View view) {
+        // Message bubbles and their previews pick colours from the bubble itself.
+        if (Boolean.TRUE.equals(view.getTag(R.id.self_colored_tag))) return;
         if (view instanceof TextView) {
             TextView label = (TextView) view;
             Object stored = label.getTag(R.id.base_text_color_tag);
@@ -1525,24 +1575,30 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void wireWallpaper() {
         LinearLayout grid=findViewById(R.id.wallpaper_grid);
         LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
-        customWallpaperSelect=new Button(this);customWallpaperSelect.setText(I18n.t("Свое фото"));
+        customWallpaperSelect=new Button(this,null,0,R.style.Valanium_Button_Dark_Small);customWallpaperSelect.setText(I18n.t("Свое фото"));
         customWallpaperSelect.setOnClickListener(v->{
             if(customWallpaperBitmap==null){chooseSystemImage(WALLPAPER_PICK_REQUEST);return;}
             appearancePreferences.edit().putString("wallpaper","custom").apply();applyWallpaper();
         });
-        Button upload=new Button(this);upload.setText(I18n.t("Загрузить фото"));
+        Button upload=new Button(this,null,0,R.style.Valanium_Button_Dark_Small);upload.setText(I18n.t("Загрузить фото"));
         upload.setOnClickListener(v->chooseSystemImage(WALLPAPER_PICK_REQUEST));
-        customWallpaperRemove=new Button(this);customWallpaperRemove.setText(I18n.t("Удалить фото"));
+        customWallpaperRemove=new Button(this,null,0,R.style.Valanium_Button_Dark_Small);customWallpaperRemove.setText(I18n.t("Удалить фото"));
         customWallpaperRemove.setOnClickListener(v->{
             if(customWallpaperFile().exists()&&!customWallpaperFile().delete()){toast(I18n.t("Не удалось загрузить обои"));return;}
             customWallpaperBitmap=null;
             if("custom".equals(wallpaperName()))appearancePreferences.edit().putString("wallpaper","none").apply();
             applyWallpaper();
         });
-        for(Button button:new Button[]{customWallpaperSelect,upload,customWallpaperRemove}){
-            button.setTextSize(11);button.setAllCaps(false);button.setPadding(dp(6),dp(2),dp(6),dp(2));
-            actions.addView(button,new LinearLayout.LayoutParams(0,dp(48),1));
+        Button[] wallpaperButtons={customWallpaperSelect,upload,customWallpaperRemove};
+        for(int i=0;i<wallpaperButtons.length;i++){
+            Button button=wallpaperButtons[i];
+            button.setTextSize(12);button.setAllCaps(false);button.setPadding(dp(6),dp(2),dp(6),dp(2));
+            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,dp(44),1);
+            if(i>0)params.setMarginStart(dp(6));
+            actions.addView(button,params);
         }
+        LinearLayout.LayoutParams actionsParams=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT);
+        actionsParams.topMargin=dp(10);actions.setLayoutParams(actionsParams);
         LinearLayout parent=(LinearLayout)grid.getParent();parent.addView(actions,parent.indexOfChild(grid)+1);
         if(customWallpaperFile().isFile())new Thread(()->{
             Bitmap image=BitmapFactory.decodeFile(customWallpaperFile().getAbsolutePath());
@@ -1598,8 +1654,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             TextView label = new TextView(this);
             label.setText(getString(getResources().getIdentifier(
                     spec[1], "string", getPackageName())));
-            label.setTextColor(getColor(key.equals(current)
-                    ? R.color.valanium_white : R.color.valanium_muted));
+            label.setTextColor(key.equals(current) ? themeText() : mutedText());
             label.setTextSize(9);
             label.setGravity(Gravity.CENTER);
             label.setPadding(0, dp(4), 0, 0);
@@ -1789,6 +1844,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void setAccent(int color) {
         appearancePreferences.edit().putInt("accent_color", color).apply();
         applyTheme();
+        renderWallpaperGrid();
         applyDividers();
         applyAccent();
         applyPreferencePreview();
@@ -1808,9 +1864,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 new int[]{(accent & 0x00ffffff) | 0x66000000, Color.DKGRAY}));
         if (tabBar != null) tabBar.setAccent(accent);
         if (currentScreen != null) updateTabBar(currentScreen);
-        showList(contactList.getVisibility() == View.VISIBLE ? LIST_CHATS
-                : requestList.getVisibility() == View.VISIBLE ? LIST_REQUESTS : LIST_CHANNELS);
-        int text = Color.luminance(accent) > .55 ? Color.BLACK : Color.WHITE;
+        showList(requestList.getVisibility() == View.VISIBLE ? LIST_REQUESTS : LIST_CHATS);
+        int text = Color.luminance(accent) > .4 ? Color.rgb(16, 16, 16) : Color.WHITE;
         for (int id : new int[]{R.id.send, R.id.migrate, R.id.entry_submit,
                 R.id.recover_submit}) {
             Button button = findViewById(id);
@@ -1821,7 +1876,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         ImageView add = findViewById(R.id.open_chat);
         add.setBackgroundTintList(ColorStateList.valueOf(accent));
         add.setImageTintList(ColorStateList.valueOf(text));
-        settingsPreviewOut.setTextColor(text);
+        applyPreferencePreview();
         messageTextSize.setProgressTintList(ColorStateList.valueOf(accent));
         messageWidth.setProgressTintList(ColorStateList.valueOf(accent));
         interfaceScale.setProgressTintList(ColorStateList.valueOf(accent));
@@ -1909,7 +1964,20 @@ public final class MainActivity extends Activity implements Events.Listener {
         settingsPreviewOut.setBackground(bubbleBackground(true));
         settingsPreviewIn.setTextColor(themeText());
         settingsPreviewOut.setTextColor(
-                Color.luminance(accentColor()) > .55 ? Color.BLACK : Color.WHITE);
+                outgoingText());
+    }
+
+    private int outgoingBubbleMid() {
+        int accent = accentColor();
+        return blend(blend(accent, Color.WHITE, .86f), blend(accent, themePanel(), .84f), .5f);
+    }
+
+    private int outgoingText() {
+        return Color.luminance(outgoingBubbleMid()) > .45 ? Color.rgb(16, 16, 16) : Color.WHITE;
+    }
+
+    private int outgoingMeta() {
+        return Color.luminance(outgoingBubbleMid()) > .45 ? Color.argb(170, 16, 16, 16) : Color.argb(190, 255, 255, 255);
     }
 
     /** Общая форма пузыря: одна на переписку и на превью в настройках. */
@@ -2460,11 +2528,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void configureAccountActions() {
-        View reconnect=findViewById(R.id.account_reconnect);
-        if(reconnect.getParent() instanceof LinearLayout){
-            LinearLayout parent=(LinearLayout)reconnect.getParent();
-            Button background=new Button(this);background.setText(I18n.t("Фоновая доставка"));
-            background.setOnClickListener(v->{
+        findViewById(R.id.account_background).setOnClickListener(v->{
                 String[] modes={"persistent","periodic","foreground"};
                 String[] labels={I18n.t("Постоянно с уведомлением"),I18n.t("Периодически, около 15 минут"),I18n.t("Только при открытом приложении")};
                 int selected=java.util.Arrays.asList(modes).indexOf(BackgroundDelivery.mode(this));
@@ -2473,12 +2537,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                     if("persistent".equals(modes[which])&&ValaniumService.core().isOpen())startEventDelivery();
                     dialog.dismiss();
                 }).setNegativeButton(I18n.t("Отмена"),null).show();
-            });
-            parent.addView(background);
-            Button diagnostics=new Button(this);diagnostics.setText(I18n.t("Задержки доставки"));
-            diagnostics.setOnClickListener(v->{diagnosticsRequested=true;submit("{\"type\":\"diagnostics\"}");});
-            parent.addView(diagnostics);
-        }
+        });
+        findViewById(R.id.account_diagnostics).setOnClickListener(v->{diagnosticsRequested=true;submit("{\"type\":\"diagnostics\"}");});
         findViewById(R.id.account_share).setOnClickListener(v -> {
             if (ownChatCode.isEmpty()) {
                 toast(I18n.t("Код профиля пока недоступен. Проверьте подключение."));
@@ -2802,7 +2862,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         code.setPadding(0, dp(12), 0, dp(12));
         content.addView(code);
         TextView epoch = new TextView(this);
-        epoch.setTextColor(getColor(R.color.valanium_muted));
+        epoch.setTextColor(mutedText());
         epoch.setText(I18n.t("Код текущей эпохи ") + event.optLong("epoch") + ":\n" + event.optString("epoch_code"));
         epoch.setTextIsSelectable(true);
         epoch.setGravity(Gravity.CENTER);
@@ -2814,7 +2874,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                     EditText input = new EditText(this);
                     input.setHint(I18n.t("Код с устройства собеседника"));
                     input.setTextColor(themeText());
-                    input.setHintTextColor(getColor(R.color.valanium_muted));
+                    input.setHintTextColor(mutedText());
                     input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
                     new AlertDialog.Builder(this).setTitle(I18n.t("Сверка кода")).setView(input)
                             .setPositiveButton(I18n.t("Сверить"), (d, w) -> confirmVerification(peer, input.getText().toString()))
@@ -2921,7 +2981,15 @@ public final class MainActivity extends Activity implements Events.Listener {
                     if (established == null) {
                         pages.put(startedConversation, pending);
                     } else {
-                        established.timeline.addAll(pending.timeline);
+                        java.util.Set<String> known = new java.util.HashSet<>();
+                        for (TimelineItem item : established.timeline) {
+                            if (!item.separator && item.id != null && !item.id.isEmpty()) known.add(item.id);
+                        }
+                        for (TimelineItem item : pending.timeline) {
+                            if (item.separator || item.id == null || item.id.isEmpty() || !known.contains(item.id)) {
+                                established.timeline.add(item);
+                            }
+                        }
                         normalizeSeparators(established.timeline);
                         regroupTimeline(established.timeline);
                     }
@@ -3007,12 +3075,6 @@ public final class MainActivity extends Activity implements Events.Listener {
                 break;
             case "admin":
                 onAdminReport(event);
-                break;
-            case "channels":
-                onChannels(event);
-                break;
-            case "channel_post":
-                onChannelPost(event);
                 break;
             case "delivery":
                 deliveryStates.put(deliveryKey(event.optString("conversation"), event.optString("id")), event.optString("state"));
@@ -3237,6 +3299,18 @@ public final class MainActivity extends Activity implements Events.Listener {
                 incoming.add(id);
             }
         }
+        // A freshly started conversation inherits the optimistic page, so its first
+        // history page can repeat messages already shown; keep the cached copy.
+        Set<String> cached = new HashSet<>();
+        for (TimelineItem item : entry.timeline) {
+            if (!item.separator && item.id != null && !item.id.isEmpty()) cached.add(item.id);
+        }
+        if (!cached.isEmpty()) {
+            fresh.removeIf(item -> !item.separator && item.id != null && cached.contains(item.id));
+            boolean onlySeparators = true;
+            for (TimelineItem item : fresh) if (!item.separator) { onlySeparators = false; break; }
+            if (onlySeparators) fresh.clear();
+        }
         // Страница всегда старше того, что уже лежит в кэше.
         boolean initialPage = entry.timeline.isEmpty();
         int removed = 0;
@@ -3289,7 +3363,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             myColor = optText(event, "color");
             myChatCode.setText(profile.chatCode);
             profileChatCode.setText(profile.chatCode);
-            applyAvatar(profileAvatar, profile, "ME");
+            applyAvatar(profileAvatar, profile, "ME", myDeviceHex);
             renderOwnProfile();
         }
         if (profile.chatCode.equals(pendingChatCode)) {
@@ -3350,7 +3424,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                         action.setAllCaps(false);
                         action.setMinimumHeight(dp(52));
                         action.setTextColor(item.action == 1
-                                ? (Color.luminance(accentColor()) > .55 ? Color.BLACK : Color.WHITE)
+                                ? (Color.luminance(accentColor()) > .4 ? Color.rgb(16, 16, 16) : Color.WHITE)
                                 : themeText());
                         if (item.action == 1) {
                             GradientDrawable primary = new GradientDrawable();
@@ -3459,7 +3533,6 @@ public final class MainActivity extends Activity implements Events.Listener {
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(12), dp(10), dp(14), dp(10));
-            row.setBackgroundResource(R.drawable.panel_glass);
             row.setLayoutParams(new android.widget.AbsListView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(76)));
 
@@ -3480,7 +3553,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             title.setMaxLines(1);
             title.setEllipsize(TextUtils.TruncateAt.END);
             TextView subtitle = new TextView(this);
-            subtitle.setTextColor(getColor(R.color.valanium_muted));
+            subtitle.setTextColor(mutedText());
             subtitle.setTextSize(12);
             subtitle.setMaxLines(1);
             subtitle.setEllipsize(TextUtils.TruncateAt.END);
@@ -3491,7 +3564,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             meta.setOrientation(LinearLayout.VERTICAL);
             meta.setGravity(Gravity.END);
             TextView time = new TextView(this);
-            time.setTextColor(getColor(R.color.valanium_dim));
+            time.setTextColor(dimText());
             time.setTextSize(11);
             time.setGravity(Gravity.END);
             TextView badge = new TextView(this);
@@ -3514,9 +3587,12 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         Profile profile = profiles.get(peer);
         ConversationPreview preview = previews.get(peer);
-        applyAvatar(holder.avatar, profile, initials(displayName(peer)));
+        applyAvatar(holder.avatar, profile, initials(displayName(peer)), peer);
         holder.title.setText(nameWithEmblem(peer));
         holder.title.setTextColor(themeText());
+        holder.subtitle.setTextColor(mutedText());
+        holder.time.setTextColor(dimText());
+        row.setBackground(chatRowBackground());
         holder.subtitle.setText(previewText(preview));
         holder.time.setText(previewTime(preview));
         if (preview != null && preview.unread > 0) {
@@ -3673,9 +3749,9 @@ public final class MainActivity extends Activity implements Events.Listener {
             item.setBackground(active ? selectionBackground() : null);
             ImageView icon = findViewById(tab[1]);
             icon.setImageTintList(
-                    ColorStateList.valueOf(active ? accent : getColor(R.color.valanium_muted)));
+                    ColorStateList.valueOf(active ? accent : mutedText()));
             ((TextView) findViewById(tab[2])).setTextColor(
-                    active ? accent : getColor(R.color.valanium_muted));
+                    active ? accent : mutedText());
             if (active && selectionChanged) animateNavigationIcon(icon, tab[0]);
         }
         activeNavigation = selectedNavigation;
@@ -3747,7 +3823,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         for (View candidate : new View[]{screenBoot, screenMigrate, screenEntry, screenRecover,
                 screenChat, screenConversation, screenProfile, screenSettings, screenPrivacy,
                 screenPrivacySection, screenAppearance, screenConnection, screenProtection, screenSecurity,
-                screenAdmin, screenChatSettings, screenData, screenChannel}) {
+                screenAdmin, screenChatSettings, screenData}) {
             if (candidate == null) continue;
             if (candidate != screen) {
                 candidate.animate().cancel();
@@ -3913,7 +3989,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private TextView listNotice(String text) {
         TextView notice = new TextView(this);
         notice.setText(text);
-        notice.setTextColor(getColor(R.color.valanium_muted));
+        notice.setTextColor(mutedText());
         notice.setTextSize(14);
         notice.setGravity(Gravity.CENTER);
         notice.setPadding(0, dp(80), 0, dp(40));
@@ -3951,7 +4027,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView body = new TextView(this);
         body.setText(bodyText);
-        body.setTextColor(getColor(R.color.valanium_muted));
+        body.setTextColor(mutedText());
         body.setTextSize(12);
         body.setGravity(Gravity.CENTER);
         body.setLineSpacing(0, 1.15f);
@@ -4144,7 +4220,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void updateConversationHeader(String peer) {
         Profile profile = profiles.get(peer);
         peerName.setText(nameWithEmblem(peer));
-        applyAvatar(peerAvatar, profile, initials(displayName(peer)));
+        applyAvatar(peerAvatar, profile, initials(displayName(peer)), peer);
         refreshPeerActivity();
     }
 
@@ -4155,15 +4231,15 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     /** Имя со значком владельца — тем самым, который он выбрал у себя. */
     private String nameWithEmblem(String peer) {
-        Profile profile = profiles.get(peer);
-        String glyph = profile == null ? "" : emblemGlyph(profile.emblem);
-        return glyph.isEmpty() ? displayName(peer) : displayName(peer) + " " + glyph;
+        return displayName(peer);
     }
 
     private String initials(String value) {
         if (value == null) return "--";
         String clean = value.replace("@", "").trim();
         if (clean.isEmpty()) return "--";
+        // Unnamed peers are shown by chat code; "OBS" would give everyone the same letters.
+        if (clean.matches("(?i)OBS-[A-Z0-9]{2}.*")) return clean.substring(4, 6).toUpperCase(Locale.ROOT);
         String[] words = clean.split("\\s+");
         if (words.length > 1) {
             return (words[0].substring(0, 1) + words[1].substring(0, 1))
@@ -4173,10 +4249,15 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void applyAvatar(TextView view, Profile profile, String fallback) {
-        int tint = profile == null ? 0 : profileColor(profile.color);
+        applyAvatar(view, profile, fallback,
+                profile != null && !TextUtils.isEmpty(profile.device) ? profile.device : fallback);
+    }
+
+    private void applyAvatar(TextView view, Profile profile, String fallback, String seed) {
+        int tint = 0;
         if (profile == null || profile.avatarBase64.isEmpty()) {
             view.setText(fallback);
-            view.setBackground(avatarPlaceholder(tint, fallback));
+            view.setBackground(avatarPlaceholder(tint, seed));
             return;
         }
         try {
@@ -4186,7 +4267,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             view.setBackground(roundedAvatar(bitmap));
         } catch (RuntimeException error) {
             view.setText(fallback);
-            view.setBackground(avatarPlaceholder(tint, fallback));
+            view.setBackground(avatarPlaceholder(tint, seed));
         }
     }
 
@@ -4242,8 +4323,10 @@ public final class MainActivity extends Activity implements Events.Listener {
                 {Color.rgb(80, 204, 171), Color.rgb(45, 153, 188)},
                 {Color.rgb(92, 142, 247), Color.rgb(114, 89, 222)},
                 {Color.rgb(230, 94, 177), Color.rgb(154, 81, 210)},
+                {Color.rgb(64, 190, 222), Color.rgb(41, 121, 214)},
+                {Color.rgb(158, 214, 92), Color.rgb(52, 168, 110)},
         };
-        int index = Math.abs((seed == null ? 0 : seed.hashCode()) % palette.length);
+        int index = Math.floorMod(seed == null ? 0 : seed.hashCode(), palette.length);
         int start = tint == 0 ? palette[index][0] : blend(tint, Color.WHITE, 0.78f);
         int end = tint == 0 ? palette[index][1] : blend(tint, Color.BLACK, 0.78f);
         GradientDrawable shape = new GradientDrawable();
@@ -4337,6 +4420,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         int vertical = compactMessages.isChecked() ? 8 : 11;
         bubble.setPadding(dp(horizontal), dp(vertical), dp(horizontal), dp(vertical));
         bubble.setBackground(bubbleBackground(outgoing));
+        bubble.setTag(R.id.self_colored_tag, Boolean.TRUE);
 
         JSONObject reply = content.optJSONObject("reply");
         if (reply != null && !reply.optString("text").isEmpty()) {
@@ -4390,7 +4474,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             TextView text = new TextView(this);
             text.setText(content.optString("text", body));
             text.setTextColor(outgoing
-                    ? (Color.luminance(accentColor()) > .55 ? Color.BLACK : Color.WHITE)
+                    ? outgoingText()
                     : themeText());
             text.setTag(R.id.base_text_size_tag, (float) messageTextSp());
             text.setTextSize(messageTextSp() * (interfaceScale.getProgress() + 85) / 100f);
@@ -4422,7 +4506,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             String label = DeliveryStatus.label(state, deliveryOnline, read);
             delivery.setText(label);
             delivery.setContentDescription(label);
-            delivery.setTextColor(outgoing && Color.luminance(accentColor()) > .55 ? Color.DKGRAY : Color.LTGRAY);
+            delivery.setTextColor(outgoingMeta());
             delivery.setTextSize(9);
             delivery.setTag(R.id.base_text_size_tag, 9f);
             delivery.setGravity(Gravity.END);
@@ -4479,7 +4563,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         params.bottomMargin = dp(6);
         quote.setLayoutParams(params);
 
-        int ink = outgoing && Color.luminance(accentColor()) > .55 ? Color.DKGRAY : Color.LTGRAY;
+        int ink = outgoing ? outgoingMeta() : ("light".equals(themeName()) ? Color.rgb(91, 83, 105) : Color.LTGRAY);
 
         TextView caption = new TextView(this);
         caption.setText(R.string.reply_to);
@@ -4689,7 +4773,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         avatar.setTextColor(Color.WHITE);
         avatar.setTextSize(18);
         avatar.setLayoutParams(new LinearLayout.LayoutParams(dp(64), dp(64)));
-        applyAvatar(avatar, profile, initials(displayName(device)));
+        applyAvatar(avatar, profile, initials(displayName(device)), device);
         if (profile != null && !profile.avatarBase64.isEmpty()) {
             avatar.setContentDescription(I18n.t("Открыть аватар собеседника"));
             avatar.setOnClickListener(v -> showBase64Photo(profile.avatarBase64));
@@ -4708,7 +4792,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         identity.addView(name);
         String chatCode = profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(device);
-        TextView codeLabel = peerCardText(chatCode, 12, getColor(R.color.valanium_muted));
+        TextView codeLabel = peerCardText(chatCode, 12, mutedText());
         LinearLayout.LayoutParams codeParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         codeParams.topMargin = dp(3);
@@ -4716,7 +4800,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         identity.addView(codeLabel);
         TextView relation = peerCardText(standingLabel(standing), 11,
                 "contact".equals(standing) ? getColor(R.color.valanium_green)
-                        : getColor(R.color.valanium_dim));
+                        : dimText());
         LinearLayout.LayoutParams relationParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         relationParams.topMargin = dp(4);
@@ -4752,7 +4836,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
 
         TextView privacy = peerCardText(I18n.t("Данные показаны только в рамках текущего сеанса"),
-                10, getColor(R.color.valanium_dim));
+                10, dimText());
         privacy.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams privacyParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -4782,7 +4866,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(0, dp(5), 0, dp(5));
-        TextView title = peerCardText(label, 11, getColor(R.color.valanium_muted));
+        TextView title = peerCardText(label, 11, mutedText());
         title.setLayoutParams(new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         row.addView(title);
@@ -4927,7 +5011,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      */
     private View voiceRow(JSONObject content, boolean outgoing, int maxWidth) {
         int tint = outgoing
-                ? (Color.luminance(accentColor()) > .55 ? Color.BLACK : Color.WHITE)
+                ? outgoingText()
                 : themeText();
 
         LinearLayout row = new LinearLayout(this);
@@ -5063,7 +5147,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             boolean on = id == active;
             button.setBackgroundTintList(null);
             button.setBackground(on ? selectionBackground() : quietControlBackground());
-            button.setTextColor(on ? accentForLabel() : getColor(R.color.valanium_muted));
+            button.setTextColor(on ? accentForLabel() : mutedText());
         }
     }
 
@@ -5432,7 +5516,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         TextView message = new TextView(this);
         message.setText(text);
-        message.setTextColor(title == null ? Color.WHITE : getColor(R.color.valanium_muted));
+        message.setTextColor(title == null ? Color.WHITE : mutedText());
         message.setTextSize(title == null ? 12 : 11);
         message.setMaxLines(1);
         message.setEllipsize(TextUtils.TruncateAt.END);
@@ -5549,7 +5633,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         row.setPadding(0, dp(10), 0, dp(12));
         TextView view = new TextView(this);
         view.setText(label);
-        view.setTextColor(getColor(R.color.valanium_dim));
+        view.setTextColor(dimText());
         view.setTextSize(11);
         view.setGravity(Gravity.CENTER);
         view.setPadding(dp(12), dp(5), dp(12), dp(5));
@@ -5644,7 +5728,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView why = new TextView(this);
         why.setText(R.string.attachment_hidden_why);
-        why.setTextColor(getColor(R.color.valanium_muted));
+        why.setTextColor(mutedText());
         why.setTextSize(10);
         LinearLayout.LayoutParams whyParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -5708,7 +5792,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             {"voice_recording_hint", I18n.t("Показывать запись голосового"), "", "everyone,contacts,nobody"},
 
             {"#", I18n.t("Профиль и поиск")},
-            {"profile_avatar", I18n.t("Аватар"), "", "everyone,contacts,nobody"},
+            {"profile_avatar", I18n.t("Аватар"), "", "everyone,approved,contacts,nobody"},
     };
 
     private static final String DEFAULT_SCOPES = "everyone,approved,contacts,nobody";
@@ -5758,7 +5842,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                     .start();
             button.setTextColor(accentForLabel());
         } else {
-            button.setTextColor(getColor(R.color.valanium_muted));
+            button.setTextColor(mutedText());
         }
     }
 
@@ -5911,7 +5995,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (!spec[2].isEmpty()) {
             TextView hint = new TextView(this);
             hint.setText(spec[2]);
-            hint.setTextColor(getColor(R.color.valanium_muted));
+            hint.setTextColor(mutedText());
             hint.setTextSize(10);
             LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -5955,7 +6039,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView counts = new TextView(this);
         counts.setText(exceptionSummary(rule));
-        counts.setTextColor(getColor(R.color.valanium_dim));
+        counts.setTextColor(dimText());
         counts.setTextSize(9);
         counts.setLayoutParams(new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -6224,12 +6308,12 @@ public final class MainActivity extends Activity implements Events.Listener {
         Profile own = profiles.get(myDeviceHex);
         if (own != null) {
             own.color = myColor;
-            applyAvatar(profileAvatar, own, "ME");
+            applyAvatar(profileAvatar, own, "ME", myDeviceHex);
         } else {
-            profileAvatar.setBackground(avatarPlaceholder(profileColor(myColor)));
+            profileAvatar.setBackground(avatarPlaceholder(0, myDeviceHex));
         }
         TextView headerAvatar = findViewById(R.id.chat_logo);
-        applyAvatar(headerAvatar, own, "ME");
+        applyAvatar(headerAvatar, own, "ME", myDeviceHex);
         ((TextView) findViewById(R.id.profile_emblem)).setText(emblemGlyph(myEmblem));
         ((TextView) findViewById(R.id.open_emblem_value))
                 .setText(myEmblem.isEmpty() || "none".equals(myEmblem)
@@ -6345,7 +6429,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                         java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
                         .format(new java.util.Date(seen))
                         : getString(R.string.admin_never_seen)));
-        details.setTextColor(getColor(R.color.valanium_muted));
+        details.setTextColor(mutedText());
         details.setTextSize(10);
         copy.addView(title);
         copy.addView(details);
@@ -6385,7 +6469,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         row.setPadding(0, dp(6), 0, dp(6));
         TextView left = new TextView(this);
         left.setText(label);
-        left.setTextColor(getColor(R.color.valanium_muted));
+        left.setTextColor(mutedText());
         left.setTextSize(12);
         left.setLayoutParams(new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -6526,305 +6610,19 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void wireListTabs() {
         findViewById(R.id.tab_chats).setOnClickListener(v -> showList(LIST_CHATS));
         findViewById(R.id.tab_requests).setOnClickListener(v -> showList(LIST_REQUESTS));
-        findViewById(R.id.tab_channels).setOnClickListener(v -> {
-            showList(LIST_CHANNELS);
-            submit(Commands.channelList());
-        });
         showList(LIST_CHATS);
     }
 
     private static final int LIST_CHATS = 0;
     private static final int LIST_REQUESTS = 1;
-    private static final int LIST_CHANNELS = 2;
 
     private void showList(int list) {
         contactList.setVisibility(list == LIST_CHATS ? View.VISIBLE : View.GONE);
         requestList.setVisibility(list == LIST_REQUESTS ? View.VISIBLE : View.GONE);
-        findViewById(R.id.channel_pane_scroll)
-                .setVisibility(list == LIST_CHANNELS ? View.VISIBLE : View.GONE);
         markActive(findViewById(R.id.tab_chats), list == LIST_CHATS,
                 R.drawable.chip_active, R.drawable.chip_idle);
         markActive(findViewById(R.id.tab_requests), list == LIST_REQUESTS,
                 R.drawable.chip_active, R.drawable.chip_idle);
-        markActive(findViewById(R.id.tab_channels), list == LIST_CHANNELS,
-                R.drawable.chip_active, R.drawable.chip_idle);
-    }
-
-    // --- открытые каналы -----------------------------------------------------------
-
-    private void askNewChannel() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(22), dp(8), dp(22), 0);
-
-        EditText handle = new EditText(this);
-        handle.setHint(R.string.channel_handle_hint);
-        handle.setSingleLine(true);
-        EditText title = new EditText(this);
-        title.setHint(R.string.channel_title_hint);
-        title.setSingleLine(true);
-        box.addView(handle);
-        box.addView(title);
-
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.channel_create)
-                // Предупреждение стоит до того, как человек нажал «Завести»:
-                // после — оно уже оправдание, а не предупреждение.
-                .setMessage(R.string.channel_create_warning)
-                .setView(box)
-                .setPositiveButton(R.string.channel_create, (dialog, which) -> {
-                    String name = handle.getText().toString().trim()
-                            .replaceAll("^@", "").toLowerCase(Locale.ROOT);
-                    String caption = title.getText().toString().trim();
-                    if (name.isEmpty() || caption.isEmpty()) return;
-                    submit(Commands.channelCreate(name, caption, null));
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private void askFindChannel() {
-        EditText input = new EditText(this);
-        input.setHint(R.string.channel_find_hint);
-        input.setSingleLine(true);
-        LinearLayout box = new LinearLayout(this);
-        box.setPadding(dp(22), dp(8), dp(22), 0);
-        box.addView(input);
-
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.channel_find)
-                .setView(box)
-                .setPositiveButton(R.string.channel_find, (dialog, which) -> {
-                    String name = input.getText().toString().trim();
-                    if (!name.isEmpty()) submit(Commands.channelFind(name));
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private void renderChannelList() {
-        LinearLayout host = findViewById(R.id.channel_list);
-        host.removeAllViews();
-        if (channels.isEmpty()) {
-            host.addView(emptyState(R.drawable.ic_link,
-                    getString(R.string.channels_none_title), getString(R.string.channels_none_hint)));
-            return;
-        }
-        for (JSONObject channel : channels.values()) {
-            host.addView(channelRow(channel));
-        }
-    }
-
-    private View channelRow(JSONObject channel) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(12), dp(10));
-        row.setBackgroundResource(R.drawable.panel_glass);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(66));
-        params.bottomMargin = dp(8);
-        row.setLayoutParams(params);
-
-        TextView mark = new TextView(this);
-        mark.setText("◈");
-        mark.setGravity(Gravity.CENTER);
-        mark.setTextColor(themeText());
-        mark.setBackground(avatarPlaceholder());
-        mark.setLayoutParams(new LinearLayout.LayoutParams(dp(44), dp(44)));
-
-        LinearLayout copy = new LinearLayout(this);
-        copy.setOrientation(LinearLayout.VERTICAL);
-        copy.setPadding(dp(12), 0, 0, 0);
-        copy.setLayoutParams(new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView title = new TextView(this);
-        title.setText(channel.optString("title"));
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(15);
-        TextView handle = new TextView(this);
-        handle.setText("@" + channel.optString("handle")
-                + (channel.optBoolean("owner") ? " · " + getString(R.string.channel_yours) : ""));
-        handle.setTextColor(getColor(R.color.valanium_muted));
-        handle.setTextSize(11);
-        copy.addView(title);
-        copy.addView(handle);
-
-        row.addView(mark);
-        row.addView(copy);
-        row.setOnClickListener(v -> openChannelFeed(channel.optString("id"), null));
-        return row;
-    }
-
-    private void openChannelFeed(String id, Long before) {
-        openChannel = id;
-        if (before == null) channelOldest = null;
-        submit(Commands.channelFeed(id, before));
-    }
-
-    private void renderChannel(JSONObject report) {
-        JSONObject channel = report.optJSONObject("channel");
-        if (channel == null) return;
-        channels.put(channel.optString("id"), channel);
-        openChannel = channel.optString("id");
-        boolean owner = channel.optBoolean("owner");
-
-        if (screenChannel.getVisibility() != View.VISIBLE) open(screenChannel);
-        ((TextView) findViewById(R.id.channel_screen_title)).setText(channel.optString("title"));
-        ((TextView) findViewById(R.id.channel_screen_handle)).setText("@"
-                + channel.optString("handle")
-                + (owner ? " · " + getString(R.string.channel_yours) : ""));
-        findViewById(R.id.channel_composer).setVisibility(owner ? View.VISIBLE : View.GONE);
-
-        findViewById(R.id.channel_close).setVisibility(owner ? View.VISIBLE : View.GONE);
-        Button subscribe = findViewById(R.id.channel_subscribe);
-        subscribe.setVisibility(owner ? View.GONE : View.VISIBLE);
-        subscribe.setText(channel.optBoolean("subscribed")
-                ? R.string.channel_unsubscribe : R.string.channel_subscribe);
-
-        LinearLayout feed = findViewById(R.id.channel_feed);
-        JSONArray posts = report.optJSONArray("posts");
-        if (channelOldest == null) feed.removeAllViews();
-        if ((posts == null || posts.length() == 0) && feed.getChildCount() == 0) {
-            feed.addView(listNotice(getString(owner
-                    ? R.string.channel_empty_owner : R.string.channel_empty_reader)));
-        }
-        for (int i = 0; posts != null && i < posts.length(); i++) {
-            JSONObject post = posts.optJSONObject(i);
-            if (post == null) continue;
-            feed.addView(postRow(post, owner));
-            channelOldest = post.optLong("seq");
-        }
-        renderChannelList();
-    }
-
-    private View postRow(JSONObject post, boolean owner) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setBackgroundResource(R.drawable.card_flat);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.bottomMargin = dp(8);
-        row.setLayoutParams(params);
-
-        TextView body = new TextView(this);
-        body.setText(post.optString("body"));
-        body.setTextColor(themeText());
-        body.setTextSize(14);
-
-        TextView when = new TextView(this);
-        when.setText(java.text.DateFormat.getDateTimeInstance(
-                java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
-                .format(new java.util.Date(post.optLong("createdAt"))));
-        when.setTextColor(getColor(R.color.valanium_muted));
-        when.setTextSize(10);
-        LinearLayout.LayoutParams whenParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        whenParams.topMargin = dp(6);
-        when.setLayoutParams(whenParams);
-
-        row.addView(body);
-        row.addView(when);
-        if (owner) {
-            row.setOnLongClickListener(v -> {
-                new AlertDialog.Builder(this)
-                        .setTitle(R.string.channel_drop_post)
-                        .setMessage(R.string.channel_drop_hint)
-                        .setPositiveButton(R.string.delete, (dialog, which) ->
-                                submit(Commands.channelDeletePost(openChannel, post.optString("id"))))
-                        .setNegativeButton(R.string.cancel, null)
-                        .show();
-                return true;
-            });
-        }
-        return row;
-    }
-
-    private void closeChannel() {
-        JSONObject channel = channels.get(openChannel);
-        if (channel == null) return;
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.channel_close)
-                .setMessage(R.string.channel_close_hint)
-                .setPositiveButton(R.string.channel_close,
-                        (dialog, which) -> submit(Commands.channelDelete(openChannel)))
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private void toggleSubscription() {
-        JSONObject channel = channels.get(openChannel);
-        if (channel == null) return;
-        submit(Commands.channelSubscribe(openChannel, !channel.optBoolean("subscribed")));
-    }
-
-    private void publishPost() {
-        EditText input = findViewById(R.id.channel_text);
-        String text = input.getText().toString().trim();
-        if (text.isEmpty() || openChannel == null) return;
-        input.setText("");
-        submit(Commands.channelPublish(openChannel, text));
-    }
-
-    /** Ответ по каналам: список, лента, найденный канал — что спросили. */
-    private void onChannels(JSONObject event) {
-        JSONObject report = event.optJSONObject("report");
-        if (report == null) return;
-
-        JSONArray list = report.optJSONArray("channels");
-        if (list != null) {
-            channels.clear();
-            for (int i = 0; i < list.length(); i++) {
-                JSONObject channel = list.optJSONObject(i);
-                if (channel != null) channels.put(channel.optString("id"), channel);
-            }
-            renderChannelList();
-        }
-        if (report.has("found")) {
-            JSONObject found = report.optJSONObject("found");
-            if (found == null) {
-                toast(getString(R.string.channel_not_found));
-            } else {
-                channels.put(found.optString("id"), found);
-                renderChannelList();
-                openChannelFeed(found.optString("id"), null);
-            }
-        }
-        String closed = report.optString("closed", "");
-        if (!closed.isEmpty()) {
-            channels.remove(closed);
-            renderChannelList();
-            if (closed.equals(openChannel)) {
-                openChannel = null;
-                toast(getString(R.string.channel_closed));
-                goBack();
-            }
-        }
-        JSONObject opened = report.optJSONObject("opened");
-        if (opened != null) openChannelFeed(opened.optString("id"), null);
-        if (report.optJSONObject("channel") != null && report.optJSONArray("posts") != null) {
-            renderChannel(report);
-        }
-        // Опубликованное и убранное показываем перечитыванием ленты: на экране
-        // должно быть то, что лежит на сервере, а не то, что мы надеемся увидеть.
-        if (report.optJSONObject("published") != null || report.has("removed")) {
-            channelOldest = null;
-            openChannelFeed(report.optString("channel", openChannel), null);
-        }
-    }
-
-    private void onChannelPost(JSONObject event) {
-        JSONObject report = event.optJSONObject("report");
-        if (report == null) return;
-        String channel = report.optString("channel");
-        if (channel.equals(openChannel) && screenChannel.getVisibility() == View.VISIBLE) {
-            channelOldest = null;
-            openChannelFeed(channel, null);
-            return;
-        }
-        toast("@" + report.optString("handle") + I18n.t(": новый пост"));
     }
 
     private void renderRequests() {
@@ -6863,14 +6661,14 @@ public final class MainActivity extends Activity implements Events.Listener {
 
         TextView who = new TextView(this);
         who.setText(shortHex(device));
-        who.setTextColor(getColor(R.color.valanium_muted));
+        who.setTextColor(mutedText());
         who.setTextSize(10);
         card.addView(who);
 
         if (!entry.isNull("origin")) {
             TextView origin = new TextView(this);
             origin.setText(entry.optString("origin"));
-            origin.setTextColor(getColor(R.color.valanium_dim));
+            origin.setTextColor(dimText());
             origin.setTextSize(10);
             LinearLayout.LayoutParams originParams = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);

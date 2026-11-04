@@ -9,7 +9,6 @@
 
 pub mod access;
 mod anon_queue;
-pub mod channels;
 pub mod client;
 pub mod command;
 pub mod crypto;

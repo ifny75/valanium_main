@@ -151,9 +151,18 @@ pub(crate) fn bound_legacy_lifetimes(store: &Store, now: i64, ttl: i64) -> Resul
 
 /// At most one envelope per device may be active. This keeps Welcome and
 /// commits ahead of their dependent application messages, including retries.
+///
+/// Exception: an in-flight ephemeral signal (typing, presence, receipts) does
+/// not hold back an application message to the same device. Both belong to
+/// the same MLS epoch and decrypt in any order; making a message wait for a
+/// typing indicator only made text slower. Key changes still wait for every
+/// in-flight envelope of that device.
 pub(crate) fn ready(queue: &[Envelope], inflight: &std::collections::HashSet<[u8; 16]>, limit: usize) -> Vec<Envelope> {
-    let busy: std::collections::HashSet<_> = queue.iter()
+    let busy_any: std::collections::HashSet<_> = queue.iter()
         .filter(|item| inflight.contains(&item.client_ref)).map(|item| item.device).collect();
+    let busy: std::collections::HashSet<_> = queue.iter()
+        .filter(|item| inflight.contains(&item.client_ref) && item.kind != Kind::Ephemeral)
+        .map(|item| item.device).collect();
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
     let score=|item:&Envelope|if item.queued_at>0&&now.saturating_sub(item.queued_at)>30_000{item.priority.min(1)}else{item.priority};
     let mut barriers=std::collections::HashSet::new();
@@ -161,7 +170,9 @@ pub(crate) fn ready(queue: &[Envelope], inflight: &std::collections::HashSet<[u8
     for (index,item) in queue.iter().enumerate() {
         if busy.contains(&item.device)||barriers.contains(&item.device){continue;}
         if item.kind==Kind::Essential {
-            barriers.insert(item.device);candidates.entry(item.device).or_insert((index,item));
+            barriers.insert(item.device);
+            if busy_any.contains(&item.device){continue;}
+            candidates.entry(item.device).or_insert((index,item));
         }else{
             candidates.entry(item.device).and_modify(|candidate|{if score(item)<score(candidate.1){*candidate=(index,item);}}).or_insert((index,item));
         }
@@ -181,6 +192,17 @@ mod tests {
         let queue=vec![image.clone(),commit,text.clone()];
         assert_eq!(ready(&queue,&Default::default(),1)[0].client_ref,image.client_ref);
         assert_eq!(ready(&queue,&std::collections::HashSet::from([image.client_ref]),4).len(),0);
+    }
+    #[test] fn a_typing_signal_never_holds_back_text_but_holds_back_a_key_change(){
+        let mut typing=sample(1);typing.kind=Kind::Ephemeral;typing.priority=3;
+        let text=sample(2);
+        let inflight=std::collections::HashSet::from([typing.client_ref]);
+        assert_eq!(ready(&[typing.clone(),text.clone()],&inflight,4),vec![text.clone()]);
+        assert_eq!(ready(&[typing.clone(),text.clone()],&Default::default(),1)[0].client_ref,text.client_ref);
+        let mut commit=sample(3);commit.kind=Kind::Essential;
+        assert!(ready(&[typing.clone(),commit.clone(),text.clone()],&inflight,4).is_empty());
+        let in_text=std::collections::HashSet::from([text.client_ref]);
+        assert!(ready(&[text,typing],&in_text,4).is_empty());
     }
     #[test] fn an_aged_attachment_is_not_starved(){let mut image=sample(1);image.priority=2;image.queued_at=1;assert_eq!(ready(&[image,sample(2)],&Default::default(),1)[0].client_ref,[1;16]);}
     fn sample(id: u8) -> Envelope {

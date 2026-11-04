@@ -65,7 +65,6 @@
 
         <Button android:id="@+id/tab_chats" style="@style/Valanium.Tab" android:layout_width="0dp" android:layout_weight="1" android:text="@string/dialogs_label" />
         <Button android:id="@+id/tab_requests" style="@style/Valanium.Tab" android:layout_width="0dp" android:layout_weight="1" android:text="@string/requests_label" />
-        <Button android:id="@+id/tab_channels" style="@style/Valanium.Tab" android:layout_width="0dp" android:layout_weight="1" android:text="@string/channels_label" />
     </LinearLayout>
 
     <FrameLayout
@@ -94,33 +93,5 @@
             android:listSelector="@android:color/transparent"
             android:scrollbars="none"
             android:visibility="gone" />
-
-        <ScrollView
-            android:id="@+id/channel_pane_scroll"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:fillViewport="true"
-            android:scrollbars="none"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:id="@+id/channel_pane"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:orientation="horizontal">
-
-                    <Button android:id="@+id/channel_create" style="@style/Valanium.Button.Dark.Small" android:layout_width="0dp" android:layout_weight="1" android:text="@string/channel_create" />
-                    <Button android:id="@+id/channel_find" style="@style/Valanium.Button.Dark.Small" android:layout_width="0dp" android:layout_marginStart="6dp" android:layout_weight="1" android:text="@string/channel_find" />
-                </LinearLayout>
-
-                <LinearLayout android:id="@+id/channel_list" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
-            </LinearLayout>
-        </ScrollView>
     </FrameLayout>
 </LinearLayout>

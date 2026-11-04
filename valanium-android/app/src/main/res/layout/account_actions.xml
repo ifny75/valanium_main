@@ -10,6 +10,10 @@
         android:layout_width="match_parent" android:layout_marginTop="8dp" android:text="Переподключиться" />
     <Button android:id="@+id/account_updates" style="@style/Valanium.Button.Dark"
         android:layout_width="match_parent" android:layout_marginTop="8dp" android:text="Проверить обновления" />
+    <Button android:id="@+id/account_background" style="@style/Valanium.Button.Dark"
+        android:layout_width="match_parent" android:layout_marginTop="8dp" android:text="Фоновая доставка" />
+    <Button android:id="@+id/account_diagnostics" style="@style/Valanium.Button.Dark"
+        android:layout_width="match_parent" android:layout_marginTop="8dp" android:text="Задержки доставки" />
     <Button android:id="@+id/account_logout" style="@style/Valanium.Button.Dark"
         android:layout_width="match_parent" android:layout_marginTop="8dp"
         android:textColor="#ED8674" android:text="Выйти из аккаунта" />

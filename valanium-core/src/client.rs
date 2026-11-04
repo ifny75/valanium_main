@@ -57,8 +57,15 @@ async fn open_socket(url: &str) -> Result<Socket> {
     let started = std::time::Instant::now();
     let stream: Box<dyn NetworkStream> = if valid_onion_host(&host) {
         let proxy = std::env::var("VALANIUM_TOR_SOCKS").unwrap_or_else(|_| "127.0.0.1:9050".into());
+        // Случайные логин/пароль — это изоляция цепей, а не вход: C-tor и Arti
+        // разводят по разным цепям потоки с разными SOCKS-учётками
+        // (IsolateSOCKSAuth). Без них внешний Tor (системный, Tor Browser,
+        // Orbot) пускал анонимный сокет и AUTH-сессию к одному onion по одной
+        // rendezvous-цепи, и сторона сервиса могла бы их связать.
+        let user = hex::encode(random_bytes(8));
+        let pass = hex::encode(random_bytes(8));
         Box::new(
-            Socks5Stream::connect(proxy.as_str(), (host.as_str(), port))
+            Socks5Stream::connect_with_password(proxy.as_str(), (host.as_str(), port), &user, &pass)
                 .await
                 .map_err(|err| CoreError::Transport(format!("Tor SOCKS5 недоступен: {err}")))?,
         )
@@ -83,16 +90,36 @@ const FALLBACK_HEARTBEAT_SEC: u64 = 30;
 const MAX_BACKOFF_SEC: u64 = 60;
 /// Билетов на руках меньше — просим ещё, не дожидаясь, пока кончатся совсем:
 /// доставка не должна упираться в пустой запас посреди набора сообщения.
-const TICKET_LOW_WATERMARK: usize = 3;
+///
+/// Одно сообщение уходит на каждое устройство собеседника и на свои
+/// остальные устройства, плюс квитанции. Трёх билетов не хватало даже на одну
+/// реплику в беседу с двумя телефонами, и следующая ждала круга за пачкой.
+const TICKET_LOW_WATERMARK: usize = 8;
 /// Столько просим за раз. Сервер по умолчанию отдаёт до двадцати — берём с
 /// запасом, но не всю пачку: несколько отправок между запросами это переживут.
-const TICKET_BATCH_SIZE: u8 = 10;
+/// Сервер отдаёт до двадцати за запрос (VALANIUM_MAX_TICKETS_PER_REQUEST).
+const TICKET_BATCH_SIZE: u8 = 20;
 /// Сколько ждать анонимную отправку целиком — открытие соединения (иногда
 /// через Tor), HELLO, ответ. Дольше — не тише, а просто медленнее: сообщение
 /// останется в запечатанной очереди до следующей анонимной попытки.
 const ANON_SEND_TIMEOUT: Duration = Duration::from_secs(25);
+/// Сколько готовых анонимных сокетов держим, когда ничего не происходит.
 const ANON_POOL_SIZE: usize = 2;
-const ANON_READY_LIFETIME: Duration = Duration::from_secs(45);
+/// Потолок пула, пока человек набирает текст или в очереди ждут конверты.
+/// Совпадает с числом одновременных анонимных отправок: больше не потратить.
+const ANON_POOL_MAX: usize = 4;
+/// Сколько держать расширенный пул после сигнала «печатает».
+const ANON_POOL_BOOST: Duration = Duration::from_secs(90);
+/// Готовый сокет живёт дольше прежних 45 с: его держит пинг ([`keep_anonymous`]).
+/// Каждая пересборка — новая rendezvous-цепь, несколько секунд и трафик; раньше
+/// простаивающий клиент строил по две такие цепи каждые 45 секунд впустую, а
+/// написавший реже — почти всегда попадал на пустой пул.
+const ANON_READY_LIFETIME: Duration = Duration::from_secs(300);
+/// Пинг готового сокета. Меньше серверного idleTimeout (90 с по умолчанию).
+const ANON_KEEPALIVE: Duration = Duration::from_secs(25);
+/// Если onion-вход не открылся за это время, параллельно пробуем другой.
+/// Медленная rendezvous-цепь иначе стоила бы все 25 с тайм-аута.
+const ANON_HEDGE_DELAY: Duration = Duration::from_secs(6);
 const TICKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TICKET_SEND_MARGIN_MS: i64 = 30_000;
 
@@ -101,6 +128,67 @@ struct PreparedAnonymous {
     started: tokio::time::Instant,
     socket: Socket,
     supports_passes: bool,
+}
+
+/// Готовый анонимный сокет в пуле. Сокетом владеет задача [`keep_anonymous`]:
+/// она отвечает на пинги сервера и шлёт свои, чтобы соединение не закрыли по
+/// простою. На сокете по-прежнему нет ни личности, ни получателя, ни билета —
+/// он только открыт и получил HELLO.
+struct KeptAnonymous {
+    route: String,
+    started: tokio::time::Instant,
+    supports_passes: bool,
+    release: tokio::sync::oneshot::Sender<()>,
+    socket: tokio::task::JoinHandle<Option<Socket>>,
+    dead: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl KeptAnonymous {
+    fn keep(ready: PreparedAnonymous) -> Self {
+        let (release, released) = tokio::sync::oneshot::channel();
+        let dead = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let socket = tokio::spawn(keep_anonymous(ready.socket, released, dead.clone()));
+        KeptAnonymous { route: ready.route, started: ready.started,
+            supports_passes: ready.supports_passes, release, socket, dead }
+    }
+    fn is_dead(&self) -> bool { self.dead.load(std::sync::atomic::Ordering::Relaxed) }
+    /// Забирает сокет у сторожа. `None` — соединение умерло, пока лежало в пуле.
+    async fn take(self) -> Option<Socket> {
+        if self.release.send(()).is_err() { return None; }
+        self.socket.await.ok().flatten()
+    }
+}
+
+/// Держит готовый сокет живым до востребования. Сброшенный `release` (пул
+/// очищен, сеть сменилась) закрывает соединение.
+async fn keep_anonymous(
+    mut socket: Socket,
+    mut release: tokio::sync::oneshot::Receiver<()>,
+    dead: Arc<std::sync::atomic::AtomicBool>,
+) -> Option<Socket> {
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + ANON_KEEPALIVE, ANON_KEEPALIVE);
+    loop {
+        tokio::select! {
+            biased;
+            signal = &mut release => return if signal.is_ok() { Some(socket) } else { None },
+            incoming = socket.next() => match incoming {
+                // Pong и пинги сервера: ответ на пинг tungstenite ставит сам.
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                    dead.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return None;
+                }
+                Some(Ok(_)) => {}
+            },
+            _ = ping.tick() => {
+                let sent = tokio::time::timeout(Duration::from_secs(10),
+                    socket.send(Message::Ping(random_bytes(8).into()))).await;
+                if !matches!(sent, Ok(Ok(()))) {
+                    dead.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// Внутренний адрес, который UI передаёт для автоматического выбора пути.
@@ -336,9 +424,13 @@ struct Live {
     route_cooldowns: HashMap<String, tokio::time::Instant>,
     // Unauthenticated, single-use socket. Never shared between messages.
     prewarming: tokio::task::JoinSet<(String, Result<PreparedAnonymous>)>,
-    prepared: VecDeque<PreparedAnonymous>,
+    prepared: VecDeque<KeptAnonymous>,
     prewarm_retry_at: Option<tokio::time::Instant>,
     require_anonymous: bool,
+    /// До этого момента пул держится расширенным: человек набирает текст.
+    prewarm_boost_until: Option<tokio::time::Instant>,
+    /// Конверты, готовые к отправке, но оставшиеся без сокета в последнем проходе.
+    anon_waiting: usize,
 }
 
 impl Drop for Live {
@@ -835,16 +927,6 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             | Command::AdminGet { .. }
             | Command::SupportGet { .. }
             | Command::SupportMark { .. }
-            | Command::ChannelCreate { .. }
-            | Command::ChannelPublish { .. }
-            | Command::ChannelList
-            | Command::ChannelFeed { .. }
-            | Command::ChannelSubscribe { .. }
-            | Command::ChannelFind { .. }
-            | Command::ChannelDeletePost { .. }
-            | Command::ChannelDelete { .. }
-            | Command::ChannelUpdate { .. }
-            | Command::ChannelAdmin { .. }
             | Command::RevokeDevice { .. }
             | Command::RevokeOtherDevices
             | Command::AdminAction { .. }
@@ -1727,90 +1809,6 @@ fn unseal_avatar(
     match crate::profile::open(&key, &data) {
         Ok((mime, data)) => (Some(mime), Some(data)),
         Err(_) => (None, None),
-    }
-}
-
-/*
-  Подтверждение авторства в каналах.
-
-  Канал не шифруется — это принято осознанно. Но право писать до сих пор
-  проверял только сервер, и захвативший его писал бы от имени любого канала, а
-  читатель не отличил бы. Теперь автор подписывает пост, а мы проверяем.
-
-  С чем сверять, берётся из закрепления: ключ владельца запоминается при первой
-  встрече с каналом, как и ключ собеседника. Сменился — говорим вслух, а не
-  принимаем молча.
-
-  Пост помечается `verified` для интерфейса. Пометка честная: она означает
-  «подписано ключом, который мы за этим каналом помним», а не «правда».
-*/
-fn check_channel_report(store: &Store, sink: &EventSink, report: &mut serde_json::Value) {
-    let Some(handle) = report.get("handle").and_then(|v| v.as_str()).map(str::to_owned) else {
-        return;
-    };
-    let Some(owner) = report
-        .get("ownerIdentity")
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
-    else {
-        return;
-    };
-
-    // Закрепление живёт в той же книге, что и ключи собеседников: имя канала
-    // не может совпасть с юзернеймом — у него свой префикс.
-    let pin_name = format!("channel:{handle}");
-    let mut pins = match load_pins_checked(store) {
-        Ok(pins) => pins,
-        Err(err) => {
-            fail(sink, "storage", &err.to_string());
-            return;
-        }
-    };
-    let state = pins.check(&pin_name, &owner, now_millis());
-    if state != crate::pins::PinState::Same {
-        if let Err(err) = save_pins(store, &pins) {
-            fail(sink, "storage", &err.to_string());
-        }
-    }
-    if state == crate::pins::PinState::Changed {
-        sink(Event::Anomaly {
-            kind: "channel_owner_changed".into(),
-            detail: format!("у канала @{handle} другой ключ владельца, чем прежде"),
-        });
-    }
-
-    let trusted = pins.names.get(&pin_name).map(|pin| pin.device.clone()).unwrap_or(owner);
-    let channel_id = report
-        .get("channel")
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
-        .unwrap_or_default();
-
-    if let Some(post) = report.get_mut("post") {
-        mark_post(post, &channel_id, &trusted);
-    }
-    if let Some(posts) = report.get_mut("posts").and_then(|v| v.as_array_mut()) {
-        for post in posts {
-            mark_post(post, &channel_id, &trusted);
-        }
-    }
-}
-
-/// Проставляет посту `verified`: подписан ли он тем, кого мы помним владельцем.
-fn mark_post(post: &mut serde_json::Value, channel: &str, trusted_owner: &str) {
-    let verified = match crate::channels::author_of(post) {
-        Some((author, signature)) if author == trusted_owner => {
-            let id = post.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-            let created_at = post.get("createdAt").and_then(|v| v.as_i64()).unwrap_or_default();
-            let body = post.get("body").and_then(|v| v.as_str()).unwrap_or_default();
-            crate::channels::verify(&author, &signature, channel, id, created_at, body)
-        }
-        // Подписи нет вовсе (старый клиент) или подписал не владелец —
-        // в обоих случаях подтвердить авторство нечем.
-        _ => false,
-    };
-    if let Some(object) = post.as_object_mut() {
-        object.insert("verified".into(), serde_json::Value::Bool(verified));
     }
 }
 
@@ -2988,6 +2986,15 @@ async fn pump(
                         sink(Event::CallStatus{peer_device:recipient_device,call_id:id,status:"checking".into()});
                     }
                     Command::Typing { recipient_device, active } => {
+                        // Человек печатает: сообщение вот-вот уйдёт. Готовим
+                        // сокеты и билеты сейчас, а не после нажатия «Отправить».
+                        if active && live.require_anonymous && authenticated && greeting.sealed_sender {
+                            live.prewarm_boost_until = Some(tokio::time::Instant::now() + ANON_POOL_BOOST);
+                            maintain_anonymous_prewarm(store, live);
+                            if let Err(err) = request_anonymous_tickets(&mut socket, live).await {
+                                if is_transport(&err) { return Ok(Outcome::Retry); }
+                            }
+                        }
                         // Ошибку не показываем: индикатор набора — вещь
                         // необязательная, и ругаться на него посреди переписки
                         // хуже, чем тихо его не отправить.
@@ -3234,86 +3241,6 @@ async fn pump(
                             sink(Event::GroupForgotten { group });
                         }
                     }
-                    Command::ChannelCreate { handle, title, about } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_CREATE,
-                            &serde_json::json!({ "handle": handle, "title": title, "about": about }))?).await?;
-                    }
-                    Command::ChannelPublish { channel, body } => {
-                        /*
-                          Идентификатор и время придумываем здесь.
-
-                          Подпись должна покрывать то, что увидит читатель, —
-                          а увидит он время и то, в каком канале пост стоит.
-                          Придумай их сервер, подписывать было бы нечего:
-                          автор не знает, что там появится после него.
-                        */
-                        let post_id = hex::encode(random_bytes(ID_LEN));
-                        let created_at = now_millis();
-                        // Ключ личности берём из базы: держать его копию в
-                        // цикле соединения незачем, а подписываем мы редко.
-                        let signature = match store.load_credentials() {
-                            Ok(credentials) => crate::channels::sign(
-                                &credentials.identity, &channel, &post_id, created_at, &body,
-                            ),
-                            Err(err) => {
-                                fail(sink, "no_identity", &err.to_string());
-                                continue;
-                            }
-                        };
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_PUBLISH,
-                            &serde_json::json!({
-                                "channel": channel,
-                                "body": body,
-                                "id": post_id,
-                                "createdAt": created_at,
-                                "signature": signature,
-                            }))?).await?;
-                    }
-                    Command::ChannelList => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_LIST,
-                            &serde_json::json!({}))?).await?;
-                    }
-                    Command::ChannelFeed { channel, before } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_FEED,
-                            &serde_json::json!({ "channel": channel, "before": before }))?).await?;
-                    }
-                    Command::ChannelSubscribe { channel, subscribe } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_SUB,
-                            &serde_json::json!({ "channel": channel, "subscribe": subscribe }))?).await?;
-                    }
-                    Command::ChannelFind { handle } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_FIND,
-                            &serde_json::json!({ "handle": handle }))?).await?;
-                    }
-                    Command::ChannelDeletePost { channel, post } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_DELETE_POST,
-                            &serde_json::json!({ "channel": channel, "post": post }))?).await?;
-                    }
-                    Command::ChannelDelete { channel } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_DELETE,
-                            &serde_json::json!({ "channel": channel }))?).await?;
-                    }
-                    Command::ChannelUpdate { channel, title, about, icon } => {
-                        // Только тронутые поля: сервер отличает «не менять» от
-                        // «очистить» по наличию ключа, а не по пустому значению.
-                        let mut payload = serde_json::Map::new();
-                        payload.insert("channel".into(), channel.into());
-                        if let Some(title) = title {
-                            payload.insert("title".into(), title.into());
-                        }
-                        if let Some(about) = about {
-                            payload.insert("about".into(), about.into());
-                        }
-                        if let Some(icon) = icon {
-                            payload.insert("icon".into(), icon);
-                        }
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_UPDATE,
-                            &serde_json::Value::Object(payload))?).await?;
-                    }
-                    Command::ChannelAdmin { channel, who, admin } => {
-                        send(&mut socket, proto::channel_frame(op::CHANNEL_ADMIN,
-                            &serde_json::json!({ "channel": channel, "who": who, "admin": admin }))?).await?;
-                    }
                     Command::RevokeDevice { device } => {
                         // Своё текущее сервер откажется отзывать, и правильно
                         // сделает. Проверять это ещё и здесь незачем: два
@@ -3423,13 +3350,15 @@ async fn pump(
                                 }),
                                 other => fail(sink, "storage", &other.to_string()),
                             }
-                        } else if let Err(err) = on_send(
+                        } else if let Err(err) = {
+                            approve_on_first_contact(store, sink, &recipient_device, &body);
+                            on_send(
                             &mut socket, store, mls, sink, &mut pending, &recipient_device, body.clone(),
                             &mut live.outbox,
                             Some(SealedSenderCtx { required: live.require_anonymous }),
                         )
                         .await
-                        {
+                        } {
                             if let Some(id) = content_json(&body).and_then(|v| v.get("id")?.as_str().map(str::to_owned)) {
                                 let conversation = hex::decode(&recipient_device).ok()
                                     .and_then(|device| store.conversation_with(&device).ok().flatten())
@@ -3667,16 +3596,9 @@ async fn on_frame(
             sink(Event::Failed { code: err.code, message: err.message });
         }
 
-        op::CHANNEL_OK => {
-            let mut report: serde_json::Value = proto::parse_json(body)?;
-            check_channel_report(store, sink, &mut report);
-            sink(Event::Channels { report });
-        }
-        op::CHANNEL_POST => {
-            let mut report: serde_json::Value = proto::parse_json(body)?;
-            check_channel_report(store, sink, &mut report);
-            sink(Event::ChannelPost { report });
-        }
+        // Открытые каналы убраны из клиента. Старый сервер ещё может прислать
+        // пост по прежней подписке — молча пропускаем, а не рвём сессию.
+        op::CHANNEL_OK | op::CHANNEL_POST => {}
         op::DEVICE_OK => {
             // Одним кодом отвечают и на отзыв, и на запрос списка. Различаем по
             // полю: у отзыва его нет, а придумывать второй код ради этого
@@ -4420,6 +4342,11 @@ async fn encrypt_and_send(
 
 /// Persist ratchet, own history and exact ciphertext as one durable change.
 fn message_priority(body:&str)->u8{
+    // Звонок ждать не может; набор текста, «в сети» и квитанции подождут
+    // сообщения, а не наоборот. Раньше они шли с приоритетом 0 и забирали
+    // готовые сокеты раньше самого текста.
+    if matches!(crate::access::parse_signal(body),Some(crate::access::Control::Call(_))){return 0;}
+    if activity_rule(body).is_some(){return 3;}
     if crate::access::is_control(body){return 0;}
     match content_json(body).and_then(|v|v.get("type").and_then(|v|v.as_str()).map(str::to_owned)).as_deref(){Some("image"|"voice"|"file"|"video")=>2,_=>1}
 }
@@ -4457,6 +4384,17 @@ fn queue_private_message(store: &Store, mls: &mut Mls, group_id: &[u8], waiting:
         *mls = Mls::restore(&store.load_credentials()?.device, &signer, &before)?;
     }
     result
+}
+
+/// Writing to someone is consent: without a directory entry the initiator never
+/// shared its avatar key, so avatars only ever travelled in one direction.
+fn approve_on_first_contact(store: &Store, sink: &EventSink, recipient: &str, body: &str) {
+    let Some(kind) = content_json(body).and_then(|v| v.get("type")?.as_str().map(str::to_owned)) else { return };
+    if kind == "read" { return; }
+    let mut directory = load_directory(store);
+    if directory.standing(recipient).is_some() { return; }
+    directory.set(recipient, crate::directory::Standing::Approved, now_millis());
+    if save_directory(store, &directory).is_ok() { sink(directory_event(store)); }
 }
 
 fn queue_offline(store: &Store, sink: &EventSink, recipient: &str, body: &str) {
@@ -4639,16 +4577,19 @@ fn spawn_anon_send(
     outcomes: mpsc::UnboundedSender<AnonOutcome>,
     expires_at: Option<i64>,
     pass: Option<String>,
-    prepared: Option<(Socket, bool)>,
+    prepared: Option<KeptAnonymous>,
 ) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         let result = match tokio::time::timeout(
             expires_at.map(|at| Duration::from_millis(at.saturating_sub(now_millis()).max(0) as u64).min(ANON_SEND_TIMEOUT)).unwrap_or(ANON_SEND_TIMEOUT),
             async {
-                match prepared {
-                    Some((socket, supports_passes)) => send_on_anonymous_socket(socket, supports_passes,
+                let supports_passes = prepared.as_ref().map(|kept| kept.supports_passes);
+                let socket = match prepared { Some(kept) => kept.take().await, None => None };
+                match (socket, supports_passes) {
+                    (Some(socket), Some(supports_passes)) => send_on_anonymous_socket(socket, supports_passes,
                         client_ref, ticket, device, ciphertext, pass).await,
-                    None => send_anon_once(route.clone(), client_ref, ticket, device, ciphertext, pass).await,
+                    // Сокет умер в пуле — открываем новый в рамках того же тайм-аута.
+                    _ => send_anon_once(route.clone(), client_ref, ticket, device, ciphertext, pass).await,
                 }
             },
         ).await {
@@ -4698,31 +4639,79 @@ async fn request_anonymous_tickets(socket: &mut Socket, live: &mut Live) -> Resu
     Ok(())
 }
 
+fn anonymous_pool_target(live: &Live) -> usize {
+    let boosted = live.prewarm_boost_until.is_some_and(|until| until > tokio::time::Instant::now());
+    let base = if boosted { ANON_POOL_MAX } else { ANON_POOL_SIZE };
+    base.max(live.anon_waiting).min(ANON_POOL_MAX)
+}
+
 fn maintain_anonymous_prewarm(store: &Store, live: &mut Live) {
     if !live.require_anonymous { return; }
     let now = tokio::time::Instant::now();
     live.prepared.retain(|ready| now.duration_since(ready.started) < ANON_READY_LIFETIME
+        && !ready.is_dead()
         && !live.route_cooldowns.get(&ready.route).is_some_and(|until| *until > now));
     if live.prewarm_retry_at.is_some_and(|until| until > now) { return; }
     live.prewarm_retry_at = None;
-    while live.prepared.len() + live.prewarming.len() < ANON_POOL_SIZE {
+    let target = anonymous_pool_target(live);
+    while live.prepared.len() + live.prewarming.len() < target {
         let Some(route) = pick_onion_route(store, live) else { break };
-        live.prewarming.spawn(async move {
-            let result = async {
-                let (socket, supports_passes) = tokio::time::timeout(
-                    ANON_SEND_TIMEOUT, prepare_anonymous_socket(&route)).await
-                    .map_err(|_| CoreError::Transport("anonymous prewarm timeout".into()))??;
-                Ok(PreparedAnonymous { route: route.clone(), started: now, socket, supports_passes })
-            }.await;
-            (route, result)
-        });
+        let backup = pick_backup_onion_route(store, live, &route);
+        live.prewarming.spawn(prepare_hedged(route, backup));
     }
+}
+
+async fn prepare_attempt(route: String) -> (String, Result<PreparedAnonymous>) {
+    let started = tokio::time::Instant::now();
+    let result = match tokio::time::timeout(ANON_SEND_TIMEOUT, prepare_anonymous_socket(&route)).await {
+        Ok(Ok((socket, supports_passes))) =>
+            Ok(PreparedAnonymous { route: route.clone(), started, socket, supports_passes }),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(CoreError::Transport("anonymous prewarm timeout".into())),
+    };
+    (route, result)
+}
+
+/// Открывает анонимный сокет; если первый вход не ответил за
+/// [`ANON_HEDGE_DELAY`], параллельно пробует второй. Побеждает первый готовый,
+/// проигравший закрывается вместе со своей задачей. Оба сокета без личности
+/// и изолированы друг от друга.
+async fn prepare_hedged(primary: String, backup: Option<String>) -> (String, Result<PreparedAnonymous>) {
+    let Some(backup) = backup.filter(|backup| *backup != primary) else { return prepare_attempt(primary).await };
+    let mut first = Box::pin(prepare_attempt(primary));
+    tokio::select! {
+        outcome = &mut first => {
+            if outcome.1.is_ok() { return outcome; }
+            // Первый вход отказал сразу — второй пробуем без ожидания.
+            let second = prepare_attempt(backup).await;
+            return if second.1.is_ok() { second } else { outcome };
+        }
+        _ = tokio::time::sleep(ANON_HEDGE_DELAY) => {}
+    }
+    use futures_util::future::{select, Either};
+    let (outcome, other) = match select(first, Box::pin(prepare_attempt(backup))).await {
+        Either::Left((outcome, other)) => (outcome, Either::Right(other)),
+        Either::Right((outcome, other)) => (outcome, Either::Left(other)),
+    };
+    if outcome.1.is_ok() { return outcome; }
+    let other = match other { Either::Left(first) => first.await, Either::Right(second) => second.await };
+    if other.1.is_ok() { other } else { outcome }
+}
+
+fn pick_backup_onion_route(store: &Store, live: &Live, primary: &str) -> Option<String> {
+    let now = tokio::time::Instant::now();
+    let hosts: Vec<_> = load_onion_hosts(store).into_iter()
+        .filter(|route| route != primary && !live.route_cooldowns.get(route).is_some_and(|until| *until > now))
+        .collect();
+    if hosts.is_empty() { return None; }
+    let index = (random_bytes(1)[0] as usize) % hosts.len();
+    hosts.into_iter().nth(index)
 }
 
 fn accept_anonymous_prewarm(live: &mut Live,
     outcome: std::result::Result<(String, Result<PreparedAnonymous>), tokio::task::JoinError>) {
     match outcome {
-        Ok((_, Ok(ready))) => live.prepared.push_back(ready),
+        Ok((_, Ok(ready))) => live.prepared.push_back(KeptAnonymous::keep(ready)),
         other => {
             let now = tokio::time::Instant::now();
             live.prewarm_retry_at = Some(now + Duration::from_secs(2));
@@ -4799,16 +4788,22 @@ async fn flush_anonymous(
     request_anonymous_tickets(socket, live).await?;
     let inflight = active.into_iter().chain(live.anon_retries.iter()
         .filter(|(_, (until, _))| *until > now).map(|(id, _)| *id)).collect();
-    for envelope in crate::anon_queue::ready(&queue, &inflight, 4usize.saturating_sub(live.anon_inflight.len())) {
-        if direct_allowed && envelope.authenticated { continue; }
-        if blocked(store,&hex::encode(envelope.device)){continue;}
+    let candidates: Vec<_> = crate::anon_queue::ready(&queue, &inflight, 4usize.saturating_sub(live.anon_inflight.len()))
+        .into_iter().filter(|envelope| !(direct_allowed && envelope.authenticated)
+            && !blocked(store, &hex::encode(envelope.device))).collect();
+    // Сколько конвертов осталось без готового сокета: под них расширяется пул.
+    live.anon_waiting = candidates.len();
+    for envelope in candidates {
         if live.tickets.is_empty() { break; }
-        let ready = live.prepared.pop_front();
+        let mut ready = None;
+        while let Some(kept) = live.prepared.pop_front() {
+            if !kept.is_dead() { ready = Some(kept); break; }
+        }
         // A building socket will wake pump when ready. Do not start another
         // cold connection and throw away the work already in progress.
         if live.require_anonymous && ready.is_none() { break; }
         let (route, prepared) = match ready {
-            Some(ready) => (Some(ready.route), Some((ready.socket, ready.supports_passes))),
+            Some(ready) => (Some(ready.route.clone()), Some(ready)),
             None => (pick_onion_route(store, live), None),
         };
         if let (Some(route), Some(ticket)) = (route, live.tickets.pop_front()) {
@@ -4822,6 +4817,7 @@ async fn flush_anonymous(
                 envelope.ciphertext, outcomes.clone(), envelope.expires_at,
                 load_access(store).held.get(&hex::encode(envelope.device)).cloned(), prepared);
             live.anon_inflight.insert(envelope.client_ref, task);
+            live.anon_waiting = live.anon_waiting.saturating_sub(1);
         } else { break; }
     }
     maintain_anonymous_prewarm(store, live);
@@ -5617,56 +5613,6 @@ mod tests {
         fn drop(&mut self) {
             Self::wipe(&self.1);
         }
-    }
-
-    /// Пост подтверждается только подписью того, кого мы помним владельцем.
-    #[test]
-    fn only_the_remembered_owner_confirms_a_post() {
-        let owner = crate::keys::SecretKey::generate();
-        let owner_hex = hex::encode(owner.public());
-        let body = "новость канала";
-        let signature = crate::channels::sign(&owner, "chan", "post-1", 1_700_000_000, body);
-
-        let make = || serde_json::json!({
-            "id": "post-1",
-            "body": body,
-            "createdAt": 1_700_000_000_i64,
-            "author": owner_hex,
-            "signature": signature,
-        });
-
-        let mut post = make();
-        mark_post(&mut post, "chan", &owner_hex);
-        assert_eq!(post["verified"], serde_json::Value::Bool(true));
-
-        // Тот же пост, но владельцем мы помним другого — подтверждать нечем.
-        let stranger = hex::encode(crate::keys::SecretKey::generate().public());
-        let mut post = make();
-        mark_post(&mut post, "chan", &stranger);
-        assert_eq!(post["verified"], serde_json::Value::Bool(false));
-
-        // Подменённый текст ломает подпись.
-        let mut post = make();
-        post["body"] = serde_json::Value::String("подмена".into());
-        mark_post(&mut post, "chan", &owner_hex);
-        assert_eq!(post["verified"], serde_json::Value::Bool(false));
-
-        // И перенос в другой канал тоже.
-        let mut post = make();
-        mark_post(&mut post, "other", &owner_hex);
-        assert_eq!(post["verified"], serde_json::Value::Bool(false));
-    }
-
-    /// Пост без подписи — обычное дело от старого клиента, но не подтверждён.
-    #[test]
-    fn an_unsigned_post_is_not_confirmed() {
-        let mut post = serde_json::json!({
-            "id": "post-1",
-            "body": "текст",
-            "createdAt": 1_700_000_000_i64,
-        });
-        mark_post(&mut post, "chan", &hex::encode([1u8; 32]));
-        assert_eq!(post["verified"], serde_json::Value::Bool(false));
     }
 
     #[test]
