@@ -397,6 +397,7 @@ fn is_transport(error: &CoreError) -> bool {
 }
 
 pub struct Engine {
+    pairing_cancel: Arc<crate::pairing::Cancellation>,
     commands: mpsc::UnboundedSender<Command>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -411,6 +412,9 @@ impl Engine {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         let (tx, rx) = mpsc::unbounded_channel();
+        let pairing_commands = tx.downgrade();
+        let pairing_cancel = Arc::new(crate::pairing::Cancellation::default());
+        let pairing_runtime_cancel = Arc::clone(&pairing_cancel);
         let ownership = crate::engine_lock::acquire(&db_path)?;
         let store = Store::open(&db_path, &password)?;
 
@@ -428,14 +432,16 @@ impl Engine {
                         return;
                     }
                 };
-                runtime.block_on(run(rx, store, sink));
+                runtime.block_on(crate::pairing::scope(pairing_commands, pairing_runtime_cancel, run(rx, store, sink)));
             })
             .map_err(|_| CoreError::Transport("cannot spawn core thread".into()))?;
 
-        Ok(Self { commands: tx, thread: Some(thread) })
+        Ok(Self { commands: tx, thread: Some(thread), pairing_cancel })
     }
 
     pub fn submit(&self, command: Command) -> Result<()> {
+        if matches!(&command, Command::PairingCancel) { self.pairing_cancel.stop(false); }
+        if matches!(&command, Command::PairingDiscover { enabled: false }) { self.pairing_cancel.stop(true); }
         self.commands
             .send(command)
             .map_err(|_| CoreError::Transport("core thread is gone".into()))
@@ -462,6 +468,13 @@ impl Engine {
 /// connected», если про второе место забывали, — на этом и попался
 /// `recovery_code`, который нужен как раз тогда, когда клиент подключён.
 fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
+    if let Command::PairingInstall { session, payload, done } = command {
+        let ok = crate::pairing::install(session, payload, store);
+        if ok { sink(status(store)); }
+        if let Ok(mut done) = done.lock() { if let Some(done) = done.take() { let _ = done.send(ok); } }
+        return true;
+    }
+    if crate::pairing::handle(command, store, sink) { return true; }
     let restricting = match command {
         Command::PrivacyMaximize => true,
         Command::PrivacySet { privacy } => privacy.direct_messages.scope != crate::privacy::Scope::Everyone,
@@ -4920,7 +4933,7 @@ fn fail(sink: &EventSink, code: &str, message: &str) {
     sink(Event::Failed { code: code.to_string(), message: message.to_string() });
 }
 
-fn checked_display_name(name: &str) -> Result<String> {
+pub(crate) fn checked_display_name(name: &str) -> Result<String> {
     let value = name.trim();
     if value.chars().count() > 80 || value.chars().any(|c| c.is_control()
         || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) {

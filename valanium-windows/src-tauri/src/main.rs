@@ -453,6 +453,17 @@ fn logout_local_account(app: AppHandle, core: State<'_, Arc<Core>>) -> Result<St
     Ok(previous_db.to_string_lossy().into_owned())
 }
 
+/// Keep the database unlock key in native code, never return it to WebView.
+#[tauri::command]
+fn pairing_confirm(app: AppHandle, core: State<'_, Arc<Core>>, session: String, password: Option<String>) -> Result<(), String> {
+    let (_, key_path) = data_paths(&app)?;
+    let mut secret = read_key_file(&key_path, password.as_deref())?;
+    let command = Command::PairingConfirm { session, unlock: hex::encode(&secret) };
+    secret.fill(0);
+    let slot = core.engine.lock().map_err(|_| "core lock poisoned")?;
+    slot.as_ref().ok_or("база ещё не открыта")?.submit(command).map_err(|e| e.to_string())
+}
+
 /// Единственная точка входа для интерфейса: команда в JSON — как в FFI.
 #[tauri::command]
 fn submit(core: State<'_, Arc<Core>>, json: String) -> Result<(), String> {
@@ -919,6 +930,18 @@ fn main() {
             // Крестик прячет окно. Соединение при этом живёт: сообщения
             // продолжают приходить, и значок в трее показывает, что их ждут.
             if window.label() == "main" {
+                if matches!(event, tauri::WindowEvent::Focused(false) | tauri::WindowEvent::CloseRequested { .. }) {
+                    let core = window.state::<Arc<Core>>();
+                    if let Ok(slot) = core.engine.lock() {
+                        if let Some(engine) = slot.as_ref() {
+                            let _ = engine.submit(Command::PairingCancel);
+                            let _ = engine.submit(Command::PairingDiscover { enabled: false });
+                        }
+                    }
+                    let _ = window.emit("valanium:pairing-foreground", false);
+                } else if matches!(event, tauri::WindowEvent::Focused(true)) {
+                    let _ = window.emit("valanium:pairing-foreground", true);
+                }
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
@@ -927,6 +950,7 @@ fn main() {
         })
         .manage(Arc::new(Core::default()))
         .invoke_handler(tauri::generate_handler![
+            pairing_confirm,
             auto_unlock,
             unlock_existing,
             reset_legacy_database,

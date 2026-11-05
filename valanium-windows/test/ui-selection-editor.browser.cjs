@@ -21,11 +21,11 @@ const server=http.createServer((req,res)=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{
   localStorage.setItem('valanium.onboarding.language','ru');
-  window.sent=[];
-  window.__TAURI__={core:{invoke:async(name,args)=>{if(name==='submit')window.sent.push(JSON.parse(args.json));return name==='auto_unlock'?'locked':null;}},event:{listen:async()=>()=>{}}};
+  window.sent=[]; window.nativeCalls=[];
+  window.__TAURI__={core:{invoke:async(name,args)=>{window.nativeCalls.push({name,args});if(name==='submit')window.sent.push(JSON.parse(args.json));return name==='auto_unlock'?'locked':null;}},event:{listen:async()=>()=>{}}};
   navigator.clipboard.writeText=async text=>window.copied=text;
  });
- await page.route('**/main.js',route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,'main.js'),'utf8')+'\nwindow.testUI={state,editor,bulkSelection,groupKey,showScreen,renderConversations,selectConversation,toggleBulkSelection,clearBulkSelection,openEditor,renderPhoto,buildMessage,encodeContent,preferences,applyPreferences,history};'}));
+ await page.route('**/main.js',route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,'main.js'),'utf8')+'\nwindow.testUI={state,pairing,handlers,editor,bulkSelection,groupKey,showScreen,renderConversations,selectConversation,toggleBulkSelection,clearBulkSelection,openEditor,renderPhoto,buildMessage,encodeContent,preferences,applyPreferences,history};'}));
  await page.goto(origin);
  await page.waitForFunction(()=>window.testUI);
  await page.waitForTimeout(400);
@@ -92,7 +92,46 @@ const server=http.createServer((req,res)=>{
  const again=await page.locator('#editor-canvas').boundingBox();
  await page.mouse.move(again.x+40,again.y+40);await page.mouse.down();
  await page.keyboard.press('Escape');await page.mouse.move(again.x+60,again.y+60);await page.mouse.up();
+ // Receiver publishes a QR, but confirmation still requires an explicit click.
+ await page.evaluate(()=>{testUI.pairing.stop();testUI.state.device='';testUI.showScreen('screen-entry');testUI.pairing.start(false);});
+ await page.locator('#pairing-entry').click();
+ assert.ok(await page.evaluate(()=>window.sent.some(x=>x.type==='pairing_listen')));
+ await page.evaluate(()=>testUI.pairing.event({type:'pairing',session:'session-rx',state:'listening',qr:'valanium-pair:v1:test',qr_svg:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="white"/></svg>'}));
+ assert.equal(await page.locator('#pairing-modal img').isVisible(),true);
+ await page.evaluate(()=>testUI.pairing.event({type:'pairing',session:'session-rx',state:'verify',code:'123456'}));
+ assert.equal(await page.locator('#pairing-modal [data-pairing-confirm]').isVisible(),true);
+ assert.equal(await page.evaluate(()=>window.sent.filter(x=>x.type==='pairing_confirm').length),0);
+ await page.locator('#pairing-modal [data-pairing-confirm]').click();
+ assert.deepEqual(await page.evaluate(()=>window.sent.filter(x=>x.type==='pairing_confirm').at(-1)),{type:'pairing_confirm',session:'session-rx'});
+ await page.locator('#pairing-modal button').filter({hasText:'Закрыть'}).click();
+ // A discovery hint never authenticates the peer or transmits account keys.
+ await page.evaluate(()=>{
+  testUI.state.device='owner';testUI.showScreen('screen-main');testUI.pairing.start(true);
+  testUI.pairing.event({type:'pairing_found',session:'nearby',address:'192.168.1.3'});
+  testUI.pairing.event({type:'pairing_found',session:'nearby',address:'192.168.1.3'});
+ });
+ assert.equal(await page.locator('#pairing-offer').count(),1);
+ await page.locator('#pairing-offer button').first().click();
+ await page.locator('#pairing-modal textarea').fill('valanium-pair:v1:test');
+ await page.locator('#pairing-modal button').filter({hasText:'Подключить по коду'}).click();
+ await page.evaluate(()=>{
+  testUI.pairing.event({type:'pairing',session:'session-tx',state:'connecting'});
+  testUI.pairing.event({type:'pairing',session:'session-tx',state:'verify',code:'123456'});
+ });
+ await page.locator('#pairing-modal [data-pairing-confirm]').click();
+ assert.deepEqual(await page.evaluate(()=>window.nativeCalls.filter(x=>x.name==='pairing_confirm').at(-1).args),{session:'session-tx',password:null});
+ await page.locator('#pairing-modal button').filter({hasText:'Закрыть'}).click();
+ assert.equal(await page.locator('#pairing-modal').count(),0);
+ assert.ok(await page.evaluate(()=>window.sent.some(x=>x.type==='pairing_cancel')));
+ // Manual settings entry remains usable when automatic discovery is disabled.
+ await page.evaluate(()=>{
+  const toggle=document.querySelector('[data-pairing-discovery]');toggle.checked=false;toggle.dispatchEvent(new Event('change'));
+  document.getElementById('pairing-settings').click();
+ });
+ assert.equal(await page.locator('#pairing-modal').count(),1);
+ await page.locator('#pairing-modal button').filter({hasText:'Закрыть'}).click();
+ assert.equal(await page.locator('#pairing-modal').count(),0);
  assert.deepEqual(errors,[]);
- console.log('PASS: selection/copy, chat/group pins and deletion, delete confirmation, dividers, zoom invariance, drawing/undo, captured photo recipient; no page errors');
+ console.log('PASS: selection/copy, chat/group pins and deletion, delete confirmation, dividers, zoom invariance, drawing/undo, captured photo recipient, QR pairing UI and explicit confirmation; no page errors');
  } finally { await browser.close(); server.close(); }
 })().catch(e=>{console.error(e);server.close();process.exitCode=1;});

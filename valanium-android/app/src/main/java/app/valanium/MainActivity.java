@@ -78,6 +78,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private boolean selectingChats;
     private final Set<String> selectedItems = new LinkedHashSet<>();
 
+    private PairingUi pairingUi;
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
 
@@ -544,6 +545,18 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.open_admin).setOnClickListener(v -> openAdmin());
         wireAdmin();
         wireData();
+        pairingUi = new PairingUi(this, new PairingUi.Host() {
+            public void send(String command) { submit(command); }
+            public String unlock() throws Exception { return new LocalSecretStore(MainActivity.this).load(); }
+            public boolean ready() { return foregroundAuthorized; }
+        });
+        android.view.View dataClear = findViewById(R.id.data_clear_chats);
+        ViewGroup dataParent = (ViewGroup)dataClear.getParent().getParent();
+        dataParent.addView(pairingUi.controls());
+        Button pairEntry = new Button(this);
+        pairEntry.setText(I18n.t("Подключить аккаунт с другого устройства"));
+        pairEntry.setOnClickListener(v -> pairingUi.open());
+        ((ViewGroup)findViewById(R.id.entry_submit).getParent()).addView(pairEntry);
         findViewById(R.id.copy_chat_code).setOnClickListener(v -> copyChatCode());
         findViewById(R.id.open_chat_settings).setOnClickListener(v -> open(screenChatSettings));
         findViewById(R.id.open_data).setOnClickListener(v -> {
@@ -671,6 +684,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onStop() {
+        if (pairingUi != null) pairingUi.stop();
         if (selectionMode != null) selectionMode.finish();
         if(appUpdates!=null)appUpdates.pause();
         ui.removeCallbacks(activityExpiry);
@@ -2030,6 +2044,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PairingUi.SCAN) { pairingUi.result(resultCode, data); return; }
         if(requestCode==AppUpdates.INSTALL_PERMISSION_REQUEST){
             if(appUpdates!=null && getPackageManager().canRequestPackageInstalls())appUpdates.install();
             return;
@@ -2551,6 +2566,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     // --- действия --------------------------------------------------------------
 
     private void register() {
+        if (pairingUi != null) pairingUi.stop();
         registrationPending = true;
         entrySubmit.setEnabled(false);
         entrySubmit.setText(R.string.connecting);
@@ -2888,6 +2904,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     public void onEvent(JSONObject event) {
         if (!foregroundAuthorized) return;
         switch (event.optString("type")) {
+            case "pairing":
+            case "pairing_found":
+                if (pairingUi != null && foregroundAuthorized) pairingUi.event(event);
+                break;
             case "devices_revoked":
                 toast(getString(R.string.revoke_devices_done, event.optInt("count")));
                 break;
@@ -3077,6 +3097,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void onStatus(JSONObject event) {
+        if (pairingUi != null) pairingUi.status(event.optBoolean("has_identity"));
         if (!event.optBoolean("has_identity")) {
             show(screenEntry);
             entrySubmit.setEnabled(true);
@@ -3095,6 +3116,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void onFailed(JSONObject event) {
+        if ("pairing".equals(event.optString("code")) && pairingUi != null) { pairingUi.fail(); return; }
         String code = event.optString("code");
         if("call_probe_pending".equals(code)){toast(I18n.t("Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания."));return;}
         if("call_no_conversation".equals(code)){toast(I18n.t("Сначала начните личную переписку с этим человеком."));return;}
@@ -5228,6 +5250,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         recoverSubmit.setEnabled(false);
         recoverSubmit.setText(R.string.recover_working);
+        if (pairingUi != null) pairingUi.stop();
         submit(Commands.recover(serverUrl(), words));
     }
 

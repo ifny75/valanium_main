@@ -1,3 +1,5 @@
+import { createPairing } from "./pairing.js";
+let pairing;
 const bulkSelection = { kind: null, ids: new Set(), conversation: null };
 import { createUpdater } from "./updater.js";
 import { wallpaperPhoto, prepareWallpaper } from "./wallpaper.js";
@@ -154,6 +156,7 @@ function sendRead(peer, ids) {
 }
 
 function showScreen(screen) {
+  if (["screen-locked", "screen-migrate", "screen-boot"].includes(screen)) pairing?.stop();
   if (screen !== "screen-main") clearBulkSelection();
   if (screen === "screen-route") {
     chosenTransport = preferences.transport;
@@ -638,6 +641,7 @@ applyOnboardingLanguage();
 
 $("form-entry").addEventListener("submit", async (event) => {
   event.preventDefault();
+  pairing?.stop();
   const button = $("entry-submit");
   $("entry-error").textContent = "";
   state.registrationPending = true;
@@ -730,6 +734,7 @@ async function runRecovery(form, command, busyText, idleText) {
 
 $("form-recover-code").addEventListener("submit", (event) => {
   event.preventDefault();
+  pairing?.stop();
   storeRecoveryPage();
   if (recoveryWords.some((word) => !word)) {
     $("recover-error").textContent = tr("Заполните все 24 слова");
@@ -2020,11 +2025,14 @@ function peerOf(conversation) {
 
 const callChecks = new Map();
 const handlers = {
+  pairing(event) { pairing?.event(event); },
+  pairing_found(event) { pairing?.event(event); },
   diagnostics(event) {
     const labels={connection:tr("Подключение"),authentication:tr("Авторизация"),queue:tr("Очередь"),acknowledgement:tr("Подтверждение сервера")};
     $("delivery-timings").textContent=Object.entries(event.report||{}).filter(([key,value])=>labels[key]&&value?.count).map(([key,v])=>`${labels[key]}: ${v.last_ms} ms · p50 ${v.p50_ms} · p95 ${v.p95_ms}`).join("\n")||tr("Замеров пока нет");
   },
   status(event) {
+    pairing?.start(event.has_identity);
     if (!event.has_identity) {
       showScreen(localStorage.getItem(ONBOARDING_COMPLETE) === "1" ? "screen-entry" : "screen-language");
       $("entry-submit").disabled = false;
@@ -2575,6 +2583,7 @@ const handlers = {
     }
   },
   failed(event) {
+    if (event.code === "pairing") { pairing?.failed(); return; }
     if (event.code === "privacy_preset") { maximumPrivacyPending = false; $("privacy-maximize").disabled = false; }
     if (event.code === "anonymous_delivery_waiting") { toast(getLanguage() === "en" ? "Anonymous delivery is pending. The app will retry through Tor." : event.message); return; }
     if (event.code === "pin_not_pending" || (event.code === "storage" && state.pendingPinAction)) {
@@ -3254,6 +3263,11 @@ document.addEventListener("keydown", (event) => {
   $("verification").classList.add("hidden");
 });
 
+pairing = createPairing({ send: submit, invoke, tr, hasIdentity: () => Boolean(state.device) });
+listen("valanium:pairing-foreground", ({ payload }) => {
+  if (!payload) pairing.stop();
+  else if ($("screen-locked").classList.contains("hidden") && $("screen-boot").classList.contains("hidden")) pairing.start(Boolean(state.device));
+});
 boot();
 
 // --- редактор фото -----------------------------------------------------------

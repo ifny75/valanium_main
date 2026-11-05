@@ -3254,3 +3254,12 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 #editor-viewport {position:relative;transform-origin:center;touch-action:none}
 #editor-viewport canvas {max-width:none;max-height:none}
 #editor-draw.active {background:var(--accent);color:var(--accent-text)}
+
+.pairing-card{display:flex;flex-direction:column;gap:14px;max-height:90vh;overflow:auto}
+.pairing-card img{align-self:center;width:min(320px,100%);background:white;border-radius:12px}
+.pairing-card textarea{min-height:72px;resize:vertical;overflow-wrap:anywhere}
+.pairing-card [data-pairing-state]{font-size:20px;font-variant-numeric:tabular-nums}
+.pairing-card [hidden]{display:none!important}
+.pairing-offer{position:fixed;bottom:24px;right:24px;z-index:300;max-width:350px;background:var(--bg);color:var(--text);padding:20px;border:1px solid var(--accent);border-radius:20px;box-shadow:0 12px 40px #0008}
+.pairing-offer button{margin:8px 8px 0 0}
+.pairing-discovery{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px}

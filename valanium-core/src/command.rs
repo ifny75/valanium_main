@@ -30,6 +30,17 @@ pub enum Command {
     /// Foreground resume: probe the live socket before deciding to reconnect.
     ProbeConnection,
     Diagnostics,
+    PairingListen,
+    PairingDiscover { enabled: bool },
+    PairingConnect { qr: String },
+    PairingConfirm { session: String, #[serde(default)] unlock: String },
+    PairingCancel,
+    #[serde(skip)]
+    PairingInstall {
+        session: String,
+        payload: zeroize::Zeroizing<Vec<u8>>,
+        done: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>,
+    },
     RepairChannel { recipient_device:String },
     Disconnect,
     /// `recipient_device` — hex публичного ключа устройства получателя.
@@ -305,6 +316,8 @@ pub enum Command {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    Pairing { session: String, state: String, code: String, qr: String, qr_svg: String },
+    PairingFound { session: String, address: String },
     Diagnostics { report: serde_json::Value },
     /// Соединение установлено, сервер представился.
     Connected {
