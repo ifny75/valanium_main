@@ -303,5 +303,12 @@
   "Для отправки пригласите это устройство в группу": "Invite this device to the group before sending",
   "Защищённый канал ещё восстанавливается. Повторите звонок позже": "The secure channel is still being restored. Try calling again later.",
   "Другие устройства": "Other devices",
-  "Перенос аккаунта и переписки на телефон или компьютер в той же Wi-Fi сети.": "Move your account and chats to a phone or computer on the same Wi-Fi network."
+  "Перенос аккаунта и переписки на телефон или компьютер в той же Wi-Fi сети.": "Move your account and chats to a phone or computer on the same Wi-Fi network.",
+  "Вы: ": "You: ",
+  "Исходящий звонок": "Outgoing call",
+  "Пропущенный звонок": "Missed call",
+  "Входящий аудиозвонок": "Incoming audio call",
+  "Микрофон": "Microphone",
+  "Микрофон выключен": "Muted",
+  "Динамик": "Speaker"
 }

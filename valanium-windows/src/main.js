@@ -1035,9 +1035,10 @@ function previewText(body) {
   return notificationText(content).replace(/\s+/g, " ").trim();
 }
 
-function setConversationPreview(conversation, body, at = Date.now()) {
-  const preview = previewText(body);
-  if (!preview) return;
+function setConversationPreview(conversation, body, at = Date.now(), outgoing = false) {
+  const text = previewText(body);
+  if (!text) return;
+  const preview = outgoing ? `${tr("Вы: ")}${text}` : text;
   const group = state.groups.get(conversation);
   if (group) {
     group.preview = preview;
@@ -1050,6 +1051,21 @@ function setConversationPreview(conversation, body, at = Date.now()) {
     entry.preview = preview;
     entry.updatedAt = Math.max(entry.updatedAt ?? 0, at ?? 0);
   }
+}
+
+const CALL_PREVIEWS = {
+  incoming: "Входящий звонок", ringing: "Исходящий звонок", timeout: "Пропущенный звонок",
+  declined: "Звонок отклонён", ended: "Звонок завершён",
+};
+
+/** A call is conversation activity too: it lifts the chat and shows in its preview. */
+function noteCall(peer, status) {
+  const label = CALL_PREVIEWS[status];
+  const entry = peer ? state.conversations.get(peer) : null;
+  if (!label || !entry) return;
+  entry.preview = `\u{1F4DE} ${tr(label)}`;
+  entry.updatedAt = Date.now();
+  renderConversations();
 }
 
 function pinnedChats() {
@@ -1694,7 +1710,7 @@ function appendMessage({ outgoing, body, created_at, from }, conversation, { cac
   }
   if (!built) return null;
 
-  if (conversation) setConversationPreview(conversation, body, created_at ?? Date.now());
+  if (conversation) setConversationPreview(conversation, body, created_at ?? Date.now(), outgoing);
 
   if (conversation && cache) {
     const entry = chat(conversation);
@@ -2149,7 +2165,9 @@ const handlers = {
       state.conversations.set(item.peer_device, {
         conversation: item.conversation,
         unread: existing?.unread ?? 0,
-        preview: previewText(item.last_body) || existing?.preview || "",
+        preview: previewText(item.last_body)
+          ? `${item.last_outgoing ? tr("Вы: ") : ""}${previewText(item.last_body)}`
+          : existing?.preview || "",
         updatedAt: item.last_at ?? existing?.updatedAt ?? 0,
       });
       if (state.profilesSupported && !state.profiles.has(item.peer_device)) {
@@ -2261,7 +2279,7 @@ const handlers = {
     const ordered = [...event.messages].reverse();
     const latestVisible = event.messages.find((item) => previewText(item.body));
     if (latestVisible) {
-      setConversationPreview(event.conversation, latestVisible.body, latestVisible.created_at);
+      setConversationPreview(event.conversation, latestVisible.body, latestVisible.created_at, latestVisible.outgoing);
       renderConversations();
     }
 
@@ -2484,6 +2502,7 @@ const handlers = {
 
   call_status(event) {
     audioCalls?.event({type:"call_status",...event});
+    noteCall(event.peer_device, event.status);
     const id=event.call_id;
     if(event.status==="checking") {
       toast(tr("Проверяем поддержку звонков по защищённому каналу…"));
@@ -3176,7 +3195,7 @@ document.addEventListener("keydown", (event) => {
   $("verification").classList.add("hidden");
 });
 
-audioCalls = createCalls({send:submit,tr,nameOf:displayName,notify:showDesktopNotification,ringEnabled:()=>Boolean(preferences.notificationSound)});
+audioCalls = createCalls({send:submit,tr,nameOf:displayName,paintAvatar:applyAvatar,notify:showDesktopNotification,ringEnabled:()=>Boolean(preferences.notificationSound)});
 pairing = createPairing({ send: submit, invoke, tr, hasIdentity: () => Boolean(state.device) });
 listen("valanium:pairing-foreground", ({ payload }) => {
   if (!payload) pairing.stop();

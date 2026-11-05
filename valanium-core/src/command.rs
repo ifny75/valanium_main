@@ -490,6 +490,8 @@ pub struct ConversationItem {
     /// бесед вместо бесполезной одинаковой подписи «Защищённый диалог».
     pub last_body: Option<String>,
     pub last_at: Option<i64>,
+    /// Lets the list label our own last message instead of passing it off as the peer's.
+    pub last_outgoing: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

@@ -3274,4 +3274,22 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 .pairing-offer button{margin:8px 8px 0 0}
 .pairing-discovery{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px}
 
-.call-panel{position:fixed;right:24px;top:80px;z-index:400;width:min(380px,90vw);padding:24px;display:flex;flex-wrap:wrap;gap:14px;border:1px solid var(--accent);border-radius:24px;background:var(--bg);color:var(--text);box-shadow:0 20px 70px #0008}.call-panel h2,.call-panel p,.call-panel small{width:100%;margin:0}.call-panel small{opacity:.65}.call-panel button{flex:1;padding:12px}
+/* Call banner: a floating card, not a modal, so the chat stays usable. */
+.call-panel{position:fixed;top:24px;right:24px;z-index:400;width:min(400px,calc(100vw - 48px));display:grid;grid-template-columns:56px minmax(0,1fr) auto;grid-template-areas:"avatar copy actions" "note note note";align-items:center;gap:12px 14px;padding:16px 16px 12px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:22px;background:color-mix(in srgb,var(--panel-solid,#121214) 88%,transparent);color:var(--text);box-shadow:0 24px 70px #0009;backdrop-filter:blur(22px) saturate(1.15);-webkit-backdrop-filter:blur(22px) saturate(1.15);animation:call-in .26s cubic-bezier(.22,.61,.36,1) both}
+.call-panel[data-status="incoming"]{border-color:color-mix(in srgb,#34c759 55%,transparent)}
+.call-avatar{grid-area:avatar;width:56px;height:56px;display:grid;place-items:center;border-radius:50%;background-size:cover;background-position:center;color:#fff;font:600 18px/1 "Inter UI",sans-serif}
+.call-panel[data-status="incoming"] .call-avatar{animation:call-pulse 1.6s ease-out infinite}
+.call-copy{grid-area:copy;min-width:0;display:flex;flex-direction:column;gap:4px}
+.call-copy b{overflow:hidden;font:600 15px/1.2 "Inter UI",sans-serif;text-overflow:ellipsis;white-space:nowrap}
+.call-copy span{color:var(--muted);font-size:12.5px}
+.call-actions{grid-area:actions;display:flex;gap:10px}
+.call-control{width:44px;height:44px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--text) 12%,transparent);color:var(--text);cursor:pointer;transition:transform .12s ease,filter .12s ease}
+.call-control:hover{transform:translateY(-1px);filter:brightness(1.1)}
+.call-control svg{width:22px;height:22px;fill:currentColor}
+.call-control.accept{background:#34c759;color:#fff}
+.call-control.decline{background:#eb4040;color:#fff}
+.call-control.toggle.on{background:var(--text);color:var(--bg)}
+.call-panel small{grid-area:note;color:var(--muted);font-size:11px;opacity:.8}
+@keyframes call-in{from{opacity:0;transform:translateY(-12px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes call-pulse{0%{box-shadow:0 0 0 0 #34c75966}70%{box-shadow:0 0 0 12px #34c75900}100%{box-shadow:0 0 0 0 #34c75900}}
+@media(prefers-reduced-motion:reduce){.call-panel,.call-panel[data-status="incoming"] .call-avatar{animation:none}}

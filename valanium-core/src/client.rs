@@ -873,7 +873,8 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
                             last_body: last.as_ref().map(|row| {
                                 String::from_utf8_lossy(&row.body).into_owned()
                             }),
-                            last_at: last.map(|row| row.created_at),
+                            last_at: last.as_ref().map(|row| row.created_at),
+                            last_outgoing: last.map(|row| row.outgoing),
                         }
                     })
                     .collect(),

@@ -882,4 +882,11 @@ export default {
   "Подключитесь к сети перед началом звонка": "Connect before starting a call",
   "Для отправки пригласите это устройство в группу": "Invite this device to the group before sending",
   "Защищённый канал ещё восстанавливается. Повторите звонок позже": "The secure channel is still being restored. Try calling again later.",
+  "Вы: ": "You: ",
+  "Исходящий звонок": "Outgoing call",
+  "Пропущенный звонок": "Missed call",
+  "Входящий аудиозвонок": "Incoming audio call",
+  "Микрофон": "Microphone",
+  "Микрофон выключен": "Muted",
+  "Динамик": "Speaker",
 };

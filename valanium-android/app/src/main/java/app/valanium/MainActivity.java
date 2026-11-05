@@ -534,6 +534,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             public void send(JSONObject command){submit(command.toString());}
             public void begin(String id,boolean audio){stopLocalPolling();ValaniumService.start(MainActivity.this);CallAudioService.start(MainActivity.this,id,audio);}
             public String name(String peer){return displayName(peer);}
+            public void avatar(TextView view,String peer){applyAvatar(view,profiles.get(peer),initials(displayName(peer)),peer);}
         });
         pairingUi = new PairingUi(this, new PairingUi.Host() {
             public void send(String command) { submit(command); }
@@ -779,6 +780,9 @@ public final class MainActivity extends Activity implements Events.Listener {
             boolean keyboard = keyboardInset > 0;
             // Content runs under the floating navigation island; only the keyboard pushes it up.
             view.setPadding(dp(16), top, dp(16), keyboardInset);
+            // The conversation has no island, so its composer must clear the gesture/3-button bar itself.
+            screenConversation.setPadding(screenConversation.getPaddingLeft(), screenConversation.getPaddingTop(),
+                    screenConversation.getPaddingRight(), keyboard ? dp(6) : navigation + dp(6));
             FrameLayout.LayoutParams island = (FrameLayout.LayoutParams) tabBar.getLayoutParams();
             int islandBottom = navigation + dp(10);
             if (island.bottomMargin != islandBottom) {
@@ -3086,6 +3090,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             case "call_status":
                 if(callUi!=null)callUi.event(event);
                 String callPeer=event.optString("peer_device");
+                noteCall(callPeer,event.optString("status"));
                 Runnable oldCheck=callProbeTimeouts.remove(callPeer);if(oldCheck!=null)ui.removeCallbacks(oldCheck);
                 if ("checking".equals(event.optString("status"))) {
                     toast(I18n.t("Проверяем поддержку звонков по защищённому каналу…"));
@@ -4055,8 +4060,36 @@ public final class MainActivity extends Activity implements Events.Listener {
             if (listFilter.isEmpty() || haystack(peer).contains(listFilter)) found.add(peer);
         }
         Set<String> pins = pinnedChats();
-        found.sort((a, b) -> Boolean.compare(pins.contains(b), pins.contains(a)));
+        found.sort((a, b) -> {
+            int pinned = Boolean.compare(pins.contains(b), pins.contains(a));
+            return pinned != 0 ? pinned : Long.compare(lastActivity(b), lastActivity(a));
+        });
         return found;
+    }
+
+    private long lastActivity(String peer) {
+        ConversationPreview preview = previews.get(peer);
+        return preview == null ? 0 : preview.timestamp;
+    }
+
+    /** A call is conversation activity too: it lifts the chat and shows in its preview. */
+    private void noteCall(String peer, String status) {
+        String label;
+        switch (status) {
+            case "incoming": label = "Входящий звонок"; break;
+            case "ringing": label = "Исходящий звонок"; break;
+            case "timeout": label = "Пропущенный звонок"; break;
+            case "declined": label = "Звонок отклонён"; break;
+            case "ended": label = "Звонок завершён"; break;
+            default: return;
+        }
+        if (TextUtils.isEmpty(peer) || !conversations.containsKey(peer)) return;
+        ConversationPreview old = previews.get(peer);
+        ConversationPreview next = new ConversationPreview("\uD83D\uDCDE " + I18n.t(label), false,
+                System.currentTimeMillis());
+        next.unread = old == null ? 0 : old.unread;
+        previews.put(peer, next);
+        renderPeers();
     }
 
     private Set<String> pinnedChats() {
