@@ -596,7 +596,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         configureInsets();
         // Reserve the measured island height, including its margin, outside root content.
         tabBar.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-            int reserve = tabBar.getHeight() + dp(22);
+            int reserve = tabBar.getHeight() + ((FrameLayout.LayoutParams) tabBar.getLayoutParams()).bottomMargin + dp(12);
             for (View page : new View[]{screenChat, screenSettings, screenProfile}) {
                 if (page instanceof ScrollView) {
                     ScrollView scroll = (ScrollView) page;
@@ -613,9 +613,12 @@ public final class MainActivity extends Activity implements Events.Listener {
                     page.setLayoutParams(params);
                 }
                 if (page instanceof ViewGroup) ((ViewGroup) page).setClipToPadding(false);
-                if (page.getPaddingBottom() != reserve) {
-                    page.setPadding(page.getPaddingLeft(), page.getPaddingTop(),
-                            page.getPaddingRight(), reserve);
+                // Keep the chat viewport behind the island; reserve space inside each list.
+                page.setPadding(page.getPaddingLeft(), page.getPaddingTop(), page.getPaddingRight(), 0);
+                for (int id : new int[]{R.id.contact_list, R.id.request_list, R.id.channel_pane_scroll}) {
+                    View list = findViewById(id);
+                    if (list instanceof ViewGroup) ((ViewGroup) list).setClipToPadding(false);
+                    list.setPadding(list.getPaddingLeft(), list.getPaddingTop(), list.getPaddingRight(), reserve);
                 }
             }
         });
@@ -714,7 +717,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void configureWindow() {
         Window window = getWindow();
         window.setStatusBarColor(Color.BLACK);
-        window.setNavigationBarColor(Color.BLACK);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false);
+        if (Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(false);
         // Тёмный режим системных иконок уже задан темой. Не запрашиваем
         // InsetsController до появления DecorView: Android 17 в таком случае
         // выбрасывает NPE внутри PhoneWindow ещё до setContentView().
@@ -739,7 +744,13 @@ public final class MainActivity extends Activity implements Events.Listener {
             Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
             Insets ime = windowInsets.getInsets(WindowInsets.Type.ime());
             view.setPadding(dp(16), bars.top, dp(16),
-                    Math.max(bars.bottom, ime.bottom) + dp(8));
+                    ime.bottom > 0 ? ime.bottom : 0);
+            FrameLayout.LayoutParams island = (FrameLayout.LayoutParams) tabBar.getLayoutParams();
+            int islandBottom = bars.bottom + dp(10);
+            if (island.bottomMargin != islandBottom) {
+                island.bottomMargin = islandBottom;
+                tabBar.setLayoutParams(island);
+            }
             layoutChatWallpaper();
             layoutStatusBarPanel(view, bars.top);
             view.post(this::layoutTopBars);
@@ -1418,7 +1429,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         // Верхняя панель начинается сразу под системными значками; одинаковый
         // цвет убирает видимый шов и превращает их в одну полноширинную шапку.
         updateSystemTopSurface();
-        getWindow().setNavigationBarColor(background);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             android.view.WindowInsetsController controller =
                     getWindow().getInsetsController();

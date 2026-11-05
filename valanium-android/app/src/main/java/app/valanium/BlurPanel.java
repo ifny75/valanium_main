@@ -46,7 +46,9 @@ public class BlurPanel extends FrameLayout {
     private Bitmap viewport;
     private Canvas viewportCanvas;
     private boolean backdropDirty = true;
+    private boolean refreshPosted;
     private final Runnable refreshBackdrop = () -> {
+        refreshPosted = false;
         backdropDirty = true;
         invalidate();
     };
@@ -72,21 +74,31 @@ public class BlurPanel extends FrameLayout {
 
     public void setSource(View source) {
         removeCallbacks(refreshBackdrop);
+        refreshPosted = false;
         this.source = source;
         backdropDirty = true;
         invalidate();
     }
 
-    /** Keep the last glass image during gestures/flings; refresh after idle. */
+    /** Coalesce scroll callbacks to at most 30 backdrop refreshes per second. */
     public void onSourceScrolled() {
-        removeCallbacks(refreshBackdrop);
-        postDelayed(refreshBackdrop, 160);
+        if (!refreshPosted) {
+            refreshPosted = true;
+            postDelayed(refreshBackdrop, 33);
+        }
     }
 
     @Override
     protected void onDetachedFromWindow() {
         removeCallbacks(refreshBackdrop);
+        refreshPosted = false;
         super.onDetachedFromWindow();
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        if (changed) backdropDirty = true;
     }
 
     @Override
