@@ -34,7 +34,20 @@ final class CallUi {
   else if("connecting".equals(state)||"active".equals(state)){try{host.begin(id,true);}catch(Exception e){send("call_end");error();return;}}
   paint();
  }
- private void button(String label,Runnable action){Button b=new Button(activity);b.setText(I18n.t(label));b.setOnClickListener(v->action.run());root.addView(b);}
+ private static final int NORMAL=0,ACCEPT=1,DANGER=2;
+ private void button(String label,Runnable action){button(label,action,NORMAL);}
+ private void button(String label,Runnable action,int kind){
+  float d=activity.getResources().getDisplayMetrics().density;
+  Button b=new Button(activity,null,0,R.style.Valanium_Button_Dark);b.setText(I18n.t(label));b.setAllCaps(false);b.setOnClickListener(v->action.run());
+  if(kind!=NORMAL){
+   int accent=activity.getSharedPreferences("appearance",0).getInt("accent_color",0xff9770ff);
+   int fill=kind==ACCEPT?accent:android.graphics.Color.rgb(214,72,72);
+   android.graphics.drawable.GradientDrawable shape=new android.graphics.drawable.GradientDrawable();shape.setColor(fill);shape.setCornerRadius(16*d);
+   b.setBackground(shape);b.setTag(R.id.self_colored_tag,Boolean.TRUE);
+   b.setTextColor(android.graphics.Color.luminance(fill)>.4?android.graphics.Color.rgb(16,16,16):android.graphics.Color.WHITE);
+  }
+  LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(int)(48*d));lp.topMargin=(int)(10*d);root.addView(b,lp);
+ }
  private void paint(){
   if(!"incoming".equals(state))stopRing();
   if(activity.isFinishing()||activity.isDestroyed())return;
@@ -45,12 +58,12 @@ final class CallUi {
   if("incoming".equals(state)){
    activity.getSystemService(android.app.NotificationManager.class).cancel(CallAudioService.ALERT);
    if(ringtone==null)try{ringtone=android.media.RingtoneManager.getRingtone(activity,android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE));if(android.os.Build.VERSION.SDK_INT>=28)ringtone.setLooping(true);ringtone.play();}catch(Exception ignored){}
-   button("Принять",()->{String chosen=id;permit(()->{if(!chosen.equals(id)||!"incoming".equals(state))return;try{host.begin(chosen,true);send("call_accept");}catch(Exception e){error();}});});
-   button("Отклонить",()->{send("call_reject");close();});
+   button("Принять",()->{String chosen=id;permit(()->{if(!chosen.equals(id)||!"incoming".equals(state))return;try{host.begin(chosen,true);send("call_accept");}catch(Exception e){error();}});},ACCEPT);
+   button("Отклонить",()->{send("call_reject");close();},DANGER);
   }else if(java.util.List.of("ringing","connecting","active").contains(state)){
    button(CallAudioService.isMuted()?"Включить микрофон":"Выключить микрофон",()->{boolean muted=!CallAudioService.isMuted();CallAudioService.mute(muted);try{host.send(new JSONObject().put("type","call_mute").put("call_id",id).put("muted",muted));}catch(Exception ignored){}paint();});
    button(CallAudioService.isSpeaker()?"Выключить громкую связь":"Громкая связь",()->{CallAudioService.speaker(!CallAudioService.isSpeaker());paint();});
-   button("Завершить",()->{send("call_end");close();});
+   button("Завершить",()->{send("call_end");close();},DANGER);
   }else button("Закрыть",this::close);
   android.content.SharedPreferences prefs=activity.getSharedPreferences("appearance",0);ThemeSurfaces.apply(root,prefs.getInt("accent_color",0xff9770ff),"light".equals(prefs.getString("theme","dark")));
   dialog.show();

@@ -1,7 +1,8 @@
 //! Disposable chat peer for UI QA against a LOCAL server; never opens user data.
 //! cargo run --example qa_peer -- <dir> <ws://127.0.0.1:8787/ws>
 //! Publishes a profile, prints its chat code, approves and answers whoever writes.
-//! With a third argument (a chat code) it sets an avatar and writes to that peer first.
+//! With a third argument (a chat code) it sets an avatar and writes to that peer first;
+//! a fourth argument `call` then rings that peer. Incoming calls are answered with a 440 Hz tone.
 use serde_json::{json, Value};
 use std::sync::{mpsc::channel, Arc};
 use valanium_core::{client::{Engine, EventSink}, command::Command};
@@ -55,10 +56,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if e["type"] == "failed" && e["code"] == "profile_not_found" { return Err("target not found".into()); }
         };
         submit(json!({"type":"send","recipient_device":device,"body":text(format!("hello-{}", std::process::id()), "Привет, я написал первым и у меня есть аватар".into())}));
+        if args.get(4).is_some_and(|a| a == "call") {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            submit(json!({"type":"call_start","recipient_device":device}));
+        }
     }
     let mut n = 0;
+    let mut call: Option<String> = None;
+    let mut phase = 0f32;
     loop {
-        let e = events.recv()?;
+        let e = match events.recv_timeout(std::time::Duration::from_millis(40)) {
+            Ok(e) => e,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(id) = &call {
+                    let mut pcm = Vec::with_capacity(1280);
+                    for _ in 0..640 {
+                        let v = (phase.sin() * 6000.0) as i16;
+                        phase += 2.0 * std::f32::consts::PI * 440.0 / 16000.0;
+                        pcm.extend_from_slice(&v.to_le_bytes());
+                    }
+                    submit(json!({"type":"call_audio","call_id":id,"data":hex::encode(pcm)}));
+                }
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if e["type"] == "call_status" {
+            println!("CALL {} {}", e["call_id"], e["status"]);
+            let id = e["call_id"].as_str().unwrap_or_default().to_string();
+            match e["status"].as_str().unwrap_or_default() {
+                "incoming" => submit(json!({"type":"call_accept","call_id":id})),
+                "connecting" | "active" => call = Some(id),
+                "ended" | "failed" | "rejected" | "missed" => call = None,
+                _ => {}
+            }
+        }
         if e["type"] == "profile" {
             println!("PROFILE device={} own={} code={} avatar_bytes={}", e["device"], own, e["chat_code"], e["avatar_base64"].as_str().map_or(0, str::len));
         }

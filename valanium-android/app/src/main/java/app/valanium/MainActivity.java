@@ -543,7 +543,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         android.view.View dataClear = findViewById(R.id.data_clear_chats);
         ViewGroup dataParent = (ViewGroup)dataClear.getParent().getParent();
         dataParent.addView(pairingUi.controls());
-        Button pairEntry = new Button(this);
+        Button pairEntry = new Button(this, null, 0, R.style.Valanium_Button_Dark); pairEntry.setAllCaps(false);
         pairEntry.setText(I18n.t("Подключить аккаунт с другого устройства"));
         pairEntry.setOnClickListener(v -> pairingUi.open());
         ((ViewGroup)findViewById(R.id.entry_submit).getParent()).addView(pairEntry);

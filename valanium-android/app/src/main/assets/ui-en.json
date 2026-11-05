@@ -301,5 +301,7 @@
   "Звонки запрещены настройками приватности": "Calls are disabled by privacy settings",
   "Подключитесь к сети перед началом звонка": "Connect before starting a call",
   "Для отправки пригласите это устройство в группу": "Invite this device to the group before sending",
-  "Защищённый канал ещё восстанавливается. Повторите звонок позже": "The secure channel is still being restored. Try calling again later."
+  "Защищённый канал ещё восстанавливается. Повторите звонок позже": "The secure channel is still being restored. Try calling again later.",
+  "Другие устройства": "Other devices",
+  "Перенос аккаунта и переписки на телефон или компьютер в той же Wi-Fi сети.": "Move your account and chats to a phone or computer on the same Wi-Fi network."
 }

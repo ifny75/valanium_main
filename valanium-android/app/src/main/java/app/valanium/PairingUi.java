@@ -60,10 +60,20 @@ final class PairingUi {
         if (dialog != null) { dialog.setOnDismissListener(null); dialog.dismiss(); dialog = null; }
     }
     ViewGroup controls() {
-        LinearLayout controls = new LinearLayout(activity); controls.setOrientation(LinearLayout.VERTICAL);
-        Button open = new Button(activity); open.setText(I18n.t("Подключить устройство по QR и Wi-Fi"));
-        open.setOnClickListener(v -> open()); controls.addView(open);
+        float d = activity.getResources().getDisplayMetrics().density;
+        LinearLayout controls = new LinearLayout(activity, null, 0, R.style.Valanium_Card); controls.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams card = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        card.topMargin = (int) (12 * d); controls.setLayoutParams(card);
+        TextView title = new TextView(activity, null, 0, R.style.Valanium_SettingTitle); title.setText(I18n.t("Другие устройства")); controls.addView(title);
+        TextView hint = new TextView(activity, null, 0, R.style.Valanium_Micro);
+        hint.setText(I18n.t("Перенос аккаунта и переписки на телефон или компьютер в той же Wi-Fi сети."));
+        hint.setPadding(0, (int) (4 * d), 0, 0); controls.addView(hint);
+        Button open = new Button(activity, null, 0, R.style.Valanium_Button_Dark); open.setAllCaps(false); open.setText(I18n.t("Подключить устройство по QR и Wi-Fi"));
+        LinearLayout.LayoutParams openParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (int) (52 * d));
+        openParams.topMargin = (int) (12 * d);
+        open.setOnClickListener(v -> open()); controls.addView(open, openParams);
         Switch automatic = new Switch(activity); automatic.setText(I18n.t("Находить устройства в локальной сети"));
+        automatic.setTextSize(14); automatic.setPadding(0, (int) (12 * d), 0, 0);
         automatic.setChecked(prefs.getBoolean("pairing_discovery", true));
         automatic.setOnCheckedChangeListener((b, enabled) -> {
             prefs.edit().putBoolean("pairing_discovery", enabled).apply();
@@ -82,7 +92,7 @@ final class PairingUi {
         status = new TextView(activity); status.setText(I18n.t("Ожидание сопряжения…")); root.addView(status);
         image = new ImageView(activity); image.setAdjustViewBounds(true); image.setBackgroundColor(Color.WHITE);
         image.setVisibility(android.view.View.GONE); root.addView(image, new LinearLayout.LayoutParams(-1, pad*14));
-        confirm = new Button(activity); confirm.setText(I18n.t("Код совпадает — подключить")); confirm.setVisibility(android.view.View.GONE);
+        confirm = new Button(activity, null, 0, R.style.Valanium_Button_Dark); confirm.setAllCaps(false); confirm.setText(I18n.t("Код совпадает — подключить")); confirm.setVisibility(android.view.View.GONE);
         confirm.setOnClickListener(v -> {
             try {
                 JSONObject command = new JSONObject().put("type", "pairing_confirm").put("session", session);
@@ -97,15 +107,15 @@ final class PairingUi {
             } catch (Exception error) { status.setText(I18n.t("Разблокируйте приложение и повторите сопряжение.")); }
         }); root.addView(confirm);
         if (identity) {
-            Button scan = new Button(activity); scan.setText(I18n.t("Сканировать QR камерой"));
+            Button scan = new Button(activity, null, 0, R.style.Valanium_Button_Dark); scan.setAllCaps(false); scan.setText(I18n.t("Сканировать QR камерой"));
             scan.setOnClickListener(v -> activity.startActivityForResult(new Intent(activity, PairingScannerActivity.class), SCAN));
             root.addView(scan);
             EditText input = new EditText(activity); input.setHint(I18n.t("Код сопряжения с другого устройства")); input.setSingleLine(true); root.addView(input);
-            Button connect = new Button(activity); connect.setText(I18n.t("Подключить по коду"));
+            Button connect = new Button(activity, null, 0, R.style.Valanium_Button_Dark); connect.setAllCaps(false); connect.setText(I18n.t("Подключить по коду"));
             connect.setOnClickListener(v -> { String value = input.getText().toString().trim(); input.setText(""); command("pairing_connect", "qr", value); }); root.addView(connect);
         } else {
-            Button refresh = new Button(activity); refresh.setText(I18n.t("Создать новый QR")); refresh.setOnClickListener(v -> send("pairing_listen")); root.addView(refresh);
-            Button copy = new Button(activity); copy.setText(I18n.t("Копировать код подключения"));
+            Button refresh = new Button(activity, null, 0, R.style.Valanium_Button_Dark); refresh.setAllCaps(false); refresh.setText(I18n.t("Создать новый QR")); refresh.setOnClickListener(v -> send("pairing_listen")); root.addView(refresh);
+            Button copy = new Button(activity, null, 0, R.style.Valanium_Button_Dark); copy.setAllCaps(false); copy.setText(I18n.t("Копировать код подключения"));
             copy.setOnClickListener(v -> {
                 if (qr.isEmpty()) return;
                 android.content.ClipData clip = android.content.ClipData.newPlainText(I18n.t("Подключение Valanium"), qr);
