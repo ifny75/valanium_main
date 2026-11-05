@@ -27,6 +27,20 @@ public final class Core {
 
     private static native boolean nativeVerifyRelease(String manifest, String signature);
 
+    private static native String nativeSealSecret(String password, String secret);
+
+    private static native String nativeOpenSecret(String password, String blob);
+
+    /** Seals the database secret with the app password (Argon2id). Slow by design: background thread. */
+    public static String sealSecret(String password, String secret) {
+        return nativeSealSecret(password, secret);
+    }
+
+    /** null — wrong password. Slow by design: background thread. */
+    public static String openSecret(String password, String blob) {
+        return nativeOpenSecret(password, blob);
+    }
+
     private static native int nativeSubmit(long handle, String json);
 
     private static native String nativePoll(long handle, int timeoutMs);

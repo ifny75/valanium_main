@@ -445,4 +445,10 @@
     <string name="contact_alias_title">Local contact name</string>
     <string name="display_name_hint">Visibility follows the profile-name privacy setting. Not searchable. The name does not verify identity.</string>
     <string name="contact_alias_hint">Only visible on this device. Leave empty to use the profile name.</string>
+    <string name="app_password">App password</string>
+    <string name="app_password_hint">The database key is locked by your own password instead of the system. Without it even the app cannot open your messages. A forgotten password cannot be recovered.</string>
+    <string name="app_password_on">On. The password is asked at launch and after 30 seconds in the background. The system lock is not used.</string>
+    <string name="app_password_set">Set an app password</string>
+    <string name="app_password_off">Turn off the app password</string>
+    <string name="app_password_change">Change password</string>
 </resources>

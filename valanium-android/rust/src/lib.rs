@@ -18,6 +18,7 @@ use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 
+use valanium_core::crypto::{random_bytes, MasterKey, SALT_LEN};
 use valanium_core::ffi::Session;
 use valanium_core::store::Store;
 
@@ -103,6 +104,59 @@ pub extern "system" fn Java_app_valanium_core_Core_nativeVerifyDatabaseKey(
             Ok(false) => JNI_TRUE,
             _ => JNI_FALSE,
         }
+    })
+}
+
+/// Binds the sealed database secret to its purpose; a blob from elsewhere never opens.
+const APP_PASSWORD_AAD: &[u8] = b"valanium-android-app-password-v1";
+
+/// Seals the random database secret with a key derived from the app password
+/// (Argon2id, the same parameters as the database). Returns hex(salt || sealed).
+#[no_mangle]
+pub extern "system" fn Java_app_valanium_core_Core_nativeSealSecret(
+    mut env: JNIEnv,
+    _class: JClass,
+    password: JString,
+    secret: JString,
+) -> jstring {
+    guard(std::ptr::null_mut(), move || {
+        let (Ok(password), Ok(secret)) = (env.get_string(&password), env.get_string(&secret)) else {
+            return std::ptr::null_mut();
+        };
+        let (password, secret): (String, String) = (password.into(), secret.into());
+        if password.is_empty() || secret.is_empty() {
+            return std::ptr::null_mut();
+        }
+        let mut blob = random_bytes(SALT_LEN);
+        let Ok(key) = MasterKey::derive(password.as_bytes(), &blob) else { return std::ptr::null_mut() };
+        let Ok(sealed) = key.seal(APP_PASSWORD_AAD, secret.as_bytes()) else { return std::ptr::null_mut() };
+        blob.extend_from_slice(&sealed);
+        env.new_string(hex::encode(blob)).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+    })
+}
+
+/// Opens a blob from `nativeSealSecret`. null means a wrong password or a damaged blob.
+#[no_mangle]
+pub extern "system" fn Java_app_valanium_core_Core_nativeOpenSecret(
+    mut env: JNIEnv,
+    _class: JClass,
+    password: JString,
+    blob: JString,
+) -> jstring {
+    guard(std::ptr::null_mut(), move || {
+        let (Ok(password), Ok(blob)) = (env.get_string(&password), env.get_string(&blob)) else {
+            return std::ptr::null_mut();
+        };
+        let (password, blob): (String, String) = (password.into(), blob.into());
+        let Ok(raw) = hex::decode(blob) else { return std::ptr::null_mut() };
+        if raw.len() <= SALT_LEN {
+            return std::ptr::null_mut();
+        }
+        let (salt, sealed) = raw.split_at(SALT_LEN);
+        let Ok(key) = MasterKey::derive(password.as_bytes(), salt) else { return std::ptr::null_mut() };
+        let Ok(secret) = key.open(APP_PASSWORD_AAD, sealed) else { return std::ptr::null_mut() };
+        let Ok(secret) = String::from_utf8(secret) else { return std::ptr::null_mut() };
+        env.new_string(secret).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
     })
 }
 

@@ -445,4 +445,10 @@
     <string name="contact_alias_title">Локальное имя контакта</string>
     <string name="display_name_hint">Видимость задаётся в настройках имени профиля. Поиск по имени отсутствует. Имя не подтверждает личность.</string>
     <string name="contact_alias_hint">Видно только на этом устройстве. Пустое имя возвращает подпись из профиля.</string>
+    <string name="app_password">Пароль приложения</string>
+    <string name="app_password_hint">Ключ базы закрывается вашим паролем, а не системой. Без пароля переписку не откроет даже само приложение. Забытый пароль не восстановить.</string>
+    <string name="app_password_on">Включён. Пароль спрашивается при запуске и через 30 секунд в фоне. Системный замок не используется.</string>
+    <string name="app_password_set">Установить пароль приложения</string>
+    <string name="app_password_off">Отключить пароль приложения</string>
+    <string name="app_password_change">Сменить пароль</string>
 </resources>

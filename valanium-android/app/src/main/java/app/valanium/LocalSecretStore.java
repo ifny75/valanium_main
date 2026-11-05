@@ -59,6 +59,70 @@ final class LocalSecretStore {
     private static final String IV = "database_secret_iv";
     /** Сколько секунд после подтверждения ключ остаётся доступным. 0 — замка нет. */
     private static final String LOCK_SECONDS = "lock_seconds";
+    /** The secret sealed by the app password (Argon2id); present only in that mode. */
+    private static final String PASSWORD_BLOB = "app_password_blob";
+
+    /** Thrown instead of reading the secret when only the app password can open it. */
+    static final class PasswordRequired extends Exception {}
+    static final class WrongPassword extends Exception {}
+
+    /** The database secret is sealed by the app's own password, not by the system. */
+    boolean appPassword() {
+        return preferences.getString(PASSWORD_BLOB, null) != null;
+    }
+
+    /** Opens the secret with the app password. Argon2id: call off the main thread. */
+    String loadWithPassword(String password) throws WrongPassword {
+        String blob = preferences.getString(PASSWORD_BLOB, null);
+        String secret = blob == null ? null : app.valanium.core.Core.openSecret(password, blob);
+        if (secret == null) throw new WrongPassword();
+        return secret;
+    }
+
+    /**
+     * Moves the secret from the Keystore to the app password.
+     *
+     * The sealed copy is written and verified before the Keystore copy is erased,
+     * so an interruption leaves the database openable by at least one of them.
+     */
+    void enableAppPassword(String password, int seconds) throws Exception {
+        String secret = load();
+        if (secret == null) throw new IllegalStateException("nothing to protect");
+        String blob = app.valanium.core.Core.sealSecret(password, secret);
+        if (blob == null || !secret.equals(app.valanium.core.Core.openSecret(password, blob))) {
+            throw new IllegalStateException("seal failed");
+        }
+        preferences.edit().putString(PASSWORD_BLOB, blob).putInt(LOCK_SECONDS, Math.max(0, seconds))
+                .remove(VALUE).remove(IV).commit();
+        deleteKey(KEY_ALIAS);
+        deleteKey(LOCKED_ALIAS);
+    }
+
+    /** Re-seals under a new password; the database itself is not re-encrypted. */
+    void changeAppPassword(String current, String next) throws Exception {
+        String secret = loadWithPassword(current);
+        String blob = app.valanium.core.Core.sealSecret(next, secret);
+        if (blob == null || !secret.equals(app.valanium.core.Core.openSecret(next, blob))) {
+            throw new IllegalStateException("seal failed");
+        }
+        preferences.edit().putString(PASSWORD_BLOB, blob).commit();
+    }
+
+    /** Returns the secret to the system Keystore without a lock. */
+    void disableAppPassword(String password) throws Exception {
+        String secret = loadWithPassword(password);
+        // Keystore copy first, sealed copy last: never a moment with neither.
+        preferences.edit().putInt(LOCK_SECONDS, 0).commit();
+        deleteKey(KEY_ALIAS);
+        String blob = preferences.getString(PASSWORD_BLOB, null);
+        preferences.edit().remove(PASSWORD_BLOB).commit();
+        try {
+            save(secret);
+        } catch (Exception failed) {
+            preferences.edit().putString(PASSWORD_BLOB, blob).commit();
+            throw failed;
+        }
+    }
 
     private final Context context;
     private final SharedPreferences preferences;
@@ -68,9 +132,9 @@ final class LocalSecretStore {
         preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    /** Включён ли замок. */
+    /** Включён ли системный замок (Keystore с подтверждением владельца). */
     boolean locked() {
-        return lockSeconds() > 0;
+        return !appPassword() && lockSeconds() > 0;
     }
 
     /** Через сколько секунд бездействия спрашивать снова. 0 — не спрашивать. */
@@ -127,6 +191,7 @@ final class LocalSecretStore {
     }
 
     String load() throws Exception {
+        if (appPassword()) throw new PasswordRequired();
         String encoded = preferences.getString(VALUE, null);
         String encodedIv = preferences.getString(IV, null);
         if (encoded == null || encodedIv == null) {

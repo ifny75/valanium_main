@@ -667,6 +667,11 @@ public final class MainActivity extends Activity implements Events.Listener {
                 askForUnlock();
                 return;
             }
+            if (secrets.appPassword() && elapsed >= Math.max(1, secrets.lockSeconds()) * 1000L) {
+                foregroundAuthorized = false;
+                askForAppPassword(true);
+                return;
+            }
             authorizeForeground();
         } catch (Throwable error) {
             showStartupError(error);
@@ -2135,6 +2140,12 @@ public final class MainActivity extends Activity implements Events.Listener {
             }
             return;
         }
+        if (requestCode == UNLOCK_REQUEST && afterUnlock != null) {
+            Runnable resume = afterUnlock;
+            afterUnlock = null;
+            if (resultCode == RESULT_OK) resume.run();
+            return;
+        }
         if (requestCode == UNLOCK_REQUEST) {
             Integer wanted = pendingLock;
             pendingLock = null;
@@ -2242,6 +2253,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 }
                 boolean opened = ValaniumService.core().open(db.getAbsolutePath(), secret);
                 runOnUiThread(() -> { databaseOpening = false; finishOpen(opened); });
+            } catch (LocalSecretStore.PasswordRequired required) {
+                runOnUiThread(() -> { databaseOpening = false; askForAppPassword(false); });
             } catch (android.security.keystore.UserNotAuthenticatedException locked) {
                 // Замок включён, и система не отдала ключ: подтверждение
                 // просрочено или его ещё не было. Это не ошибка — это ровно то,
@@ -2352,6 +2365,180 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.app_lock_30s).setOnClickListener(pick);
         findViewById(R.id.app_lock_1m).setOnClickListener(pick);
         findViewById(R.id.app_lock_5m).setOnClickListener(pick);
+        wireAppPassword();
+    }
+
+    // --- пароль приложения -----------------------------------------------------
+
+    /** Settings action waiting for a system unlock (Keystore key needed to move the secret). */
+    private Runnable afterUnlock;
+    private AlertDialog appPasswordPrompt;
+    private static final int MIN_APP_PASSWORD = 6;
+
+    private void wireAppPassword() {
+        findViewById(R.id.app_password_toggle).setOnClickListener(v -> {
+            if (new LocalSecretStore(this).appPassword()) {
+                passwordDialog(I18n.t("Отключить пароль приложения"), false, null, (current, ignored) ->
+                        runSecretTask(() -> new LocalSecretStore(this).disableAppPassword(current),
+                                I18n.t("Пароль приложения отключён")));
+            } else {
+                passwordDialog(I18n.t("Новый пароль приложения"), true, null, (password, ignored) -> enableAppPassword(password));
+            }
+        });
+        findViewById(R.id.app_password_change).setOnClickListener(v ->
+                passwordDialog(I18n.t("Текущий пароль"), false, null, (current, ignored) ->
+                        passwordDialog(I18n.t("Новый пароль приложения"), true, null, (next, unused) ->
+                                runSecretTask(() -> new LocalSecretStore(this).changeAppPassword(current, next),
+                                        I18n.t("Пароль изменён")))));
+        refreshAppPassword();
+    }
+
+    private void enableAppPassword(String password) {
+        new Thread(() -> {
+            try {
+                new LocalSecretStore(this).enableAppPassword(password, DEFAULT_LOCK_SECONDS);
+                runOnUiThread(() -> { refreshAppPassword(); toast(I18n.t("Пароль приложения установлен")); });
+            } catch (android.security.keystore.UserNotAuthenticatedException expired) {
+                // The system lock guards the secret: confirm once, then finish the move.
+                runOnUiThread(() -> { afterUnlock = () -> enableAppPassword(password); requestUnlock(); });
+            } catch (Exception failed) {
+                runOnUiThread(() -> toast(I18n.t("Не удалось установить пароль приложения")));
+            }
+        }, "valanium-app-password").start();
+    }
+
+    private interface SecretTask { void run() throws Exception; }
+
+    /** Argon2id takes a moment: never on the main thread. */
+    private void runSecretTask(SecretTask task, String success) {
+        new Thread(() -> {
+            try {
+                task.run();
+                runOnUiThread(() -> { refreshAppPassword(); toast(success); });
+            } catch (LocalSecretStore.WrongPassword wrong) {
+                runOnUiThread(() -> toast(I18n.t("Неверный пароль")));
+            } catch (Exception failed) {
+                runOnUiThread(() -> toast(I18n.t("Не удалось изменить пароль приложения")));
+            }
+        }, "valanium-app-password").start();
+    }
+
+    private void refreshAppPassword() {
+        boolean on = new LocalSecretStore(this).appPassword();
+        ((Button) findViewById(R.id.app_password_toggle)).setText(on ? R.string.app_password_off : R.string.app_password_set);
+        ((TextView) findViewById(R.id.app_password_state)).setText(on ? R.string.app_password_on : R.string.app_password_hint);
+        findViewById(R.id.app_password_change).setVisibility(on ? View.VISIBLE : View.GONE);
+        // One protection at a time: with the app password the Keystore no longer holds the secret.
+        findViewById(R.id.app_lock).setEnabled(!on);
+        if (on) findViewById(R.id.app_lock_after).setVisibility(View.GONE);
+        refreshAppLock();
+    }
+
+    private interface PasswordResult { void accept(String password, String unused); }
+
+    /** One field, or two to confirm a new password. The window is FLAG_SECURE. */
+    private void passwordDialog(String title, boolean confirm, String error, PasswordResult result) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        EditText first = passwordField(I18n.t("Пароль"));
+        box.addView(first);
+        EditText second = confirm ? passwordField(I18n.t("Повторите пароль")) : null;
+        if (second != null) box.addView(second);
+        TextView message = new TextView(this);
+        message.setTextColor(Color.rgb(237, 134, 116));
+        message.setText(error == null ? "" : error);
+        message.setPadding(0, dp(6), 0, 0);
+        box.addView(message);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(title).setView(box)
+                .setPositiveButton(I18n.t("Готово"), null).setNegativeButton(I18n.t("Отмена"), null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String value = first.getText().toString();
+            if (confirm && value.length() < MIN_APP_PASSWORD) {
+                message.setText(I18n.t("Не короче 6 символов"));
+                return;
+            }
+            if (second != null && !value.equals(second.getText().toString())) {
+                message.setText(I18n.t("Пароли не совпадают"));
+                return;
+            }
+            first.setText("");
+            if (second != null) second.setText("");
+            dialog.dismiss();
+            result.accept(value, null);
+        }));
+        dialog.show();
+        if (dialog.getWindow() != null) dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+    }
+
+    private EditText passwordField(String hint) {
+        EditText field = new EditText(this);
+        field.setHint(hint);
+        field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        field.setTextColor(themeText());
+        field.setHintTextColor(dimText());
+        return field;
+    }
+
+    /** Boot or return from background with the app password: nothing is shown until it opens. */
+    private void askForAppPassword(boolean warm) {
+        show(screenBoot);
+        ((TextView) findViewById(R.id.boot_status)).setText(I18n.t("Введите пароль приложения"));
+        View unlock = findViewById(R.id.boot_unlock);
+        unlock.setVisibility(View.VISIBLE);
+        unlock.setOnClickListener(v -> promptAppPassword(warm, null));
+        promptAppPassword(warm, null);
+    }
+
+    private void promptAppPassword(boolean warm, String error) {
+        if (appPasswordPrompt != null && appPasswordPrompt.isShowing()) return;
+        EditText input = passwordField(I18n.t("Пароль приложения"));
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(input);
+        if (error != null) {
+            TextView message = new TextView(this);
+            message.setTextColor(Color.rgb(237, 134, 116));
+            message.setText(error);
+            message.setPadding(0, dp(6), 0, 0);
+            box.addView(message);
+        }
+        appPasswordPrompt = new AlertDialog.Builder(this).setTitle(I18n.t("Valanium заблокирован"))
+                .setView(box).setCancelable(false)
+                .setPositiveButton(I18n.t("Открыть"), (d, w) -> {
+                    String password = input.getText().toString();
+                    input.setText("");
+                    ((TextView) findViewById(R.id.boot_status)).setText(I18n.t("Проверяем пароль…"));
+                    new Thread(() -> openWithAppPassword(password, warm), "valanium-app-password").start();
+                }).create();
+        appPasswordPrompt.show();
+        if (appPasswordPrompt.getWindow() != null) {
+            appPasswordPrompt.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        }
+    }
+
+    private void openWithAppPassword(String password, boolean warm) {
+        try {
+            String secret = new LocalSecretStore(this).loadWithPassword(password);
+            if (warm && ValaniumService.core().isOpen()) {
+                runOnUiThread(() -> { leaveAppPasswordScreen(); authorizeForeground(); });
+                return;
+            }
+            boolean opened = ValaniumService.core().open(databaseFile().getAbsolutePath(), secret);
+            runOnUiThread(() -> { leaveAppPasswordScreen(); finishOpen(opened); });
+        } catch (LocalSecretStore.WrongPassword wrong) {
+            runOnUiThread(() -> {
+                ((TextView) findViewById(R.id.boot_status)).setText(I18n.t("Введите пароль приложения"));
+                promptAppPassword(warm, I18n.t("Неверный пароль"));
+            });
+        }
+    }
+
+    private void leaveAppPasswordScreen() {
+        findViewById(R.id.boot_unlock).setVisibility(View.GONE);
+        ((TextView) findViewById(R.id.boot_status)).setText(R.string.boot_status);
     }
 
     /** Задержка по умолчанию при включении замка. */
@@ -4046,6 +4233,11 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void setMyDevice(String device) {
         myDeviceHex = device;
         myDevice.setText(shortHex(device));
+        // Offline the own profile never arrives; still give the header avatar its colour.
+        if (!profiles.containsKey(device)) {
+            applyAvatar(findViewById(R.id.chat_logo), null, "ME", device);
+            applyAvatar(profileAvatar, null, "ME", device);
+        }
     }
 
     private void copyDevice() {
