@@ -22,7 +22,9 @@ export function createPairing({ send, invoke, tr, hasIdentity }) {
     const image = modal.querySelector('img');
     if (event.state === 'listening') {
       image.src = `data:image/svg+xml;base64,${btoa(svg)}`; image.hidden = false;
-      state.textContent = tr('Отсканируйте этот QR на устройстве с аккаунтом. QR действует 3 минуты.');
+      state.textContent = tr(receiving
+        ? 'Отсканируйте этот QR на устройстве с аккаунтом. QR действует 3 минуты.'
+        : 'Отсканируйте этот QR камерой нового телефона. QR действует 3 минуты.');
       modal.querySelector('[data-pairing-code]').value = qr;
     } else if (event.state === 'transferring') {
       image.hidden=true; modal.querySelector('[data-pairing-confirm]').hidden=true;
@@ -51,7 +53,11 @@ export function createPairing({ send, invoke, tr, hasIdentity }) {
     const code = field('textarea'); code.dataset.pairingCode = ''; code.spellcheck = false;
     code.setAttribute('aria-label', tr('Код сопряжения с другого устройства')); code.placeholder = tr('Код сопряжения с другого устройства'); code.readOnly = receiving; card.append(code);
     if (receiving) card.append(button('Создать новый QR', listen));
-    else card.append(button('Подключить по коду', () => { const value = code.value.trim(); code.value = ''; active = true; void send({ type: 'pairing_connect', qr: value }); }));
+    else {
+      // A desktop usually has no camera: the new phone scans the desktop's QR instead.
+      card.append(button('Показать QR для нового телефона', () => { active = true; code.readOnly = true; void send({ type: 'pairing_offer' }); }));
+      card.append(button('Подключить по коду', () => { const value = code.value.trim(); code.value = ''; active = true; void send({ type: 'pairing_connect', qr: value }); }));
+    }
     const password = field('input'); password.type = 'password'; password.autocomplete = 'current-password'; password.placeholder = tr('Пароль приложения, если он установлен');
     password.setAttribute('aria-label', password.placeholder); password.hidden = receiving; card.append(password);
     const confirm = button('Код совпадает — подключить', async () => {

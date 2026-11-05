@@ -26,6 +26,8 @@ use tokio::{
 use zeroize::{Zeroize, Zeroizing};
 
 const PREFIX: &str = "valanium-pair:v2:";
+/// Shown by the device that already has the account; a new device scans it and receives.
+const OFFER_PREFIX: &str = "valanium-pair:v2-offer:";
 const DISCOVERY_PORT: u16 = 49173;
 const MAGIC: &str = "valanium-pair-discovery-v1";
 const LIFETIME: Duration = Duration::from_secs(180);
@@ -156,12 +158,12 @@ fn io_error(_: impl std::fmt::Display) -> CoreError {
 fn is_lan(ip: Ipv4Addr) -> bool {
     ip.is_private() || ip.is_link_local() || (cfg!(test) && ip.is_loopback())
 }
-fn invitation(raw: &str) -> Result<Invitation> {
+fn invitation(raw: &str, prefix: &str) -> Result<Invitation> {
     if raw.len() > 2048 {
         return Err(bad());
     }
     let value: Invitation =
-        serde_json::from_str(raw.strip_prefix(PREFIX).ok_or_else(bad)?).map_err(|_| bad())?;
+        serde_json::from_str(raw.strip_prefix(prefix).ok_or_else(bad)?).map_err(|_| bad())?;
     if value.id.len() != 32
         || hex::decode(&value.id).map_err(|_| bad())?.len() != 16
         || hex::decode(&value.secret).map_err(|_| bad())?.len() != 32
@@ -379,33 +381,20 @@ fn emit(sink: &EventSink, session: &str, state: &str, code: &str, qr: &str) {
     });
 }
 
-async fn receiver(
+/// Waits for the scanning device on the listener. Only a device that is ready to
+/// *receive* an account announces itself on the LAN; an offer stays silent.
+async fn accept_peer(
     listener: TcpListener,
-    invite: Invitation,
-    control: oneshot::Receiver<Option<Export>>,
-    commands: mpsc::WeakUnboundedSender<Command>,
-    sink: EventSink,
-) -> Result<()> {
-    struct Cleanup {
-        session: String,
-        commands: mpsc::WeakUnboundedSender<Command>,
-    }
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            if let Some(commands) = self.commands.upgrade() {
-                let _ = commands.send(Command::PairingCleanup {
-                    session: self.session.clone(),
-                });
-            }
-        }
-    }
-    let _cleanup = Cleanup {
-        session: invite.id.clone(),
-        commands: commands.clone(),
-    };
+    invite: &Invitation,
+    announce_ready: bool,
+) -> Result<(TcpStream, snow::TransportState, String)> {
     let end = Instant::now() + LIFETIME;
     // The UDP task belongs to this listener and is aborted when it closes.
-    let announcement = announce(invite.id.clone(), invite.port).await;
+    let announcement = if announce_ready {
+        announce(invite.id.clone(), invite.port).await
+    } else {
+        None
+    };
     struct Abort(Option<JoinHandle<()>>);
     impl Drop for Abort {
         fn drop(&mut self) {
@@ -415,7 +404,7 @@ async fn receiver(
         }
     }
     let _announcement = Abort(announcement);
-    let (mut stream, mut noise, code) = loop {
+    loop {
         let (mut stream, address) = tokio::time::timeout_at(end, listener.accept())
             .await
             .map_err(io_error)?
@@ -425,80 +414,14 @@ async fn receiver(
             continue;
         }
         // Failed PSK attempts never consume the valid QR. Each attempt is bounded.
-        match exchange(&mut stream, &invite, false).await {
-            Ok((noise, code)) => break (stream, noise, code),
+        match exchange(&mut stream, invite, false).await {
+            Ok((noise, code)) => return Ok((stream, noise, code)),
             Err(_) if Instant::now() < end => continue,
             Err(error) => return Err(error),
         }
-    };
-    drop(listener);
-    drop(_announcement);
-    emit(&sink, &invite.id, "verify", &code, "");
-    confirm(control).await?;
-    send(&mut stream, &mut noise, b"confirmed-v1").await?;
-    receive_confirmation(&mut stream, &mut noise).await?;
-    let payload = receive_payload(&mut stream, &mut noise).await?;
-    if payload.is_empty() || payload.len() > MAX_PAYLOAD {
-        return Err(bad());
     }
-    emit(&sink, &invite.id, "transferring", "0", "");
-    let mut seq = 0u64;
-    loop {
-        let record = receive_payload(&mut stream, &mut noise).await?;
-        if record.is_empty() {
-            break;
-        }
-        let (done, completed) = oneshot::channel();
-        commands
-            .upgrade()
-            .ok_or_else(bad)?
-            .send(Command::PairingStage {
-                session: invite.id.clone(),
-                seq,
-                payload: record,
-                done: std::sync::Mutex::new(Some(done)),
-            })
-            .map_err(|_| bad())?;
-        if !timeout(Duration::from_secs(60), completed)
-            .await
-            .map_err(io_error)?
-            .map_err(io_error)?
-        {
-            return Err(bad());
-        }
-        seq += 1;
-        if seq % 32 == 0 {
-            emit(&sink, &invite.id, "transferring", &seq.to_string(), "");
-        }
-    }
-    let (done, completed) = oneshot::channel();
-    commands
-        .upgrade()
-        .ok_or_else(bad)?
-        .send(Command::PairingInstall {
-            session: invite.id.clone(),
-            payload,
-            done: std::sync::Mutex::new(Some(done)),
-        })
-        .map_err(|_| bad())?;
-    if !timeout(Duration::from_secs(600), completed)
-        .await
-        .map_err(io_error)?
-        .map_err(io_error)?
-    {
-        return Err(bad());
-    }
-    // Local installation is durable before acknowledgement. A lost ACK does not
-    // cause device-key reuse: this is a new device, never a cloned MLS snapshot.
-    let _ = send(&mut stream, &mut noise, b"installed-v1").await;
-    emit(&sink, &invite.id, "complete", "", "");
-    Ok(())
 }
-async fn sender(
-    invite: Invitation,
-    control: oneshot::Receiver<Option<Export>>,
-    sink: EventSink,
-) -> Result<()> {
+async fn connect_peer(invite: &Invitation) -> Result<(TcpStream, snow::TransportState, String)> {
     let mut connected = None;
     for ip in &invite.addresses {
         if let Ok(Ok(stream)) = timeout(
@@ -513,21 +436,103 @@ async fn sender(
     }
     let mut stream = connected.ok_or_else(|| io_error("connect"))?;
     let _ = stream.set_nodelay(true);
-    let (mut noise, code) = exchange(&mut stream, &invite, true).await?;
-    emit(&sink, &invite.id, "verify", &code, "");
+    let (noise, code) = exchange(&mut stream, invite, true).await?;
+    Ok((stream, noise, code))
+}
+/// The destination side: generates its own device key and installs the account atomically.
+async fn receive_account(
+    mut stream: TcpStream,
+    mut noise: snow::TransportState,
+    code: String,
+    session: String,
+    control: oneshot::Receiver<Option<Export>>,
+    commands: mpsc::WeakUnboundedSender<Command>,
+    sink: EventSink,
+) -> Result<()> {
+    emit(&sink, &session, "verify", &code, "");
+    confirm(control).await?;
+    send(&mut stream, &mut noise, b"confirmed-v1").await?;
+    receive_confirmation(&mut stream, &mut noise).await?;
+    let payload = receive_payload(&mut stream, &mut noise).await?;
+    if payload.is_empty() || payload.len() > MAX_PAYLOAD {
+        return Err(bad());
+    }
+    emit(&sink, &session, "transferring", "0", "");
+    let mut seq = 0u64;
+    loop {
+        let record = receive_payload(&mut stream, &mut noise).await?;
+        if record.is_empty() {
+            break;
+        }
+        let (done, completed) = oneshot::channel();
+        commands
+            .upgrade()
+            .ok_or_else(bad)?
+            .send(Command::PairingStage {
+                session: session.clone(),
+                seq,
+                payload: record,
+                done: std::sync::Mutex::new(Some(done)),
+            })
+            .map_err(|_| bad())?;
+        if !timeout(Duration::from_secs(60), completed)
+            .await
+            .map_err(io_error)?
+            .map_err(io_error)?
+        {
+            return Err(bad());
+        }
+        seq += 1;
+        if seq % 32 == 0 {
+            emit(&sink, &session, "transferring", &seq.to_string(), "");
+        }
+    }
+    let (done, completed) = oneshot::channel();
+    commands
+        .upgrade()
+        .ok_or_else(bad)?
+        .send(Command::PairingInstall {
+            session: session.clone(),
+            payload,
+            done: std::sync::Mutex::new(Some(done)),
+        })
+        .map_err(|_| bad())?;
+    if !timeout(Duration::from_secs(600), completed)
+        .await
+        .map_err(io_error)?
+        .map_err(io_error)?
+    {
+        return Err(bad());
+    }
+    // Local installation is durable before acknowledgement. A lost ACK does not
+    // cause device-key reuse: this is a new device, never a cloned MLS snapshot.
+    let _ = send(&mut stream, &mut noise, b"installed-v1").await;
+    emit(&sink, &session, "complete", "", "");
+    Ok(())
+}
+/// The source side: streams the confirmed export and waits for durable installation.
+async fn send_account(
+    mut stream: TcpStream,
+    mut noise: snow::TransportState,
+    code: String,
+    session: String,
+    control: oneshot::Receiver<Option<Export>>,
+    sink: EventSink,
+) -> Result<()> {
+    emit(&sink, &session, "verify", &code, "");
     let mut exported = confirm(control).await?;
     send(&mut stream, &mut noise, b"confirmed-v1").await?;
     receive_confirmation(&mut stream, &mut noise).await?;
     send_payload(&mut stream, &mut noise, &exported.payload).await?;
     let mut history = exported.history.take().ok_or_else(bad)?;
     let mut count = 0u64;
-    emit(&sink, &invite.id, "transferring", "0", "");
+    emit(&sink, &session, "transferring", "0", "");
     while let Some(record) = history.recv().await {
         let record = record?;
         send_payload(&mut stream, &mut noise, &record).await?;
         count += 1;
         if count % 32 == 0 {
-            emit(&sink, &invite.id, "transferring", &count.to_string(), "");
+            emit(&sink, &session, "transferring", &count.to_string(), "");
         }
     }
     send(&mut stream, &mut noise, &0u32.to_be_bytes()).await?;
@@ -544,8 +549,64 @@ async fn sender(
     if &confirmation[..len] != b"installed-v1" {
         return Err(bad());
     }
-    emit(&sink, &invite.id, "complete", "", "");
+    emit(&sink, &session, "complete", "", "");
     Ok(())
+}
+/// Clears staged history if the receiving task ends for any reason.
+struct StageCleanup {
+    session: String,
+    commands: mpsc::WeakUnboundedSender<Command>,
+}
+impl Drop for StageCleanup {
+    fn drop(&mut self) {
+        if let Some(commands) = self.commands.upgrade() {
+            let _ = commands.send(Command::PairingCleanup {
+                session: self.session.clone(),
+            });
+        }
+    }
+}
+/// New device shows the QR, account holder scans: listen, then receive.
+async fn receiver(
+    listener: TcpListener,
+    invite: Invitation,
+    control: oneshot::Receiver<Option<Export>>,
+    commands: mpsc::WeakUnboundedSender<Command>,
+    sink: EventSink,
+) -> Result<()> {
+    let _cleanup = StageCleanup { session: invite.id.clone(), commands: commands.clone() };
+    let (stream, noise, code) = accept_peer(listener, &invite, true).await?;
+    receive_account(stream, noise, code, invite.id.clone(), control, commands, sink).await
+}
+/// Account holder scans the new device's QR: connect, then send.
+async fn sender(
+    invite: Invitation,
+    control: oneshot::Receiver<Option<Export>>,
+    sink: EventSink,
+) -> Result<()> {
+    let (stream, noise, code) = connect_peer(&invite).await?;
+    send_account(stream, noise, code, invite.id.clone(), control, sink).await
+}
+/// Account holder shows the QR (e.g. a PC), new device scans it with its camera: listen, then send.
+async fn offerer(
+    listener: TcpListener,
+    invite: Invitation,
+    control: oneshot::Receiver<Option<Export>>,
+    sink: EventSink,
+) -> Result<()> {
+    let (stream, noise, code) = accept_peer(listener, &invite, false).await?;
+    send_account(stream, noise, code, invite.id.clone(), control, sink).await
+}
+/// New device scans an offer QR: connect, then receive.
+async fn joiner(
+    invite: Invitation,
+    control: oneshot::Receiver<Option<Export>>,
+    commands: mpsc::WeakUnboundedSender<Command>,
+    sink: EventSink,
+) -> Result<()> {
+    let _cleanup = StageCleanup { session: invite.id.clone(), commands: commands.clone() };
+    let (stream, noise, code) = connect_peer(&invite).await?;
+    receive_account(stream, noise, code, invite.id.clone(), control, commands, sink).await
 }
 async fn send_payload(
     stream: &mut TcpStream,
@@ -695,6 +756,7 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
     let applicable = matches!(
         command,
         Command::PairingListen
+            | Command::PairingOffer
             | Command::PairingConnect { .. }
             | Command::PairingConfirm { .. }
             | Command::PairingCancel
@@ -759,12 +821,20 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                         .send(Some(payload))
                         .map_err(|_| bad())?;
                 }
-                Command::PairingListen => {
-                    if store.has_credentials()? {
-                        return Err(CoreError::Rejected("identity_exists".into()));
+                Command::PairingListen | Command::PairingOffer => {
+                    // Listen: a new device waits for the account. Offer: the account holder waits.
+                    let offering = matches!(command, Command::PairingOffer);
+                    if store.has_credentials()? != offering {
+                        return Err(if offering {
+                            CoreError::NoCredentials
+                        } else {
+                            CoreError::Rejected("identity_exists".into())
+                        });
                     }
                     manager.active = None;
-                    store.clear_link_stage(None)?;
+                    if !offering {
+                        store.clear_link_stage(None)?;
+                    }
                     let addresses: Vec<_> = interfaces().into_iter().map(|a| a.ip).collect();
                     if addresses.is_empty() {
                         return Err(CoreError::Rejected("pairing_wifi_unavailable".into()));
@@ -783,26 +853,28 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                         secret: hex::encode(crate::crypto::random_bytes(32)),
                     };
                     let id = invite.id.clone();
-                    let qr = format!("{PREFIX}{}", serde_json::to_string(&invite)?);
+                    let prefix = if offering { OFFER_PREFIX } else { PREFIX };
+                    let qr = format!("{prefix}{}", serde_json::to_string(&invite)?);
                     let (control, confirmed) = oneshot::channel();
                     let callback = Arc::clone(sink);
                     let tx = COMMANDS.with(Clone::clone);
                     let session = id.clone();
                     let task = tokio::spawn(async move {
-                        if timeout(
-                            TRANSFER,
-                            receiver(listener, invite, confirmed, tx, Arc::clone(&callback)),
-                        )
-                        .await
-                        .map_or(true, |r| r.is_err())
-                        {
+                        let flow = async {
+                            if offering {
+                                offerer(listener, invite, confirmed, Arc::clone(&callback)).await
+                            } else {
+                                receiver(listener, invite, confirmed, tx, Arc::clone(&callback)).await
+                            }
+                        };
+                        if timeout(TRANSFER, flow).await.map_or(true, |r| r.is_err()) {
                             emit(&callback, &session, "failed", "", "");
                         }
                     });
                     CANCELLATION.with(|cancel| cancel.register(&task, false));
                     manager.active = Some(Active {
                         id: id.clone(),
-                        sending: false,
+                        sending: offering,
                         epoch: CANCELLATION
                             .with(|cancel| cancel.epoch.load(std::sync::atomic::Ordering::Acquire)),
                         control: Some(control),
@@ -811,27 +883,37 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                     emit(sink, &id, "listening", "", &qr);
                 }
                 Command::PairingConnect { qr } => {
-                    if !store.has_credentials()? {
-                        return Err(CoreError::NoCredentials);
-                    }
-                    let invite = invitation(qr)?;
+                    // The QR says which side shows it; the local account decides the rest.
+                    // A mismatch (two sources or two empty devices) is refused before any I/O.
+                    let sending = store.has_credentials()?;
+                    let invite = if sending {
+                        invitation(qr, PREFIX)?
+                    } else {
+                        store.clear_link_stage(None)?;
+                        invitation(qr, OFFER_PREFIX)?
+                    };
                     let id = invite.id.clone();
                     manager.active = None;
                     let (control, confirmed) = oneshot::channel();
                     let callback = Arc::clone(sink);
+                    let tx = COMMANDS.with(Clone::clone);
                     let session = id.clone();
                     let task = tokio::spawn(async move {
-                        if timeout(TRANSFER, sender(invite, confirmed, Arc::clone(&callback)))
-                            .await
-                            .map_or(true, |r| r.is_err())
-                        {
+                        let flow = async {
+                            if sending {
+                                sender(invite, confirmed, Arc::clone(&callback)).await
+                            } else {
+                                joiner(invite, confirmed, tx, Arc::clone(&callback)).await
+                            }
+                        };
+                        if timeout(TRANSFER, flow).await.map_or(true, |r| r.is_err()) {
                             emit(&callback, &session, "failed", "", "");
                         }
                     });
                     CANCELLATION.with(|cancel| cancel.register(&task, false));
                     manager.active = Some(Active {
                         id: id.clone(),
-                        sending: true,
+                        sending,
                         epoch: CANCELLATION
                             .with(|cancel| cancel.epoch.load(std::sync::atomic::Ordering::Acquire)),
                         control: Some(control),
@@ -985,13 +1067,13 @@ mod tests {
             secret: "22".repeat(32),
         };
         let encode = |i: &Invitation| format!("{PREFIX}{}", serde_json::to_string(i).unwrap());
-        assert!(invitation(&encode(&invite)).is_ok());
+        assert!(invitation(&encode(&invite), PREFIX).is_ok());
         invite.addresses = vec![Ipv4Addr::new(8, 8, 8, 8)];
-        assert!(invitation(&encode(&invite)).is_err());
+        assert!(invitation(&encode(&invite), PREFIX).is_err());
         invite.addresses = vec![Ipv4Addr::new(10, 0, 0, 5)];
         invite.secret = "00".into();
-        assert!(invitation(&encode(&invite)).is_err());
-        assert!(invitation(&"x".repeat(2050)).is_err());
+        assert!(invitation(&encode(&invite), PREFIX).is_err());
+        assert!(invitation(&"x".repeat(2050), PREFIX).is_err());
         assert!(serde_json::from_str::<Command>(
             r#"{"type":"pairing_install","session":"fake","payload":[]}"#
         )
@@ -1133,7 +1215,7 @@ mod tests {
         let target = Device::new(None);
         target.send(Command::PairingListen);
         let (_, qr) = target.wait("listening");
-        let mut wrong = invitation(&qr).unwrap();
+        let mut wrong = invitation(&qr, PREFIX).unwrap();
         wrong.secret = "00".repeat(32);
         source.send(Command::PairingConnect {
             qr: format!("{PREFIX}{}", serde_json::to_string(&wrong).unwrap()),
@@ -1148,6 +1230,68 @@ mod tests {
         source.send(Command::PairingCancel);
         source.wait("cancelled");
         assert!(!target.store().has_credentials().unwrap());
+    }
+
+    #[test]
+    fn account_holder_can_show_the_qr_and_a_new_device_scans_it() {
+        if interfaces().is_empty() {
+            return;
+        }
+        let credentials = Credentials::generate();
+        let source = Device::new(Some(&credentials));
+        let target = Device::new(None);
+        let chat = b"offered-chat";
+        let peer = [0xbb; 32];
+        {
+            let db = source.store();
+            db.set_conversation(&peer, chat).unwrap();
+            db.insert_message(&[1; 16], chat, true, 100, b"from the desktop").unwrap();
+        }
+        source.send(Command::PairingOffer);
+        let (id, qr) = source.wait("listening");
+        assert!(qr.starts_with(OFFER_PREFIX));
+        target.send(Command::PairingConnect { qr: qr.clone() });
+        let (_, target_code) = target.wait("verify");
+        let (_, source_code) = source.wait("verify");
+        assert_eq!(source_code, target_code);
+        // The receiving side never needs (or gets) the source's local unlock key.
+        target.send(Command::PairingConfirm { session: id.clone(), unlock: String::new() });
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!target.store().has_credentials().unwrap());
+        source.send(Command::PairingConfirm { session: id, unlock: hex::encode(b"local-key") });
+        target.wait("complete");
+        source.wait("complete");
+        let linked = target.store().load_credentials().unwrap();
+        assert_eq!(linked.identity.public(), credentials.identity.public());
+        assert_ne!(linked.device.public(), credentials.device.public());
+        let items = target.store().list_messages(chat, 10, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].body, b"from the desktop");
+    }
+
+    #[test]
+    fn mismatched_roles_are_refused_before_connecting() {
+        if interfaces().is_empty() {
+            return;
+        }
+        // Two account holders: an offer QR cannot be used to push our account onto theirs.
+        let holder = Device::new(Some(&Credentials::generate()));
+        let other = Device::new(Some(&Credentials::generate()));
+        holder.send(Command::PairingOffer);
+        let (_, offer) = holder.wait("listening");
+        other.send(Command::PairingConnect { qr: offer });
+        other.wait("error");
+        // Two empty devices: a receive QR has no account behind it to join.
+        let empty = Device::new(None);
+        let fresh = Device::new(None);
+        empty.send(Command::PairingListen);
+        let (_, listen) = empty.wait("listening");
+        fresh.send(Command::PairingConnect { qr: listen });
+        fresh.wait("error");
+        // An empty device cannot offer an account it does not have.
+        fresh.send(Command::PairingOffer);
+        fresh.wait("error");
+        assert!(!fresh.store().has_credentials().unwrap());
     }
 
     #[test]

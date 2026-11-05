@@ -31,6 +31,8 @@ pub enum Command {
     ProbeConnection,
     Diagnostics,
     PairingListen,
+    /// The account holder shows the QR and a new device scans it (desktop → phone).
+    PairingOffer,
     PairingDiscover { enabled: bool },
     PairingConnect { qr: String },
     PairingConfirm { session: String, #[serde(default)] unlock: String },

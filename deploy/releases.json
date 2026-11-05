@@ -1,4 +1,4 @@
 {
-  "manifest": "{\"v\":1,\"channel\":\"public-beta\",\"publishedAt\":\"2026-11-05T16:22:15.917Z\",\"windows\":{\"version\":\"0.13.24\",\"url\":\"https://valanium.com/downloads/Valanium-0.13.24.exe\",\"sha256\":\"fafbdfa30cdc131763468d97eb2501e1486ea1d247c87a15c1a836f5ceb9f812\",\"bytes\":17006592},\"android\":{\"version\":\"0.7.22\",\"url\":\"https://valanium.com/downloads/Valanium-0.7.22.apk\",\"sha256\":\"83b2ea0e2324eff20e707e1305dba37e6d685303bce08a38ad9f3925053db929\",\"bytes\":9566113}}",
-  "signature": "141129a2728e818fc23e7f38d6237ce1e116c2ffa94e3b205e365cb1f18b481a0ebeaf01de288086363af9d53a597ffd18dfc20726d8c7c580ac61c9d6645e09"
+  "manifest": "{\"v\":1,\"channel\":\"public-beta\",\"publishedAt\":\"2026-11-05T16:41:46.201Z\",\"windows\":{\"version\":\"0.13.25\",\"url\":\"https://valanium.com/downloads/Valanium-0.13.25.exe\",\"sha256\":\"b4c4aa02c9d1a88d51281c551383bfce7506368412bbae4d7adb9f91a57f040e\",\"bytes\":17013248},\"android\":{\"version\":\"0.7.23\",\"url\":\"https://valanium.com/downloads/Valanium-0.7.23.apk\",\"sha256\":\"6e4763e302d28fd1caf4ee1c4e11fff73c80e09dadbf4faffb897a11c96c50da\",\"bytes\":9574305}}",
+  "signature": "0e935c7e59a3c27755947c81fb7e73792dc91a6d88fa44a838132f6852768f958bfe1324d8414ec975a0df31238b75a0dbcc553a7d0ac824a30e94ebe3122c01"
 }

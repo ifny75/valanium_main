@@ -42,7 +42,7 @@ final class PairingUi {
     }
     void status(boolean hasIdentity) {
         identity = hasIdentity;
-        if (identity && !pendingQr.isEmpty() && host.ready()) {
+        if (!pendingQr.isEmpty() && host.ready()) {
             String value = pendingQr; pendingQr = ""; open(); command("pairing_connect", "qr", value);
         }
         if (!running && prefs.getBoolean("pairing_discovery", true)) {
@@ -106,10 +106,15 @@ final class PairingUi {
                 status.setText(I18n.t("Ожидаем подтверждение второго устройства…"));
             } catch (Exception error) { status.setText(I18n.t("Разблокируйте приложение и повторите сопряжение.")); }
         }); root.addView(confirm);
+        Button scan = new Button(activity, null, 0, R.style.Valanium_Button_Dark); scan.setAllCaps(false);
+        scan.setText(I18n.t(identity ? "Сканировать QR камерой" : "Сканировать QR с компьютера или телефона"));
+        scan.setOnClickListener(v -> activity.startActivityForResult(new Intent(activity, PairingScannerActivity.class), SCAN));
+        root.addView(scan);
         if (identity) {
-            Button scan = new Button(activity, null, 0, R.style.Valanium_Button_Dark); scan.setAllCaps(false); scan.setText(I18n.t("Сканировать QR камерой"));
-            scan.setOnClickListener(v -> activity.startActivityForResult(new Intent(activity, PairingScannerActivity.class), SCAN));
-            root.addView(scan);
+            // Desktops rarely have a camera: let the new device scan this phone instead.
+            Button offer = new Button(activity, null, 0, R.style.Valanium_Button_Dark); offer.setAllCaps(false);
+            offer.setText(I18n.t("Показать QR для нового устройства"));
+            offer.setOnClickListener(v -> send("pairing_offer")); root.addView(offer);
             EditText input = new EditText(activity); input.setHint(I18n.t("Код сопряжения с другого устройства")); input.setSingleLine(true); root.addView(input);
             Button connect = new Button(activity, null, 0, R.style.Valanium_Button_Dark); connect.setAllCaps(false); connect.setText(I18n.t("Подключить по коду"));
             connect.setOnClickListener(v -> { String value = input.getText().toString().trim(); input.setText(""); command("pairing_connect", "qr", value); }); root.addView(connect);
@@ -140,7 +145,9 @@ final class PairingUi {
             for (int y=0;y<size;y++) for (int x=0;x<size;x++) pixels[y*size+x] = matrix.get(x,y) ? Color.BLACK : Color.WHITE;
             image.setImageBitmap(Bitmap.createBitmap(pixels,size,size,Bitmap.Config.ARGB_8888));
             image.setVisibility(android.view.View.VISIBLE);
-            status.setText(I18n.t("Отсканируйте этот QR на устройстве с аккаунтом. QR действует 3 минуты."));
+            status.setText(I18n.t(identity
+                    ? "Отсканируйте этот QR камерой на новом устройстве. QR действует 3 минуты."
+                    : "Отсканируйте этот QR на устройстве с аккаунтом. QR действует 3 минуты."));
         } catch (Exception error) { fail(); }
     }
     void event(JSONObject event) {

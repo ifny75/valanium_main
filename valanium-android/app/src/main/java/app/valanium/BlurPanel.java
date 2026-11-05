@@ -80,12 +80,14 @@ public class BlurPanel extends FrameLayout {
         invalidate();
     }
 
-    /** Coalesce scroll callbacks to at most 30 backdrop refreshes per second. */
+    /**
+     * Refresh once the content settles. The snapshot software-draws the whole screen
+     * behind the island, so doing it while a long page scrolls dropped frames.
+     */
     public void onSourceScrolled() {
-        if (!refreshPosted) {
-            refreshPosted = true;
-            postDelayed(refreshBackdrop, 33);
-        }
+        removeCallbacks(refreshBackdrop);
+        refreshPosted = true;
+        postDelayed(refreshBackdrop, 140);
     }
 
     @Override

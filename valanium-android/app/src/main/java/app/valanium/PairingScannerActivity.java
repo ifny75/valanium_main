@@ -48,7 +48,7 @@ public final class PairingScannerActivity extends Activity implements SurfaceHol
                     try {
                         String raw=new QRCodeReader().decode(new BinaryBitmap(new HybridBinarizer(
                                 new PlanarYUVLuminanceSource(copy,size.width,size.height,0,0,size.width,size.height,false)))).getText();
-                        if(!finished&&!isFinishing()&&raw.startsWith("valanium-pair:v2:")&&raw.length()<=2048){finished=true;runOnUiThread(()->{setResult(RESULT_OK,new Intent().putExtra("pairing_qr",raw));finish();});}
+                        if(!finished&&!isFinishing()&&(raw.startsWith("valanium-pair:v2:")||raw.startsWith("valanium-pair:v2-offer:"))&&raw.length()<=2048){finished=true;runOnUiThread(()->{setResult(RESULT_OK,new Intent().putExtra("pairing_qr",raw));finish();});}
                     }catch(Exception ignored){} finally {java.util.Arrays.fill(copy,(byte)0);decoding=false;}
                 });
             });camera.startPreview();

@@ -889,4 +889,9 @@ export default {
   "Микрофон": "Microphone",
   "Микрофон выключен": "Muted",
   "Динамик": "Speaker",
+  "Показать QR для нового устройства": "Show QR for a new device",
+  "Показать QR для нового телефона": "Show QR for a new phone",
+  "Сканировать QR с компьютера или телефона": "Scan the QR from a computer or phone",
+  "Отсканируйте этот QR камерой на новом устройстве. QR действует 3 минуты.": "Scan this QR with the new device's camera. It is valid for 3 minutes.",
+  "Отсканируйте этот QR камерой нового телефона. QR действует 3 минуты.": "Scan this QR with the new phone's camera. It is valid for 3 minutes.",
 };
