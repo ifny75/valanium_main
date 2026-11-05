@@ -133,8 +133,7 @@ impl Standing {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub standing: Standing,
-    /// Имя, которое человек показывает. Подсказка для интерфейса, не более:
-    /// сменить его может кто угодно и когда угодно.
+    /// Local contact alias. Never published; takes precedence over profile metadata.
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]

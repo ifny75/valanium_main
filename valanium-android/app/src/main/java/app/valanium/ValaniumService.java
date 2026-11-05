@@ -83,6 +83,7 @@ public final class ValaniumService extends Service {
     /** Called on the main thread; reopen a database only after onDestroy closes the old core. */
     public static void stopForLogout(Context context, Runnable completed) {
         if (signingOut) return;
+        CallAudioService.finish(context);
         signingOut = true;
         BackgroundDelivery.cancel(context);
         stopNetworkWatch();
@@ -254,9 +255,10 @@ public final class ValaniumService extends Service {
 
     /** Показывает системное уведомление только когда интерфейс не открыт. */
     static void notifyIncoming(Context context,String json) {
-        if (Events.hasListeners()) return;
         try {
             JSONObject event = new JSONObject(json);
+            if ("call_status".equals(event.optString("type"))) { CallAudioService.notifyState(context,event,Events.hasListeners()); return; }
+            if (Events.hasListeners()) return;
             if (!"message".equals(event.optString("type"))) return;
             String body = event.optString("body");
             String preview = messagePreview(context,body);

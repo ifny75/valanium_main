@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Единственное, что нужно приложению от системы: сеть и право держать
-         соединение живым. Ни контактов, ни хранилища, ни геолокации. -->
+    <!-- Сеть и фоновая доставка. Камера запрашивается только для QR-сопряжения,
+         микрофон — для голосовых. Системные контакты, файлы и геолокация не нужны. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -40,6 +47,9 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".PairingScannerActivity" android:exported="false" android:screenOrientation="portrait" />
+        <receiver android:name=".CallActionReceiver" android:exported="false" />
+        <service android:name=".CallAudioService" android:exported="false" android:foregroundServiceType="microphone|mediaPlayback" />
         <service
             android:name=".ValaniumService"
             android:exported="false"

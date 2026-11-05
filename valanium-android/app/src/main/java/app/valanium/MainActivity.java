@@ -75,6 +75,12 @@ import app.valanium.core.Core;
 /** Нативный мобильный интерфейс поверх общего Rust-ядра Valanium. */
 public final class MainActivity extends Activity implements Events.Listener {
     private static long backgroundedAt = -1L;
+    private android.view.ActionMode selectionMode;
+    private boolean selectingChats;
+    private final Set<String> selectedItems = new LinkedHashSet<>();
+
+    private PairingUi pairingUi;
+    private CallUi callUi;
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
 
@@ -524,6 +530,23 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.open_admin).setOnClickListener(v -> openAdmin());
         wireAdmin();
         wireData();
+        callUi=new CallUi(this,new CallUi.Host(){
+            public void send(JSONObject command){submit(command.toString());}
+            public void begin(String id,boolean audio){stopLocalPolling();ValaniumService.start(MainActivity.this);CallAudioService.start(MainActivity.this,id,audio);}
+            public String name(String peer){return displayName(peer);}
+        });
+        pairingUi = new PairingUi(this, new PairingUi.Host() {
+            public void send(String command) { submit(command); }
+            public String unlock() throws Exception { return new LocalSecretStore(MainActivity.this).load(); }
+            public boolean ready() { return foregroundAuthorized; }
+        });
+        android.view.View dataClear = findViewById(R.id.data_clear_chats);
+        ViewGroup dataParent = (ViewGroup)dataClear.getParent().getParent();
+        dataParent.addView(pairingUi.controls());
+        Button pairEntry = new Button(this);
+        pairEntry.setText(I18n.t("Подключить аккаунт с другого устройства"));
+        pairEntry.setOnClickListener(v -> pairingUi.open());
+        ((ViewGroup)findViewById(R.id.entry_submit).getParent()).addView(pairEntry);
         findViewById(R.id.copy_chat_code).setOnClickListener(v -> copyChatCode());
         findViewById(R.id.open_chat_settings).setOnClickListener(v -> open(screenChatSettings));
         findViewById(R.id.open_data).setOnClickListener(v -> {
@@ -580,7 +603,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         configureInsets();
         // Reserve the measured island height, including its margin, outside root content.
         tabBar.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-            int reserve = tabBar.getHeight() + dp(22);
+            int reserve = tabBar.getHeight() + ((FrameLayout.LayoutParams) tabBar.getLayoutParams()).bottomMargin + dp(12);
             for (View page : new View[]{screenChat, screenSettings, screenProfile}) {
                 if (page instanceof ScrollView) {
                     ScrollView scroll = (ScrollView) page;
@@ -597,9 +620,12 @@ public final class MainActivity extends Activity implements Events.Listener {
                     page.setLayoutParams(params);
                 }
                 if (page instanceof ViewGroup) ((ViewGroup) page).setClipToPadding(false);
-                if (page.getPaddingBottom() != reserve) {
-                    page.setPadding(page.getPaddingLeft(), page.getPaddingTop(),
-                            page.getPaddingRight(), reserve);
+                // Keep the chat viewport behind the island; reserve space inside each list.
+                page.setPadding(page.getPaddingLeft(), page.getPaddingTop(), page.getPaddingRight(), 0);
+                for (int id : new int[]{R.id.contact_list, R.id.request_list, R.id.channel_pane_scroll}) {
+                    View list = findViewById(id);
+                    if (list instanceof ViewGroup) ((ViewGroup) list).setClipToPadding(false);
+                    list.setPadding(list.getPaddingLeft(), list.getPaddingTop(), list.getPaddingRight(), reserve);
                 }
             }
         });
@@ -648,6 +674,9 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onStop() {
+        if (callUi != null) callUi.suspend();
+        if (pairingUi != null) pairingUi.stop();
+        if (selectionMode != null) selectionMode.finish();
         if(appUpdates!=null)appUpdates.pause();
         ui.removeCallbacks(activityExpiry);
         peerTypingUntil.clear();
@@ -658,7 +687,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         stopVoicePlayback();
         stopLocalPolling();
         Events.unsubscribe(this);
-        if(!BackgroundDelivery.persistent(this)){
+        if(!BackgroundDelivery.persistent(this)&&!CallAudioService.active()){
             ValaniumService.stop(this);
             if(ValaniumService.core().isOpen())ValaniumService.core().submit(Commands.disconnect());
         }
@@ -669,6 +698,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
             int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if(requestCode==CallUi.PERMISSION){callUi.permission(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED);return;}
         if (requestCode == MICROPHONE_PERMISSION_REQUEST) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startRecording();
@@ -701,6 +731,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         // The app draws behind the navigation bar on every version; a coloured or
         // contrast-scrimmed bar shows up as a dark block on 3-button phones.
         window.setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) window.setDecorFitsSystemWindows(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setNavigationBarContrastEnforced(false);
             window.setStatusBarContrastEnforced(false);
@@ -730,21 +761,30 @@ public final class MainActivity extends Activity implements Events.Listener {
                 oldLeft, oldTop, oldRight, oldBottom) -> layoutTopBars());
         root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
             int top;
-            int bottom;
-            boolean keyboard;
+            int navigation;
+            int keyboardInset;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
                 Insets ime = windowInsets.getInsets(WindowInsets.Type.ime());
                 top = bars.top;
-                bottom = Math.max(bars.bottom, ime.bottom);
-                keyboard = ime.bottom > 0;
+                navigation = bars.bottom;
+                keyboardInset = ime.bottom;
             } else {
                 // With adjustResize the legacy bottom inset is max(navigation bar, keyboard).
                 top = windowInsets.getSystemWindowInsetTop();
-                bottom = windowInsets.getSystemWindowInsetBottom();
-                keyboard = bottom > windowInsets.getStableInsetBottom() + dp(40);
+                navigation = windowInsets.getStableInsetBottom();
+                int bottom = windowInsets.getSystemWindowInsetBottom();
+                keyboardInset = bottom > navigation + dp(40) ? bottom : 0;
             }
-            view.setPadding(dp(16), top, dp(16), bottom + dp(8));
+            boolean keyboard = keyboardInset > 0;
+            // Content runs under the floating navigation island; only the keyboard pushes it up.
+            view.setPadding(dp(16), top, dp(16), keyboardInset);
+            FrameLayout.LayoutParams island = (FrameLayout.LayoutParams) tabBar.getLayoutParams();
+            int islandBottom = navigation + dp(10);
+            if (island.bottomMargin != islandBottom) {
+                island.bottomMargin = islandBottom;
+                tabBar.setLayoutParams(island);
+            }
             layoutChatWallpaper();
             layoutStatusBarPanel(view, top);
             view.post(this::layoutTopBars);
@@ -1893,6 +1933,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void setDividers(String mode) {
         appearancePreferences.edit().putString("dividers", mode).apply();
         applyDividers();
+        highlightSegment("soft".equals(mode) ? R.id.dividers_soft
+                : "none".equals(mode) ? R.id.dividers_none : R.id.dividers_full,
+                R.id.dividers_full, R.id.dividers_soft, R.id.dividers_none);
     }
 
     private void applyDividers() {
@@ -2017,12 +2060,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void showCallPreview() {
-        if(currentPeer==null||!currentPeer.matches("[a-f0-9]{64}")){toast(I18n.t("Откройте личный диалог для проверки звонка"));return;}
-        final String peer=currentPeer;
-        new AlertDialog.Builder(this).setTitle(I18n.t("Звонки · первый этап"))
-            .setMessage(I18n.t("Можно проверить защищённый канал звонка. Микрофон не включается: передача звука пока разрабатывается. Проверить поддержку у собеседника?"))
-            .setPositiveButton(I18n.t("Проверить поддержку"),(dialog,which)->submit(Commands.callProbe(peer)))
-            .setNegativeButton(I18n.t("Отмена"),null).show();
+        if(currentPeer==null||!currentPeer.matches("[a-f0-9]{64}")){toast(I18n.t("Откройте личный диалог для звонка"));return;}
+        callUi.start(currentPeer);
     }
 
     private void chooseAvatar() {
@@ -2079,6 +2118,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PairingUi.SCAN) { pairingUi.result(resultCode, data); return; }
         if(requestCode==AppUpdates.INSTALL_PERMISSION_REQUEST){
             if(appUpdates!=null && getPackageManager().canRequestPackageInstalls())appUpdates.install();
             return;
@@ -2159,6 +2199,10 @@ public final class MainActivity extends Activity implements Events.Listener {
      * обрезать его вслепую — значит промахиваться.
      */
     private void openEditor(Bitmap source, boolean avatar) {
+        openEditor(source, avatar, currentPeer);
+    }
+
+    private void openEditor(Bitmap source, boolean avatar, String recipient) {
         int limit = avatar ? 80_000 : 700_000;
         new PhotoEditor(this, source, avatar ? 1f : 0f, limit, avatar?384:1600, (base64, width, height) -> {
             if (avatar) {
@@ -2167,10 +2211,10 @@ public final class MainActivity extends Activity implements Events.Listener {
                 toast(I18n.t("Аватар загружается…"));
                 return;
             }
-            if (currentPeer == null) return;
+            if (recipient == null) return;
             String body = encodeContent("image", logicalId(), null, base64);
-            submit(Commands.send(currentPeer, body));
-            addBubble(body, true);
+            submit(Commands.send(recipient, body));
+            if (recipient.equals(currentPeer)) addBubble(body, true);
         }).show();
     }
 
@@ -2463,6 +2507,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         startEventDelivery();
         BackgroundDelivery.schedule(this);
         submit(Commands.status());
+        submit("{\"type\":\"call_state\"}");
         submit(Commands.conversations());
         ValaniumService.watchNetwork(this);
         submit(Commands.probeConnection());
@@ -2588,6 +2633,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     // --- действия --------------------------------------------------------------
 
     private void register() {
+        if (pairingUi != null) pairingUi.stop();
         registrationPending = true;
         entrySubmit.setEnabled(false);
         entrySubmit.setText(R.string.connecting);
@@ -2925,6 +2971,10 @@ public final class MainActivity extends Activity implements Events.Listener {
     public void onEvent(JSONObject event) {
         if (!foregroundAuthorized) return;
         switch (event.optString("type")) {
+            case "pairing":
+            case "pairing_found":
+                if (pairingUi != null && foregroundAuthorized) pairingUi.event(event);
+                break;
             case "devices_revoked":
                 toast(getString(R.string.revoke_devices_done, event.optInt("count")));
                 break;
@@ -3027,11 +3077,14 @@ public final class MainActivity extends Activity implements Events.Listener {
                     }
                 }
                 renderRequests();
+                renderPeers();
+                if (currentPeer != null) updateConversationHeader(currentPeer);
                 break;
             case "access":
                 access = event;
                 break;
             case "call_status":
+                if(callUi!=null)callUi.event(event);
                 String callPeer=event.optString("peer_device");
                 Runnable oldCheck=callProbeTimeouts.remove(callPeer);if(oldCheck!=null)ui.removeCallbacks(oldCheck);
                 if ("checking".equals(event.optString("status"))) {
@@ -3114,6 +3167,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void onStatus(JSONObject event) {
+        if (pairingUi != null) pairingUi.status(event.optBoolean("has_identity"));
         if (!event.optBoolean("has_identity")) {
             show(screenEntry);
             entrySubmit.setEnabled(true);
@@ -3132,6 +3186,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void onFailed(JSONObject event) {
+        if(event.optString("code").startsWith("call_")&&callUi!=null)callUi.error();
+        if ("pairing".equals(event.optString("code")) && pairingUi != null) { pairingUi.fail(); return; }
         String code = event.optString("code");
         if("call_probe_pending".equals(code)){toast(I18n.t("Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания."));return;}
         if("call_no_conversation".equals(code)){toast(I18n.t("Сначала начните личную переписку с этим человеком."));return;}
@@ -3353,6 +3409,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 event.optString("chat_code"),
                 event.optString("avatar_mime", ""),
                 event.optString("avatar_base64", ""));
+        profile.displayName = optText(event, "display_name");
         profile.emblem = optText(event, "emblem");
         profile.color = optText(event, "color");
         profiles.put(profile.device, profile);
@@ -3493,6 +3550,15 @@ public final class MainActivity extends Activity implements Events.Listener {
                 messageActions(item.body, item.outgoing, currentPeer), accentColor(), item.outgoing);
         swipe.setLayoutParams(params);
         row.addView(swipe);
+        String messageId = parseContent(item.body).optString("id");
+        if (selectionMode != null && !selectingChats && !messageId.isEmpty()) {
+            View selection = new View(this);
+            selection.setBackgroundColor(selectedItems.contains(messageId) ? ((accentColor() & 0x00ffffff) | 0x44000000) : Color.TRANSPARENT);
+            selection.setContentDescription((selectedItems.contains(messageId) ? "✓ " : "○ ") + parseContent(item.body).optString("text", I18n.t("Фото")));
+            selection.setFocusable(true);
+            selection.setOnClickListener(v -> toggleSelection(messageId, false));
+            row.addView(selection, new FrameLayout.LayoutParams(-1, -1));
+        }
         if (created && motionEnabled()) {
             row.setAlpha(0f);
             row.setTranslationY(dp(8));
@@ -3588,11 +3654,16 @@ public final class MainActivity extends Activity implements Events.Listener {
         Profile profile = profiles.get(peer);
         ConversationPreview preview = previews.get(peer);
         applyAvatar(holder.avatar, profile, initials(displayName(peer)), peer);
-        holder.title.setText(nameWithEmblem(peer));
+        holder.title.setText((selectedItems.contains(peer) && selectingChats ? "✓ " : "")
+                + (pinnedChats().contains(peer) ? "📌 " : "") + nameWithEmblem(peer));
         holder.title.setTextColor(themeText());
         holder.subtitle.setTextColor(mutedText());
         holder.time.setTextColor(dimText());
-        row.setBackground(chatRowBackground());
+        GradientDrawable rowBackground = chatRowBackground();
+        if (selectingChats && selectedItems.contains(peer)) {
+            rowBackground.setColor(blend(accentColor(), themePanel(), .27f));
+        }
+        row.setBackground(rowBackground);
         holder.subtitle.setText(previewText(preview));
         holder.time.setText(previewTime(preview));
         if (preview != null && preview.unread > 0) {
@@ -3608,7 +3679,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         } else {
             holder.badge.setVisibility(View.GONE);
         }
-        row.setOnClickListener(v -> selectPeer(peer));
+        row.setOnClickListener(v -> {
+            if (selectionMode != null && selectingChats) toggleSelection(peer, true);
+            else selectPeer(peer);
+        });
+        row.setOnLongClickListener(v -> { toggleSelection(peer, true); return true; });
         installPressFeedback(row);
         if (created && motionEnabled()) {
             row.setAlpha(0f);
@@ -3633,6 +3708,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      * «назад» с любой вкладки закрывает приложение, а не гоняет по кругу.
      */
     private void switchTab(View screen) {
+        if (selectionMode != null) selectionMode.finish();
         getWindow().getDecorView().performHapticFeedback(
                 android.view.HapticFeedbackConstants.CLOCK_TICK);
         if (screen == currentScreen) {
@@ -3799,6 +3875,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void show(View screen) {
+        if(screen==screenEntry && callUi!=null)callUi.reset();
+        if (selectionMode != null && screen != currentScreen) selectionMode.finish();
         currentScreen = screen;
         if(chatWallpaperLayer!=null)chatWallpaperLayer.setVisibility(screen==screenConversation?View.VISIBLE:View.GONE);
         if (screen == screenConversation) composer.requestFocus();
@@ -3976,7 +4054,13 @@ public final class MainActivity extends Activity implements Events.Listener {
         for (String peer : conversations.keySet()) {
             if (listFilter.isEmpty() || haystack(peer).contains(listFilter)) found.add(peer);
         }
+        Set<String> pins = pinnedChats();
+        found.sort((a, b) -> Boolean.compare(pins.contains(b), pins.contains(a)));
         return found;
+    }
+
+    private Set<String> pinnedChats() {
+        return new HashSet<>(appearancePreferences.getStringSet("pinned_chats:" + myDeviceHex, java.util.Collections.emptySet()));
     }
 
     private String haystack(String peer) {
@@ -4123,6 +4207,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void selectPeer(String peer) {
+        if (selectionMode != null) selectionMode.finish();
         // Позицию покидаемой беседы запоминаем: вернуться в середину переписки
         // и оказаться внизу — это потерянное место чтения.
         String leaving = conversations.get(currentPeer);
@@ -4224,8 +4309,29 @@ public final class MainActivity extends Activity implements Events.Listener {
         refreshPeerActivity();
     }
 
+    private void editDisplayName(String device, boolean own) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(80)});
+        input.setText(own ? (profiles.get(device) == null ? "" : profiles.get(device).displayName)
+                : (directory.get(device) == null ? "" : optText(directory.get(device), "display_name")));
+        new AlertDialog.Builder(this).setTitle(own ? R.string.display_name_title : R.string.contact_alias_title)
+                .setMessage(own ? R.string.display_name_hint : R.string.contact_alias_hint)
+                .setView(input).setPositiveButton(R.string.ok, (dialog, which) -> {
+                    try {
+                        JSONObject command = new JSONObject().put("type", own ? "profile_name" : "contact_name")
+                                .put("name", input.getText().toString());
+                        if (!own) command.put("device", device);
+                        submit(command.toString());
+                    } catch (JSONException ignored) {}
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
     private String displayName(String peer) {
+        JSONObject local = directory.get(peer);
+        if (local != null && !local.optString("display_name", "").isEmpty() && !local.isNull("display_name")) return local.optString("display_name");
         Profile profile = profiles.get(peer);
+        if (profile != null && !profile.displayName.isEmpty()) return profile.displayName;
         return profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(peer);
     }
 
@@ -4242,10 +4348,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (clean.matches("(?i)OBS-[A-Z0-9]{2}.*")) return clean.substring(4, 6).toUpperCase(Locale.ROOT);
         String[] words = clean.split("\\s+");
         if (words.length > 1) {
-            return (words[0].substring(0, 1) + words[1].substring(0, 1))
+            return (words[0].substring(0, words[0].offsetByCodePoints(0, 1)) + words[1].substring(0, words[1].offsetByCodePoints(0, 1)))
                     .toUpperCase(Locale.ROOT);
         }
-        return clean.substring(0, Math.min(2, clean.length())).toUpperCase(Locale.ROOT);
+        return clean.substring(0, clean.offsetByCodePoints(0, Math.min(2, clean.codePointCount(0, clean.length())))).toUpperCase(Locale.ROOT);
     }
 
     private void applyAvatar(TextView view, Profile profile, String fallback) {
@@ -4461,9 +4567,10 @@ public final class MainActivity extends Activity implements Events.Listener {
                     try {
                         byte[] fullBytes = Base64.decode(encoded, Base64.NO_WRAP);
                         Bitmap full = BitmapFactory.decodeByteArray(fullBytes, 0, fullBytes.length);
-                        new PhotoViewer(this, full == null ? bitmap : full).show();
+                        Bitmap original = full == null ? bitmap : full;
+                        new PhotoViewer(this, original, () -> openEditor(original, false, peer)).show();
                     } catch (RuntimeException error) {
-                        new PhotoViewer(this, bitmap).show();
+                        new PhotoViewer(this, bitmap, () -> openEditor(bitmap, false, peer)).show();
                     }
                 });
                 bubble.addView(image);
@@ -4524,7 +4631,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         bubble.setLayoutParams(params);
 
         bubble.setOnClickListener(view -> showMessageMenu(body, outgoing, peer));
-        bubble.setOnLongClickListener(view -> { showMessageMenu(body, outgoing, peer); return true; });
+        bubble.setOnLongClickListener(view -> {
+            String selectedId = parseContent(body).optString("id");
+            if (!selectedId.isEmpty()) toggleSelection(selectedId, false); else showMessageMenu(body, outgoing, peer);
+            return true;
+        });
         bubble.setContentDescription(I18n.t("Сообщение. Нажмите для действий"));
         return bubble;
     }
@@ -4634,6 +4745,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         String quote = !text.isEmpty() ? text : "image".equals(type) ? I18n.t("Фото") : I18n.t("Голосовое сообщение");
         java.util.List<SwipeMessageLayout.Action> actions = new ArrayList<>();
         if (!id.isEmpty()) {
+            actions.add(new SwipeMessageLayout.Action(I18n.t("Выбрать"), "✓", () -> toggleSelection(id, false)));
             actions.add(new SwipeMessageLayout.Action(I18n.t("Ответить"), "↩", () -> { setReply(id, quote); focusComposer(); }));
             actions.add(new SwipeMessageLayout.Action(I18n.t("Реакция"), "♡", () -> chooseMessageReaction(peer, id, quote)));
         }
@@ -4647,6 +4759,76 @@ public final class MainActivity extends Activity implements Events.Listener {
             actions.add(new SwipeMessageLayout.Action(I18n.t("Удалить"), "×", () -> chooseMessageDeletion(conversation, id, outgoing)));
         }
         return actions;
+    }
+
+    private void toggleSelection(String id, boolean chats) {
+        if (selectionMode != null && selectingChats != chats) selectionMode.finish();
+        if (selectionMode == null) {
+            selectingChats = chats;
+            selectionMode = startActionMode(new android.view.ActionMode.Callback() {
+                public boolean onCreateActionMode(android.view.ActionMode mode, android.view.Menu menu) {
+                    menu.add(0, 1, 0, I18n.t(chats ? "Закрепить / открепить" : "Копировать"));
+                    menu.add(0, 2, 1, I18n.t("Удалить у себя"));
+                    return true;
+                }
+                public boolean onPrepareActionMode(android.view.ActionMode mode, android.view.Menu menu) { return false; }
+                public boolean onActionItemClicked(android.view.ActionMode mode, android.view.MenuItem item) {
+                    if (item.getItemId() == 1) {
+                        if (chats) {
+                            Set<String> pins = pinnedChats();
+                            if (pins.containsAll(selectedItems)) pins.removeAll(selectedItems); else pins.addAll(selectedItems);
+                            appearancePreferences.edit().putStringSet("pinned_chats:" + myDeviceHex, pins).apply();
+                        } else {
+                            StringBuilder text = new StringBuilder();
+                            ChatPage page = pages.get(conversations.get(currentPeer));
+                            if (page != null) for (TimelineItem message : page.timeline) {
+                                JSONObject content = parseContent(message.body);
+                                if (!message.separator && selectedItems.contains(content.optString("id"))) {
+                                    String line = content.optString("text");
+                                    if (!line.isEmpty()) { if (text.length() > 0) text.append("\n"); text.append(line); }
+                                }
+                            }
+                            if (text.length() > 0) copyToClipboard(text.toString(), I18n.t("Скопировано"));
+                            else toast(I18n.t("Нет текста для копирования"));
+                        }
+                        mode.finish();
+                    } else {
+                        List<String> ids = new ArrayList<>(selectedItems);
+                        String conversation = conversations.get(currentPeer);
+                        List<String> threads = new ArrayList<>();
+                        if (chats) for (String selected : ids) {
+                            String thread = conversations.get(selected);
+                            if (!TextUtils.isEmpty(thread)) threads.add(thread);
+                        }
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle(I18n.t("Удалить у себя") + " · " + ids.size())
+                                .setMessage(R.string.delete_mine_hint)
+                                .setPositiveButton(R.string.delete, (d, which) -> {
+                                    if (chats) for (String thread : threads) submit(Commands.deleteConversation(thread));
+                                    else if (!TextUtils.isEmpty(conversation)) for (String selected : ids)
+                                        submit(Commands.deleteMessage(conversation, selected, false));
+                                    mode.finish();
+                                }).setNegativeButton(R.string.cancel, null).show();
+                    }
+                    return true;
+                }
+                public void onDestroyActionMode(android.view.ActionMode mode) {
+                    selectionMode = null;
+                    selectedItems.clear();
+                    refreshSelectionRows();
+                }
+            });
+        }
+        if (selectionMode == null) return;
+        if (!selectedItems.add(id)) selectedItems.remove(id);
+        if (selectedItems.isEmpty()) { selectionMode.finish(); return; }
+        selectionMode.setTitle(I18n.t("Выбрано") + ": " + selectedItems.size());
+        refreshSelectionRows();
+    }
+
+    private void refreshSelectionRows() {
+        if (messageListAdapter != null) messageListAdapter.notifyDataSetChanged();
+        if (chatListAdapter != null) renderPeers();
     }
 
     private void showMessageMenu(String body, boolean outgoing, String peer) {
@@ -4787,10 +4969,14 @@ public final class MainActivity extends Activity implements Events.Listener {
         identityParams.leftMargin = dp(14);
         identity.setLayoutParams(identityParams);
         TextView name = peerCardText(displayName(device), 17, themeText());
+        name.setOnClickListener(v -> editDisplayName(device, false));
         name.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         identity.addView(name);
+        if (profile != null && !profile.displayName.isEmpty() && !profile.displayName.equals(displayName(device))) {
+            identity.addView(peerCardText(profile.displayName, 12, getColor(R.color.valanium_muted)));
+        }
         String chatCode = profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(device);
         TextView codeLabel = peerCardText(chatCode, 12, mutedText());
         LinearLayout.LayoutParams codeParams = new LinearLayout.LayoutParams(
@@ -5160,6 +5346,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         }
         recoverSubmit.setEnabled(false);
         recoverSubmit.setText(R.string.recover_working);
+        if (pairingUi != null) pairingUi.stop();
         submit(Commands.recover(serverUrl(), words));
     }
 
@@ -5434,6 +5621,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     public void onBackPressed() {
+        if (selectionMode != null) { selectionMode.finish(); return; }
         if (voiceRecorder != null) {
             // Первое «назад» во время записи отменяет её, а не закрывает экран.
             stopRecording(false);
@@ -5455,6 +5643,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         /** Значок и цвет собеседника: их выбирает он, а показываем мы. */
         String emblem = "";
         String color = "";
+        String displayName = "";
 
         Profile(String device, String chatCode, String avatarMime,
                 String avatarBase64) {
@@ -6302,18 +6491,20 @@ public final class MainActivity extends Activity implements Events.Listener {
     /** Шапка профиля: имя, значок, цвет — то, что видят собеседники. */
     private void renderOwnProfile() {
         TextView name = findViewById(R.id.profile_name);
-        name.setText(R.string.profile_account_title);
+        Profile ownName = profiles.get(myDeviceHex);
+        name.setText(ownName != null && !ownName.displayName.isEmpty() ? ownName.displayName : getString(R.string.profile_account_title));
+        name.setOnClickListener(v -> editDisplayName(myDeviceHex, true));
         name.setTextColor(themeText());
         // Свой аватар красится тем же цветом, что увидят собеседники.
         Profile own = profiles.get(myDeviceHex);
         if (own != null) {
             own.color = myColor;
-            applyAvatar(profileAvatar, own, "ME", myDeviceHex);
+            applyAvatar(profileAvatar, own, own != null && !own.displayName.isEmpty() ? initials(own.displayName) : "ME", myDeviceHex);
         } else {
             profileAvatar.setBackground(avatarPlaceholder(0, myDeviceHex));
         }
         TextView headerAvatar = findViewById(R.id.chat_logo);
-        applyAvatar(headerAvatar, own, "ME", myDeviceHex);
+        applyAvatar(headerAvatar, own, own != null && !own.displayName.isEmpty() ? initials(own.displayName) : "ME", myDeviceHex);
         ((TextView) findViewById(R.id.profile_emblem)).setText(emblemGlyph(myEmblem));
         ((TextView) findViewById(R.id.open_emblem_value))
                 .setText(myEmblem.isEmpty() || "none".equals(myEmblem)

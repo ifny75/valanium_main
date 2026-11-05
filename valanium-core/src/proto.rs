@@ -13,6 +13,9 @@ pub const KEY_LEN: usize = 32;
 pub const TICKET_LEN: usize = 16 + 8 + 64;
 
 pub mod op {
+    pub const CALL_JOIN:u8=0x50;
+    pub const CALL_READY:u8=0x51;
+    pub const CALL_MEDIA:u8=0x52;
     // сервер → клиент
     pub const HELLO: u8 = 0x01;
     pub const AUTH_OK: u8 = 0x03;
@@ -136,6 +139,8 @@ pub struct Entry {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Features {
+    #[serde(default, rename="callRelay")]
+    pub call_relay: bool,
     #[serde(default)]
     pub profiles: bool,
     /// Значок и цвет профиля. Старый сервер поля не присылает, и это не мелочь:
@@ -165,6 +170,8 @@ pub struct Features {
 
 #[derive(Debug, Deserialize)]
 pub struct ProfilePayload {
+    #[serde(default, rename = "displayName")]
+    pub display_name: Option<String>,
     pub device: String,
     #[serde(rename = "chatCode")]
     pub chat_code: String,

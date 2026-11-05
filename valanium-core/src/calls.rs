@@ -1,4 +1,7 @@
-//! Phase one: encrypted capability probes. No microphone, SDP, ICE or media transport.
+//! MLS call signaling and encrypted direct-relay audio without Tor.
+pub mod audio;
+mod runtime;
+pub(crate) use runtime::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -8,6 +11,11 @@ pub const TTL_MS: i64 = 90_000;
 pub enum Action {
     Probe,
     Unavailable,
+    Offer,
+    Accept,
+    Reject,
+    End,
+    Busy,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,10 +24,37 @@ pub struct Signal {
     pub id: String,
     pub action: Action,
     pub expires_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<Media>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Media {
+    pub room: String,
+    pub secret: String,
+}
+impl Drop for Media {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.secret.zeroize();
+    }
+}
+impl Media {
+    pub fn valid(&self) -> bool {
+        self.room.len() == 64
+            && self.secret.len() == 64
+            && self
+                .room
+                .bytes()
+                .chain(self.secret.bytes())
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    }
 }
 impl Signal {
     pub fn valid(&self) -> bool {
-        self.v == 1
+        ((self.action == Action::Offer && self.media.as_ref().is_some_and(Media::valid))
+            || (self.action != Action::Offer && self.media.is_none()))
+            && self.v == 1
             && self.id.len() == 32
             && self
                 .id
@@ -57,6 +92,7 @@ impl Pending {
             id: hex::encode(crate::crypto::random_bytes(16)),
             action: Action::Probe,
             expires_at: now + TTL_MS,
+            media: None,
         };
         self.outgoing
             .insert(signal.id.clone(), (peer.into(), signal.expires_at));
@@ -96,6 +132,7 @@ mod tests {
             id: "a".repeat(32),
             action: Action::Probe,
             expires_at: 90_000,
+            media: None,
         };
         let mut raw = serde_json::to_value(&signal).unwrap();
         raw["ice"] = serde_json::json!("192.0.2.1");
@@ -150,7 +187,8 @@ mod tests {
                     v: 1,
                     id: format!("{i:032x}"),
                     action: Action::Probe,
-                    expires_at: 90_000
+                    expires_at: 90_000,
+                    media: None
                 },
                 1
             ));
@@ -161,7 +199,8 @@ mod tests {
                 v: 1,
                 id: "a".repeat(32),
                 action: Action::Probe,
-                expires_at: 90_000
+                expires_at: 90_000,
+                media: None
             },
             1
         ));

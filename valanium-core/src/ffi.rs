@@ -29,6 +29,12 @@ impl Queue {
     fn push(&self, event: &Event) {
         let Ok(bytes) = serde_json::to_vec(event) else { return };
         if let Ok(mut items) = self.items.lock() {
+            if matches!(event, Event::CallAudio {..}) {
+                let prefix = b"{\"type\":\"call_audio\"";
+                if items.iter().filter(|item| item.starts_with(prefix)).count() >= 4 {
+                    if let Some(index) = items.iter().position(|item| item.starts_with(prefix)) { items.remove(index); }
+                }
+            }
             if items.len() >= MAX_QUEUED_EVENTS {
                 items.pop_front();
             }
@@ -237,4 +243,16 @@ mod tests {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.to_string_lossy()));
         }
     }
+}
+
+#[cfg(test)]mod live_audio_queue_tests{
+ use super::*;
+ #[test]fn live_audio_queue_keeps_recent_frames_and_control_events(){
+  let queue=Queue{items:Mutex::new(VecDeque::new()),ready:Condvar::new()};
+  queue.push(&Event::CallStatus{peer_device:"peer".into(),call_id:"call".into(),status:"active".into()});
+  for i in 0..20{queue.push(&Event::CallAudio{call_id:"call".into(),data:i.to_string()});}
+  let mut audio=Vec::new();let mut states=0;
+  while let Some(raw)=queue.pop(0){let v:serde_json::Value=serde_json::from_slice(&raw).unwrap();if v["type"]=="call_audio"{audio.push(v["data"].as_str().unwrap().parse::<usize>().unwrap());}else{states+=1;}}
+  assert_eq!(states,1);assert_eq!(audio,vec![16,17,18,19]);
+ }
 }

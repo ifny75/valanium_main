@@ -181,7 +181,8 @@
           <button class="ghost-button" type="button" id="entry-install-tor">Подготовить Tor</button>
           <button class="onboarding-submit" type="submit" id="entry-submit">Зарегистрироваться</button>
         </form>
-        <div class="entry-actions"><button id="open-recover" type="button">Восстановить по 24 словам</button></div>
+        <div class="entry-actions"><button id="open-recover" type="button">Восстановить по 24 словам</button><button id="pairing-entry" type="button">Подключить аккаунт с телефона по QR и Wi-Fi</button></div>
+        <label class="pairing-discovery"><input type="checkbox" data-pairing-discovery checked /> Находить устройства в локальной сети</label>
 
         <p id="entry-error" class="form-error" role="alert"></p>
       </div>
@@ -625,6 +626,12 @@
                 <p id="lock-state" class="storage-report">—</p>
               </div>
               <div class="setting-block">
+                <b>Подключение телефона и ПК</b>
+                <p>QR и локальный Wi-Fi. Переносятся чаты с содержимым. Оба устройства продолжат работать с отдельными ключами.</p>
+                <button id="pairing-settings" class="ghost-button" type="button">Подключить устройство по QR и Wi-Fi</button>
+                <label class="pairing-discovery"><input type="checkbox" data-pairing-discovery checked /> Находить устройства в локальной сети</label>
+              </div>
+              <div class="setting-block">
                 <b>Перенос аккаунта на другое устройство</b>
                 <p class="warning-strip">Этот файл — весь ваш аккаунт: ключи личности и устройства, состояние шифрования и вся переписка целиком. Кто получит файл и пароль к нему, тот сможет читать вашу переписку и писать от вашего имени. Это не резервная копия для облака и не то, что отправляют себе в мессенджер.</p>
                 <small>Файл запечатан отдельным паролем — не паролем этого устройства. Передавать файл и пароль одним каналом нельзя.</small>
@@ -705,12 +712,13 @@
         </header>
 
         <div class="editor-stage" id="editor-stage">
-          <canvas id="editor-canvas"></canvas>
-          <div class="editor-crop" id="editor-crop">
-            <i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="se"></i><i data-handle="sw"></i>
+          <div id="editor-viewport">
+            <canvas id="editor-canvas"></canvas>
+            <div class="editor-crop" id="editor-crop">
+              <i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="se"></i><i data-handle="sw"></i>
+            </div>
           </div>
         </div>
-
         <div class="editor-tools">
           <div class="editor-segment" id="editor-ratios">
             <button data-ratio="0" type="button" class="active">Свободно</button>
@@ -723,6 +731,14 @@
             <button id="editor-flip" class="ghost-button" type="button">Отразить</button>
             <button id="editor-reset" class="ghost-button" type="button">Сбросить</button>
           </div>
+          <div class="editor-buttons">
+            <button id="editor-draw" class="ghost-button" type="button">Рисовать</button>
+            <label>Цвет <input id="editor-ink" type="color" value="#ff3838" /></label>
+            <button id="editor-undo-stroke" class="ghost-button" type="button">Отменить штрих</button>
+          </div>
+          <label class="editor-range"><span>Кисть</span><input id="editor-brush" type="range" min="2" max="40" value="8" /></label>
+          <label class="editor-range"><span>Масштаб просмотра</span><input id="editor-zoom" type="range" min="1" max="5" step="0.1" value="1" /><output id="editor-zoom-value">1.0×</output></label>
+          <p>При увеличении перетаскивайте фото для просмотра. Для обрезки тяните углы рамки.</p>
           <label class="editor-range"><span>Яркость</span><input id="editor-brightness" type="range" min="50" max="160" value="100" /><output id="editor-brightness-value">100%</output></label>
           <label class="editor-range"><span>Контраст</span><input id="editor-contrast" type="range" min="50" max="160" value="100" /><output id="editor-contrast-value">100%</output></label>
           <label class="editor-range"><span>Насыщенность</span><input id="editor-saturation" type="range" min="0" max="200" value="100" /><output id="editor-saturation-value">100%</output></label>
@@ -739,6 +755,7 @@
 
     <div id="image-viewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Просмотр фото">
       <button id="image-viewer-close" class="image-viewer-close" type="button" aria-label="Закрыть фото"><span class="ui-icon icon-cross"></span></button>
+      <button id="image-viewer-edit" class="ghost-button image-viewer-edit" type="button">Изменить и отправить</button>
       <img id="image-viewer-photo" alt="" />
       <p id="image-viewer-caption" class="image-viewer-caption hidden"></p>
     </div>

@@ -18,6 +18,7 @@ public final class Events {
 
     public interface Listener {
         void onEvent(JSONObject event);
+        default boolean foregroundInterface(){return true;}
     }
 
     private static final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
@@ -40,7 +41,8 @@ public final class Events {
 
     /** Открыт ли сейчас интерфейс, который сам покажет входящее сообщение. */
     static boolean hasListeners() {
-        return !listeners.isEmpty();
+        for(Listener listener:listeners)if(listener.foregroundInterface())return true;
+        return false;
     }
 
     /** Вызывается из потока опроса. Разбор здесь, доставка — на главном. */

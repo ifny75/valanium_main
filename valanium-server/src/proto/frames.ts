@@ -11,6 +11,7 @@ import { TICKET_LEN } from "../auth/tickets.ts";
  * Служебные кадры несут JSON, кадры данных — сырые байты.
  */
 export const OP = {
+  CALL_JOIN: 0x50, CALL_READY: 0x51, CALL_MEDIA: 0x52,
   // сервер → клиент
   HELLO: 0x01,
   AUTH_OK: 0x03,

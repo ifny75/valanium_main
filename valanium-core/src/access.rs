@@ -266,6 +266,7 @@ pub enum Control {
     /// Ключ от аватара собеседника.
     ProfileKey(String),
     ProfileChanged,
+    DisplayName(String),
     Delete(Vec<String>),
     /// Правка уже отправленного: тот же логический идентификатор, новое тело.
     Edit { id: String, body: String },
@@ -354,6 +355,10 @@ pub fn parse_signal(body: &str) -> Option<Control> {
             return None;
         }
         return Some(Control::Pass(pass.to_owned()));
+    }
+    if let Some(name) = value.get("displayName").and_then(|v| v.as_str()) {
+        if name.chars().count() <= 80 && !name.chars().any(|c| c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) { return Some(Control::DisplayName(name.to_owned())); }
+        return None;
     }
     if value.get("profileChanged").and_then(|v|v.as_bool()) == Some(true) {
         return Some(Control::ProfileChanged);

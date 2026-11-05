@@ -436,4 +436,13 @@
     <string name="notification_content_text">Текст</string>
     <string name="notification_content_both">Отправитель и текст</string>
     <string name="notification_sender_label">Отправитель</string>
+    <string name="privacy_apply_account">Применить к этому аккаунту</string>
+    <string name="privacy_maximum_title">Максимальная приватность</string>
+    <string name="privacy_maximum_hint">Onion, скрытый поиск по имени, сообщения от одобренных. Без статуса в сети, прочтения, набора текста и превью ссылок. Разрешающие исключения сбрасываются, запреты сохраняются. Ранее раскрытые сведения отозвать невозможно.</string>
+    <string name="privacy_offline_hint">Правила сохраняются без сети. Поиск и доступ на сервере обновятся после подключения. Затем каждое правило можно изменить отдельно.</string>
+    <string name="security_section_title">Безопасность</string>
+    <string name="display_name_title">Имя профиля</string>
+    <string name="contact_alias_title">Локальное имя контакта</string>
+    <string name="display_name_hint">Видимость задаётся в настройках имени профиля. Поиск по имени отсутствует. Имя не подтверждает личность.</string>
+    <string name="contact_alias_hint">Видно только на этом устройстве. Пустое имя возвращает подпись из профиля.</string>
 </resources>

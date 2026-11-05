@@ -3,6 +3,8 @@
 //! В открытом виде на диске остаются только: соль, идентификаторы записей,
 //! идентификатор беседы и время. Ни текстов, ни ключей, ни адресатов.
 
+pub(crate) mod link_history;
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::crypto::{random_salt, MasterKey, SALT_LEN};
@@ -515,6 +517,7 @@ impl Store {
     /// Запоминает группу. Повторный вызов обновляет название.
     pub fn save_group(&self, group_id: &[u8], kind: &str, meta: &[u8], created_at: i64)
         -> Result<()> {
+        self.connection.execute("DELETE FROM settings WHERE k=?1",params![format!("history-only-group:{}",hex::encode(group_id))])?;
         let sealed = self.key.seal(b"group", meta)?;
         self.connection.execute(
             "INSERT INTO groups (group_id, kind, sealed, created_at) VALUES (?1, ?2, ?3, ?4)

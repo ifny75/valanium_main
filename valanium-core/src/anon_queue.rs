@@ -168,6 +168,8 @@ pub(crate) fn ready(queue: &[Envelope], inflight: &std::collections::HashSet<[u8
     let mut barriers=std::collections::HashSet::new();
     let mut candidates:std::collections::HashMap<_,(usize,&Envelope)>=std::collections::HashMap::new();
     for (index,item) in queue.iter().enumerate() {
+        // Already on the wire: never pick it again, and never let it stand in for the next item.
+        if inflight.contains(&item.client_ref){continue;}
         if busy.contains(&item.device)||barriers.contains(&item.device){continue;}
         if item.kind==Kind::Essential {
             barriers.insert(item.device);

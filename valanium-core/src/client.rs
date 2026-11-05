@@ -30,17 +30,17 @@ use crate::store::Store;
 
 pub type EventSink = Arc<dyn Fn(Event) + Send + Sync>;
 
-trait NetworkStream: AsyncRead + AsyncWrite + Unpin + Send {}
+pub(crate) trait NetworkStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> NetworkStream for T {}
 
-type Socket = WebSocketStream<MaybeTlsStream<Box<dyn NetworkStream>>>;
+pub(crate) type Socket = WebSocketStream<MaybeTlsStream<Box<dyn NetworkStream>>>;
 
 /// Открывает WebSocket напрямую либо через локальный Tor SOCKS5.
 ///
 /// Onion-имя никогда не резолвится системным DNS: строка назначения передаётся
 /// SOCKS-прокси как имя. По умолчанию это Tor/Orbot на `127.0.0.1:9050`;
 /// нестандартный порт можно задать `VALANIUM_TOR_SOCKS`.
-async fn open_socket(url: &str) -> Result<Socket> {
+pub(crate) async fn open_socket(url: &str) -> Result<Socket> {
     let request = crate::edge::ws_request(url)?;
     let uri = request.uri();
     let host = uri
@@ -70,11 +70,9 @@ async fn open_socket(url: &str) -> Result<Socket> {
                 .map_err(|err| CoreError::Transport(format!("Tor SOCKS5 недоступен: {err}")))?,
         )
     } else {
-        Box::new(
-            TcpStream::connect((host.as_str(), port))
-                .await
-                .map_err(|err| CoreError::Transport(err.to_string()))?,
-        )
+        let stream = TcpStream::connect((host.as_str(), port)).await.map_err(|err| CoreError::Transport(err.to_string()))?;
+        let _=stream.set_nodelay(true);
+        Box::new(stream)
     };
 
     delivery_timing(if valid_onion_host(&host) { "socks_connect" } else { "tcp_connect" }, started);
@@ -489,6 +487,8 @@ fn is_transport(error: &CoreError) -> bool {
 }
 
 pub struct Engine {
+    call_cancel: Arc<crate::calls::Cancellation>,
+    pairing_cancel: Arc<crate::pairing::Cancellation>,
     commands: mpsc::UnboundedSender<Command>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -503,8 +503,15 @@ impl Engine {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         let (tx, rx) = mpsc::unbounded_channel();
+        let pairing_commands = tx.downgrade();
+        let call_commands = tx.downgrade();
+        let call_cancel = Arc::new(crate::calls::Cancellation::default());
+        let call_runtime_cancel = Arc::clone(&call_cancel);
+        let pairing_cancel = Arc::new(crate::pairing::Cancellation::default());
+        let pairing_runtime_cancel = Arc::clone(&pairing_cancel);
         let ownership = crate::engine_lock::acquire(&db_path)?;
         let store = Store::open(&db_path, &password)?;
+        store.clear_link_stage(None)?;
 
         let thread = std::thread::Builder::new()
             .name("valanium-core".into())
@@ -520,14 +527,17 @@ impl Engine {
                         return;
                     }
                 };
-                runtime.block_on(run(rx, store, sink));
+                runtime.block_on(crate::calls::scope(call_commands, call_runtime_cancel, crate::pairing::scope(pairing_commands, pairing_runtime_cancel, Box::pin(run(rx, store, sink)))));
             })
             .map_err(|_| CoreError::Transport("cannot spawn core thread".into()))?;
 
-        Ok(Self { commands: tx, thread: Some(thread) })
+        Ok(Self { commands: tx, thread: Some(thread), pairing_cancel, call_cancel })
     }
 
     pub fn submit(&self, command: Command) -> Result<()> {
+        if let Command::CallEnd{call_id}|Command::CallReject{call_id}=&command { self.call_cancel.stop(call_id); }
+        if matches!(&command, Command::PairingCancel) { self.pairing_cancel.stop(false); }
+        if matches!(&command, Command::PairingDiscover { enabled: false }) { self.pairing_cancel.stop(true); }
         self.commands
             .send(command)
             .map_err(|_| CoreError::Transport("core thread is gone".into()))
@@ -554,6 +564,19 @@ impl Engine {
 /// connected», если про второе место забывали, — на этом и попался
 /// `recovery_code`, который нужен как раз тогда, когда клиент подключён.
 fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
+    if crate::calls::local(command, sink) { return true; }
+    if let Command::PairingCleanup { session } = command { let _=store.clear_link_stage(Some(session)); return true; }
+    if let Command::PairingStage { session, seq, payload, done } = command {
+        let ok=crate::pairing::valid_receiver(session)&&store.stage_link_record(session,*seq,payload).is_ok();
+        if let Ok(mut done)=done.lock(){if let Some(done)=done.take(){let _=done.send(ok);}}return true;
+    }
+    if let Command::PairingInstall { session, payload, done } = command {
+        let ok = crate::pairing::install(session, payload, store);
+        if ok { sink(status(store)); }
+        if let Ok(mut done) = done.lock() { if let Some(done) = done.take() { let _ = done.send(ok); } }
+        return true;
+    }
+    if crate::pairing::handle(command, store, sink) { return true; }
     let restricting = match command {
         Command::PrivacyMaximize => true,
         Command::PrivacySet { privacy } => privacy.direct_messages.scope != crate::privacy::Scope::Everyone,
@@ -670,6 +693,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             for (group_id, _kind, raw) in store.list_groups().unwrap_or_default() {
                 if let Ok(meta) = serde_json::from_slice::<GroupMeta>(&raw) {
                     sink(Event::Group {
+                        history_only: store.load_setting(&format!("history-only-group:{}",hex::encode(&group_id))).ok().flatten().is_some(),
                         group: hex::encode(&group_id),
                         kind: meta.kind,
                         title: meta.title,
@@ -707,6 +731,18 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             Err(_) => fail(sink, "bad_conversation", "conversation must be hex"),
         },
 
+        Command::ContactName { device, name } => {
+            let result = (|| -> Result<()> {
+                let raw = hex::decode(device).map_err(|_| CoreError::BadFrame)?;
+                if raw.len() != KEY_LEN { return Err(CoreError::BadKeyLength); }
+                let name = checked_display_name(name)?;
+                let mut directory = load_directory(store);
+                directory.note(device, None, None, now_millis());
+                directory.entries.get_mut(device).unwrap().display_name = if name.is_empty() { None } else { Some(name) };
+                save_directory(store, &directory)
+            })();
+            match result { Ok(()) => sink(directory_event(store)), Err(err) => fail(sink,"contact_name",&err.to_string()) }
+        }
         Command::DirectorySet { device, standing } => {
             let mut directory = load_directory(store);
             directory.set(device, *standing, now_millis());
@@ -921,8 +957,11 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             Command::Send { recipient_device, body } => {
                 queue_offline(&store, &sink, &recipient_device, &body);
             }
+            Command::CallDispatch { .. } => {},
+            Command::CallStart { .. } | Command::CallAccept { .. } => fail(&sink,"call_not_connected","Подключитесь к сети перед началом звонка"),
             Command::ProfileGet { .. }
             | Command::ProfileSet { .. }
+            | Command::ProfileName { .. }
             | Command::ProfileDecor { .. }
             | Command::AdminGet { .. }
             | Command::SupportGet { .. }
@@ -1416,6 +1455,26 @@ async fn announce_devices(
 /// видит только очередной непрозрачный конверт. Тем, с кем беседа ещё не
 /// заведена, выдача откладывается: без канала передать секрет некуда, а
 /// отправлять его в открытую нельзя.
+async fn announce_display_name(socket: &mut Socket, store: &Store, mls: &mut Mls, sink: &EventSink, live: &mut Live) -> Result<()> {
+    let Some(raw) = store.load_setting("own_display_name")? else { return Ok(()) };
+    let own: String = serde_json::from_slice(&raw)?;
+    let privacy = load_privacy_checked(store)?;
+    let directory = load_directory(store);
+    for (device, group) in store.list_conversations()? {
+        let peer = hex::encode(&device);
+        if blocked(store, &peer) || mls.inspect(&group).is_err() || ensure_pin_allows(store, &peer).is_err() { continue; }
+        let name = if privacy.profile_name.permits(&peer, directory.relation(&peer)) { own.as_str() } else { "" };
+        let key = format!("profile-name-sent:{peer}");
+        let encoded = serde_json::to_vec(name)?;
+        if store.load_setting(&key)?.as_deref() == Some(encoded.as_slice()) { continue; }
+        let device: [u8; KEY_LEN] = device.try_into().map_err(|_| CoreError::BadKeyLength)?;
+        let body = format!("{}{}", crate::access::CONTROL_PREFIX, serde_json::json!({"displayName":name}));
+        encrypt_and_send(socket, store, mls, sink, &group, PendingSend { device, body, stored:true }, &mut live.outbox, None).await?;
+        store.save_setting(&key, &encoded)?;
+    }
+    Ok(())
+}
+
 async fn grant_missing(
     socket: &mut Socket,
     store: &Store,
@@ -1423,6 +1482,7 @@ async fn grant_missing(
     sink: &EventSink,
     live: &mut Live,
 ) -> Result<()> {
+    announce_display_name(socket, store, mls, sink, live).await?;
     let mut access = load_access(store);
     let peers = deserving(store);
     let mut changed = false;
@@ -2085,6 +2145,11 @@ async fn sync_server_privacy(socket: &mut Socket, store: &Store,
         None => None,
     };
     if let Some(privacy) = &privacy {
+        if let Some(raw) = store.load_setting("own_display_name")? {
+            let own: String = serde_json::from_slice(&raw)?;
+            let public = privacy.profile_name.scope == crate::privacy::Scope::Everyone && privacy.profile_name.deny.is_empty();
+            send(socket, proto::json_frame(op::PROFILE_SET, &serde_json::json!({"displayName": if public { own } else { String::new() }}))?).await?;
+        }
         let restricted = privacy.direct_messages.scope != crate::privacy::Scope::Everyone;
         send(socket, proto::access_set_frame(if restricted { "passes" } else { "everyone" })?).await?;
         let mut access = load_access(store);
@@ -2699,6 +2764,7 @@ async fn pump(
     let mut last_received = tokio::time::Instant::now();
     let mut probe: Option<(tokio::time::Instant,Vec<u8>)> = None;
     let mut claims_since: Option<tokio::time::Instant> = None;
+    let mut devices_refreshed = tokio::time::Instant::now();
 
     loop {
         let anonymous_deadline = if authenticated && greeting.sealed_sender {
@@ -2975,10 +3041,33 @@ async fn pump(
                             Err(err) => fail(sink, "storage", &err.to_string()),
                         }
                     }
+                    Command::CallStart { recipient_device, call_id } => {
+                        let device=hex::decode(&recipient_device).map_err(|_|CoreError::BadFrame)?;
+                        let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Сначала откройте личную переписку");continue};
+                        if store.group(&group_id)?.is_some() || !mls.members(&group_id).map(|members|members.len()==2).unwrap_or(false) {
+                            fail(sink,"call_channel_not_ready","Защищённый канал ещё восстанавливается. Повторите звонок позже");continue;
+                        }
+                        if !permits_incoming_call(store,&device)? {fail(sink,"call_privacy","Звонки запрещены настройками приватности");continue;}
+                        match crate::calls::start(&recipient_device,call_id.as_deref(),sink) {
+                            Ok(signal)=> { encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?; },
+                            Err(_)=>fail(sink,"call_busy","Уже идёт другой звонок"),
+                        }
+                    }
+                    Command::CallAccept { call_id } => {
+                        if let Ok((peer,signal))=crate::calls::accept(&call_id,sink) {
+                            let device=hex::decode(peer).map_err(|_|CoreError::BadFrame)?;let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                            if let Some(group_id)=store.conversation_with(&device)? { encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?; }
+                        }
+                    }
+                    Command::CallDispatch { peer, signal } => {
+                        let device=hex::decode(peer).map_err(|_|CoreError::BadFrame)?;let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                        if let Some(group_id)=store.conversation_with(&device)? { encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?; }
+                    }
                     Command::CallProbe { recipient_device } => {
                         let device=hex::decode(&recipient_device).map_err(|_|CoreError::BadFrame)?;
                         let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
-                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Open a conversation first");continue};
+                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Сначала откройте личную переписку");continue};
                         let Some(signal)=live.calls.start(&recipient_device,now_millis()) else {fail(sink,"call_probe_pending","A capability check is already pending");continue};
                         if !permits_activity(store,&signal.body(),&device)? {fail(sink,"call_privacy","Calls are disabled by your privacy rule");continue}
                         let id=signal.id.clone();
@@ -3109,6 +3198,19 @@ async fn pump(
                             fail(sink, "profiles_unavailable", "server does not support profiles yet");
                         }
                     }
+                    Command::ProfileName { name } => {
+                        match checked_display_name(&name) {
+                            Ok(name) => {
+                                store.save_setting("own_display_name", &serde_json::to_vec(&name)?)?;
+                                let privacy = load_privacy_checked(store)?;
+                                let public = privacy.profile_name.scope == crate::privacy::Scope::Everyone && privacy.profile_name.deny.is_empty();
+                                let published_name = if public { name } else { String::new() };
+                                send(&mut socket, proto::json_frame(op::PROFILE_SET, &serde_json::json!({"displayName": published_name}))?).await?;
+                                announce_display_name(&mut socket, store, mls, sink, live).await?;
+                            },
+                            Err(err) => fail(sink,"profile_name",&err.to_string()),
+                        }
+                    }
                     Command::ProfileDecor { emblem, color } => {
                         if greeting.decor {
                             // Значок и цвет прячутся тем же правилом, что и
@@ -3204,6 +3306,7 @@ async fn pump(
                         }
                     }
                     Command::GroupSend { group, body } => {
+                        if store.load_setting(&format!("history-only-group:{group}"))?.is_some(){fail(sink,"group_history_only","Для отправки пригласите это устройство в группу");continue;}
                         let Ok(group_id) = hex::decode(&group) else {
                             fail(sink, "bad_group", "идентификатор группы неразборчив");
                             continue;
@@ -3444,6 +3547,10 @@ async fn pump(
                 flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
             }
             _ = ticker.tick() => {
+                if authenticated && greeting.devices && devices_refreshed.elapsed() >= Duration::from_secs(60) {
+                    send(&mut socket,proto::device_list_frame()?).await?;
+                    devices_refreshed=tokio::time::Instant::now();
+                }
                 if authenticated {
                     repair_missing_channels(&mut socket,store,mls,sink,&mut pending).await?;
                     for waiting in pending_sends(store)? {
@@ -3525,7 +3632,8 @@ async fn on_frame(
             flush_anonymous(socket, store, sink, live, sealed_sender_available, anon_tx).await?;
         }
         op::PROFILE => {
-            let profile: proto::ProfilePayload = proto::parse_json(body)?;
+            let mut profile: proto::ProfilePayload = proto::parse_json(body)?;
+            profile.display_name = profile.display_name.as_deref().and_then(|name| checked_display_name(name).ok()).filter(|name| !name.is_empty());
             let published: Option<(Option<String>,Option<String>)> = store.load_setting("pending_avatar_publication")?
                 .and_then(|raw|serde_json::from_slice(&raw).ok());
             if profile.device==hex::encode(store.load_credentials()?.device_pub())
@@ -3540,6 +3648,13 @@ async fn on_frame(
                 }
                 store.save_setting("pending_avatar_publication",b"null")?;
                 flush_anonymous(socket,store,sink,live,sealed_sender_available,anon_tx).await?;
+            }
+            let name_key = if profile.device == hex::encode(store.load_credentials()?.device_pub()) {
+                "own_display_name".to_owned()
+            } else { format!("peer-display-name:{}", profile.device) };
+            if let Some(raw) = store.load_setting(&name_key)? {
+                let name: String = serde_json::from_slice(&raw)?;
+                profile.display_name = if name.is_empty() { None } else { Some(name) };
             }
             // Аватар мог приехать запечатанным. Ключ есть — открываем, нет —
             // отдаём наверх пустоту: интерфейс покажет инициалы.
@@ -3557,6 +3672,7 @@ async fn on_frame(
                 profile.color,
             );
             sink(Event::Profile {
+                display_name: profile.display_name,
                 device: profile.device,
                 chat_code: profile.chat_code,
                 handle: profile.handle,
@@ -3759,6 +3875,11 @@ async fn on_envelope(
                         store.save_mls(&mls.signer_public(), &mls.snapshot())?;
                         send(socket, proto::profile_get_frame(&device)?).await?;
                     }
+                    Some(Control::DisplayName(name)) => {
+                        store.save_setting(&format!("peer-display-name:{device}"), &serde_json::to_vec(&name)?)?;
+                        store.save_mls(&mls.signer_public(), &mls.snapshot())?;
+                        send(socket, proto::profile_get_frame(&device)?).await?;
+                    }
                     Some(Control::ProfileChanged) => {
                         store.save_mls(&mls.signer_public(), &mls.snapshot())?;
                         send(socket,proto::profile_get_frame(&device)?).await?;
@@ -3822,8 +3943,13 @@ async fn on_envelope(
                     }
                     Some(Control::Call(signal)) => {
                         let now=now_millis();
-                        if signal.fresh(now) {
-                            if signal.action==crate::calls::Action::Probe && permits_incoming_call(store,&sender_device)? && calls.answer(&device,&signal,now) {
+                        let personal=store.group(&group_id)?.is_none()&&mls.members(&group_id).map(|members|members.len()==2).unwrap_or(false);
+                        if personal && signal.fresh(now) {
+                            if !matches!(signal.action,crate::calls::Action::Probe|crate::calls::Action::Unavailable) {
+                                if signal.action!=crate::calls::Action::Offer || permits_incoming_call(store,&sender_device)? {
+                                    if let Some(response)=crate::calls::incoming(&device,&signal,sink) {queue_private_message(store,mls,&group_id,&PendingSend{device:sender_device,body:response.body(),stored:true})?;}
+                                }
+                            } else if signal.action==crate::calls::Action::Probe && permits_incoming_call(store,&sender_device)? && calls.answer(&device,&signal,now) {
                                 let response=crate::calls::Signal{action:crate::calls::Action::Unavailable,..signal};
                                 queue_private_message(store,mls,&group_id,&PendingSend{device:sender_device,body:response.body(),stored:true})?;
                             } else if calls.complete(&device,&signal,now) {
@@ -3990,6 +4116,7 @@ fn group_event(mls: &Mls, store: &Store, group_id: &[u8], meta: &GroupMeta) -> E
     }
 
     Event::Group {
+        history_only: false,
         group: hex::encode(group_id),
         kind: meta.kind.clone(),
         title: meta.title.clone(),
@@ -4850,6 +4977,15 @@ fn fail(sink: &EventSink, code: &str, message: &str) {
     sink(Event::Failed { code: code.to_string(), message: message.to_string() });
 }
 
+pub(crate) fn checked_display_name(name: &str) -> Result<String> {
+    let value = name.trim();
+    if value.chars().count() > 80 || value.chars().any(|c| c.is_control()
+        || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) {
+        return Err(CoreError::Rejected("invalid_display_name".into()));
+    }
+    Ok(value.to_owned())
+}
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4873,6 +5009,61 @@ mod tests {
         let winner=async{tokio::time::sleep(Duration::from_millis(10)).await;Ok(7)};
         assert_eq!(first_success(loser,winner).await.unwrap(),7);assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
     }
+    #[tokio::test]
+    async fn display_name_changes_and_revocation_travel_inside_mls() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store = TempStore::new("private-display-name");
+        let (_, mut alice, mut bob, device, _) = established_pair(&store.0);
+        let mut privacy = crate::privacy::Privacy::default();
+        privacy.profile_name.scope = crate::privacy::Scope::Approved;
+        store.0.save_setting(PRIVACY_KEY, &serde_json::to_vec(&privacy).unwrap()).unwrap();
+        store.0.save_setting("own_display_name", &serde_json::to_vec("Андрей Владимирович").unwrap()).unwrap();
+        let mut directory = load_directory(&store.0);
+        directory.set(&hex::encode(device), crate::directory::Standing::Approved, 1);
+        save_directory(&store.0, &directory).unwrap();
+        let (pipe, _peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let mut socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let sink: EventSink = Arc::new(|_| {});
+        let mut live = Live::default();
+        announce_display_name(&mut socket, &store.0, &mut alice, &sink, &mut live).await.unwrap();
+        announce_display_name(&mut socket, &store.0, &mut alice, &sink, &mut live).await.unwrap();
+        assert_eq!(crate::anon_queue::load(&store.0).unwrap().len(), 1);
+        privacy.profile_name.scope = crate::privacy::Scope::Nobody;
+        store.0.save_setting(PRIVACY_KEY, &serde_json::to_vec(&privacy).unwrap()).unwrap();
+        announce_display_name(&mut socket, &store.0, &mut alice, &sink, &mut live).await.unwrap();
+        let queue = crate::anon_queue::load(&store.0).unwrap();
+        assert_eq!(queue.len(), 2);
+        for (envelope, expected) in queue.iter().zip(["Андрей Владимирович", ""]) {
+            assert!(!envelope.ciphertext.windows(6).any(|w| w == "Анд".as_bytes()));
+            match bob.process(&envelope.ciphertext).unwrap() {
+                Incoming::Message { plaintext, .. } => {
+                    let body = String::from_utf8_lossy(crate::padding::strip(&plaintext));
+                    assert_eq!(crate::access::parse_signal(&body), Some(crate::access::Control::DisplayName(expected.into())));
+                }
+                _ => panic!("expected encrypted display name"),
+            }
+        }
+    }
+
+    #[test]
+    fn contact_names_are_local_persisted_and_do_not_change_approval() {
+        let store = TempStore::new("local-contact-name");
+        let peer = hex::encode([2; KEY_LEN]);
+        let mut directory = load_directory(&store.0);
+        directory.set(&peer, crate::directory::Standing::Approved, 1);
+        save_directory(&store.0, &directory).unwrap();
+        let sink: EventSink = Arc::new(|_| {});
+        assert!(handle_local(&Command::ContactName { device: peer.clone(), name: " Андрей Владимирович ".into() }, &store.0, &sink));
+        let entry = load_directory(&store.0).entries.remove(&peer).unwrap();
+        assert_eq!(entry.display_name.as_deref(), Some("Андрей Владимирович"));
+        assert_eq!(entry.standing, crate::directory::Standing::Approved);
+        handle_local(&Command::ContactName { device: peer.clone(), name: "".into() }, &store.0, &sink);
+        assert_eq!(load_directory(&store.0).entries[&peer].display_name, None);
+        assert!(checked_display_name(&"а".repeat(81)).is_err());
+        assert!(checked_display_name("name\nspoof").is_err());
+    }
+
     #[test] fn prioritized_applications_still_decrypt_in_both_orders(){
         let store=TempStore::new("priority-mls");let (_credentials,mut alice,mut bob,device,group)=established_pair(&store.0);
         for (kind,id) in [("image","photo"),("text","text")]{
@@ -5082,7 +5273,7 @@ mod tests {
             kind: crate::anon_queue::Kind::Essential, expires_at: Some(now_millis() + 60_000) };
         crate::anon_queue::enqueue(&store, envelope.clone()).unwrap();
         let mut live = Live::default(); live.require_anonymous = true;
-        live.tickets.extend([usable_test_ticket(now_millis()+300_000); 4]);
+        live.tickets.extend([usable_test_ticket(now_millis()+300_000); TICKET_LOW_WATERMARK]);
         // Occupied slots prevent any real network access in this test.
         for _ in 0..ANON_POOL_SIZE { live.prewarming.spawn(std::future::pending()); }
         let (pipe, peer) = tokio::io::duplex(4096);

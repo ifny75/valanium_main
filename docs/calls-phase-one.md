@@ -1,29 +1,42 @@
-# Calls: encrypted capability signaling
+# Аудиозвонки через relay без Tor
 
-Phase one adds `call_probe` and `call_status` to the shared core and a preview
-entry point to both clients. It does not implement audio calls. The UI explicitly
-states this before sending a capability check; the microphone is never opened.
+Реализована передача звука Android ↔ Windows и между двумя клиентами одной платформы: исходящий/входящий вызов, принятие, отклонение, занято, завершение, тайм-аут, отключение микрофона и громкая связь Android. Это личные звонки между устройствами, не групповые конференции. Старая команда `call_probe` сохранена для совместимости; основной интерфейс использует новые команды.
 
-The probe and its `unavailable` response are MLS control messages. They use the
-existing encrypted conversation and anonymous outbox, not a new signaling server.
-They do not appear in conversation history. Incoming checks obey the recipient's
-`calls` privacy rule; blocking and device-key checks continue to apply.
+## Маршрут и шифрование
 
-The versioned signal accepts only a bounded random identifier, action and expiry.
-Unknown fields and versions are rejected. In particular, the schema contains no
-IP address, ICE candidate, SDP or media URL. Responses must match an outstanding
-request and the authenticated MLS sender device. Requests expire after 90 seconds;
-pending and replay-tracking maps are bounded and held in memory. Clients stop
-showing a pending check after a timeout; older clients may simply ignore it.
+**Аудио идёт напрямую по WSS к relay, без Tor и без P2P/STUN/ICE. Relay видит IP обоих подключений и их принадлежность одной временной комнате; IP другому клиенту не передаётся.** Приглашение/ответ/отмена идут как MLS-контрольные сообщения существующего диалога, поэтому установка вызова пока зависит от работоспособности и задержки его канала сообщений. Начало вызова требует подключённого ядра и открытой личной переписки.
 
-Unit tests cover malformed signals, expiry, replay and sender binding. The isolated
-Pixel live test exchanges messages through embedded Tor, performs the capability
-check, loads a peer profile and compares verification payloads. UI tests cover the
-preview, without granting microphone access or contacting real user accounts.
+Caller создаёт отдельный случайный 256-битный ключ звонка и случайную 256-битную capability комнаты. Они передаются только внутри MLS `Offer`. Relay получает capability, роль и шифротекст; медиаключ и приватные ключи аккаунта ему не передаются. Зашифрованная сигнализация обрабатывается только от подтверждённого MLS-отправителя, с проверкой запретов, согласия/контактов и правила `calls`.
 
-The next phase needs explicit incoming/outgoing call states, user consent, audio
-capture and playback, echo cancellation, interruption handling and a media relay
-design consistent with the selected privacy mode. Direct peer connectivity must
-not silently disclose network addresses when Tor is selected. Do not advertise
-working audio calls until media and that privacy contract are implemented and
-tested on both platforms.
+Для каждого направления HKDF-SHA256 выводит отдельный ключ. Каждый пакет защищён XChaCha20-Poly1305 со случайным 192-битным nonce. Call ID, версия, направление и монотонный sequence входят в аутентифицируемый контекст. Повторный, изменённый, отражённый или относящийся к другому звонку пакет отклоняется. Новый звонок использует новый ключ. Серверное `READY` само по себе не означает защищённое соединение: статус `active` появляется только после успешно расшифрованного пакета собеседника.
+
+Аудиоформат — PCM 16 kHz mono с независимыми блоками IMA ADPCM по 640 сэмплов (40 мс), около 80 кбит/с на направление с обрамлением. Блоки декодируются независимо, поэтому сброс задержанных кадров не ломает последующий звук. Это голосовой кодек, не HD-аудио Opus. Короткие очереди capture/FFI/playback и отсутствие дисковой очереди ограничивают накопление старого звука. Heartbeat работает и при выключенном микрофоне; потеря связи завершает вызов.
+
+## Клиенты
+
+Windows: `getUserMedia` с echo cancellation, noise suppression и auto gain; захват/ресемплинг и воспроизведение выполняются в AudioWorklet. Приглашение не запрашивает микрофон; разрешение требуется при исходящем вызове или принятии. До принятия собеседником аудиопакеты не отправляются. Завершение останавливает tracks и закрывает AudioContext. Разрешения WebView2 и разрешение микрофона в Windows должны быть включены.
+
+Android: отдельный `CallAudioService` foreground-сервис с типами `microphone|mediaPlayback`, AudioRecord/AudioTrack, аппаратным AEC/NoiseSuppressor при наличии и audio focus. Для активного звонка приложение сохраняет один поток опроса ядра; сворачивание Activity не останавливает звук. Входящий вызов в фоне показывается отдельным скрытым уведомлением с отклонением; принятие требует открытия приложения и разрешения микрофона. Системное прерывание, завершение, выход из аккаунта и остановка сервиса освобождают аудиоустройства. Входящие в фоне требуют включённой фоновой доставки и разрешений ОС.
+
+Голосовые кадры не записываются в историю, файлы, логи или очередь сообщений. Временные PCM-буферы ядра используют `Zeroizing`; live-очередь FFI оставляет только последние четыре аудиокадра, сохраняя контрольные события. Сворачивание приложения не отменяет уже согласованный активный звонок. Переход в системные настройки микрофона или потеря audio focus может прервать вызов.
+
+## Сервер и развёртывание
+
+Обновить нужно **сервер и оба клиента**. Новый сервер объявляет `features.callRelay=true` в HELLO и использует существующий `/ws`, поэтому отдельный маршрут nginx не нужен:
+
+| Opcode | Назначение |
+| --- | --- |
+| `0x50` | CALL_JOIN `{v:1,room,role}` на отдельном неаутентифицированном медиасокете |
+| `0x51` | CALL_READY, оба участника подключились |
+| `0x52` | CALL_MEDIA, непрозрачный зашифрованный пакет |
+
+Старый `SEND_ANON=0x47` не менялся. После JOIN сокет принимает только media и ping, не AUTH или сообщения. Комната допускает ровно две роли, без замещения участника. Relay ограничивает число комнат (512), размер пакета (1500 байт), частоту кадров, backpressure, срок ожидания партнёра и длительность звонка (2 часа). Закрытие одного участника закрывает второго; аудио не буферизуется на диске. Для нескольких процессов/серверов потребуется общий relay либо маршрутизация обеих сторон одной комнаты в один процесс; текущая схема рассчитана на один основной сервер.
+
+Клиент использует доверенный адрес `wss://valanium.com/ws`, а не URL из входящего сигнала. Для своего развёртывания адрес меняется вместе с конфигурацией клиента. Автоматического P2P или перехода аудио в Tor нет. Рабочая версия сервера должна быть реально развёрнута: git push сам по себе не обновляет запущенный процесс или установленные приложения.
+
+## Проверки
+
+- Rust: кодек с проверкой SNR, разделение направлений, подмена/replay, сигнализация и привязка к отправителю, отмена по Call ID, полный обмен двумя различными аудиосигналами через **два настоящих WebSocket** с шифрованием/расшифровкой в обе стороны.
+- Сервер: парность ролей, ограничения, закрытие обоих участников, сброс при backpressure, все существующие тесты сообщений и sealed sender.
+- Chromium: фактический `getUserMedia` с виртуальным микрофоном и AudioWorklet, отсутствие отправки до принятия, mute, освобождение tracks, входящее принятие. Вызов native-команд Tauri имитируется.
+- Android: проверка Java/XML и компиляция JNI-обвязки. Настоящие AudioRecord/AudioTrack, OEM echo cancellation, Bluetooth и звук на физических Android/Windows-устройствах в этой сессии не проверялись; нужен прогон после сборки и развёртывания сервера.

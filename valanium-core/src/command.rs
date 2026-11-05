@@ -30,6 +30,21 @@ pub enum Command {
     /// Foreground resume: probe the live socket before deciding to reconnect.
     ProbeConnection,
     Diagnostics,
+    PairingListen,
+    PairingDiscover { enabled: bool },
+    PairingConnect { qr: String },
+    PairingConfirm { session: String, #[serde(default)] unlock: String },
+    PairingCancel,
+    #[serde(skip)]
+    PairingStage { session: String, seq: u64, payload: zeroize::Zeroizing<Vec<u8>>, done: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>> },
+    #[serde(skip)]
+    PairingCleanup { session: String },
+    #[serde(skip)]
+    PairingInstall {
+        session: String,
+        payload: zeroize::Zeroizing<Vec<u8>>,
+        done: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>,
+    },
     RepairChannel { recipient_device:String },
     Disconnect,
     /// `recipient_device` — hex публичного ключа устройства получателя.
@@ -120,6 +135,15 @@ pub enum Command {
     DeleteConversation { conversation: String },
     /// Сообщить собеседнику, что мы набираем текст.
     CallProbe { recipient_device:String },
+    CallStart { recipient_device: String, #[serde(default)] call_id: Option<String> },
+    CallAccept { call_id: String },
+    CallReject { call_id: String },
+    CallEnd { call_id: String },
+    CallState,
+    #[serde(skip)]
+    CallDispatch { peer: String, signal: crate::calls::Signal },
+    CallMute { call_id: String, muted: bool },
+    CallAudio { call_id: String, data: String, #[serde(default)] captured_at: Option<i64> },
     Typing { recipient_device: String, active: bool },
     /// Прочитать, кому позволено писать. Работает без подключения.
     AccessGet,
@@ -145,6 +169,8 @@ pub enum Command {
     UsernameLookup { name: String },
     /// Локальная книга отношений: контакты, одобренные, запросы, блокировки.
     DirectoryList,
+    ContactName { device: String, name: String },
+    ProfileName { name: String },
     /// Изменить положение собеседника.
     DirectorySet { device: String, standing: crate::directory::Standing },
     /// Забыть о собеседнике целиком.
@@ -261,6 +287,9 @@ pub enum Command {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    CallAudio { call_id: String, data: String },
+    Pairing { session: String, state: String, code: String, qr: String, qr_svg: String },
+    PairingFound { session: String, address: String },
     Diagnostics { report: serde_json::Value },
     /// Соединение установлено, сервер представился.
     Connected {
@@ -306,6 +335,7 @@ pub enum Event {
     Conversations { items: Vec<ConversationItem> },
     Fingerprint { identity: String, fingerprint: String },
     Profile {
+        display_name: Option<String>,
         device: String,
         chat_code: String,
         handle: Option<String>,
@@ -317,6 +347,7 @@ pub enum Event {
     },
     /// Группа или канал: состав берётся из самого MLS, а не из чужого списка.
     Group {
+        history_only: bool,
         group: String,
         kind: String,
         title: String,
