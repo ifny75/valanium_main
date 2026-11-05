@@ -622,7 +622,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 if (page instanceof ViewGroup) ((ViewGroup) page).setClipToPadding(false);
                 // Keep the chat viewport behind the island; reserve space inside each list.
                 page.setPadding(page.getPaddingLeft(), page.getPaddingTop(), page.getPaddingRight(), 0);
-                for (int id : new int[]{R.id.contact_list, R.id.request_list, R.id.channel_pane_scroll}) {
+                for (int id : new int[]{R.id.contact_list, R.id.request_list}) {
                     View list = findViewById(id);
                     if (list instanceof ViewGroup) ((ViewGroup) list).setClipToPadding(false);
                     list.setPadding(list.getPaddingLeft(), list.getPaddingTop(), list.getPaddingRight(), reserve);
