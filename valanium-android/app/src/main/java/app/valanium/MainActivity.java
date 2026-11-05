@@ -2970,6 +2970,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                     }
                 }
                 renderRequests();
+                renderPeers();
+                if (currentPeer != null) updateConversationHeader(currentPeer);
                 break;
             case "access":
                 access = event;
@@ -3290,6 +3292,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 event.optString("chat_code"),
                 event.optString("avatar_mime", ""),
                 event.optString("avatar_base64", ""));
+        profile.displayName = optText(event, "display_name");
         profile.emblem = optText(event, "emblem");
         profile.color = optText(event, "color");
         profiles.put(profile.device, profile);
@@ -4159,8 +4162,29 @@ public final class MainActivity extends Activity implements Events.Listener {
         refreshPeerActivity();
     }
 
+    private void editDisplayName(String device, boolean own) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(80)});
+        input.setText(own ? (profiles.get(device) == null ? "" : profiles.get(device).displayName)
+                : (directory.get(device) == null ? "" : optText(directory.get(device), "display_name")));
+        new AlertDialog.Builder(this).setTitle(own ? R.string.display_name_title : R.string.contact_alias_title)
+                .setMessage(own ? R.string.display_name_hint : R.string.contact_alias_hint)
+                .setView(input).setPositiveButton(R.string.ok, (dialog, which) -> {
+                    try {
+                        JSONObject command = new JSONObject().put("type", own ? "profile_name" : "contact_name")
+                                .put("name", input.getText().toString());
+                        if (!own) command.put("device", device);
+                        submit(command.toString());
+                    } catch (JSONException ignored) {}
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
     private String displayName(String peer) {
+        JSONObject local = directory.get(peer);
+        if (local != null && !local.optString("display_name", "").isEmpty() && !local.isNull("display_name")) return local.optString("display_name");
         Profile profile = profiles.get(peer);
+        if (profile != null && !profile.displayName.isEmpty()) return profile.displayName;
         return profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(peer);
     }
 
@@ -4177,10 +4201,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         if (clean.isEmpty()) return "--";
         String[] words = clean.split("\\s+");
         if (words.length > 1) {
-            return (words[0].substring(0, 1) + words[1].substring(0, 1))
+            return (words[0].substring(0, words[0].offsetByCodePoints(0, 1)) + words[1].substring(0, words[1].offsetByCodePoints(0, 1)))
                     .toUpperCase(Locale.ROOT);
         }
-        return clean.substring(0, Math.min(2, clean.length())).toUpperCase(Locale.ROOT);
+        return clean.substring(0, clean.offsetByCodePoints(0, Math.min(2, clean.codePointCount(0, clean.length())))).toUpperCase(Locale.ROOT);
     }
 
     private void applyAvatar(TextView view, Profile profile, String fallback) {
@@ -4714,10 +4738,14 @@ public final class MainActivity extends Activity implements Events.Listener {
         identityParams.leftMargin = dp(14);
         identity.setLayoutParams(identityParams);
         TextView name = peerCardText(displayName(device), 17, themeText());
+        name.setOnClickListener(v -> editDisplayName(device, false));
         name.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         identity.addView(name);
+        if (profile != null && !profile.displayName.isEmpty() && !profile.displayName.equals(displayName(device))) {
+            identity.addView(peerCardText(profile.displayName, 12, getColor(R.color.valanium_muted)));
+        }
         String chatCode = profile != null && !profile.chatCode.isEmpty() ? profile.chatCode : shortHex(device);
         TextView codeLabel = peerCardText(chatCode, 12, getColor(R.color.valanium_muted));
         LinearLayout.LayoutParams codeParams = new LinearLayout.LayoutParams(
@@ -5382,6 +5410,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         /** Значок и цвет собеседника: их выбирает он, а показываем мы. */
         String emblem = "";
         String color = "";
+        String displayName = "";
 
         Profile(String device, String chatCode, String avatarMime,
                 String avatarBase64) {
@@ -6229,18 +6258,20 @@ public final class MainActivity extends Activity implements Events.Listener {
     /** Шапка профиля: имя, значок, цвет — то, что видят собеседники. */
     private void renderOwnProfile() {
         TextView name = findViewById(R.id.profile_name);
-        name.setText(R.string.profile_account_title);
+        Profile ownName = profiles.get(myDeviceHex);
+        name.setText(ownName != null && !ownName.displayName.isEmpty() ? ownName.displayName : getString(R.string.profile_account_title));
+        name.setOnClickListener(v -> editDisplayName(myDeviceHex, true));
         name.setTextColor(themeText());
         // Свой аватар красится тем же цветом, что увидят собеседники.
         Profile own = profiles.get(myDeviceHex);
         if (own != null) {
             own.color = myColor;
-            applyAvatar(profileAvatar, own, "ME");
+            applyAvatar(profileAvatar, own, own != null && !own.displayName.isEmpty() ? initials(own.displayName) : "ME");
         } else {
             profileAvatar.setBackground(avatarPlaceholder(profileColor(myColor)));
         }
         TextView headerAvatar = findViewById(R.id.chat_logo);
-        applyAvatar(headerAvatar, own, "ME");
+        applyAvatar(headerAvatar, own, own != null && !own.displayName.isEmpty() ? initials(own.displayName) : "ME");
         ((TextView) findViewById(R.id.profile_emblem)).setText(emblemGlyph(myEmblem));
         ((TextView) findViewById(R.id.open_emblem_value))
                 .setText(myEmblem.isEmpty() || "none".equals(myEmblem)

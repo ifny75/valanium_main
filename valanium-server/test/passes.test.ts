@@ -396,3 +396,22 @@ test("queue resumes after transport backpressure", () => {
   assert.equal(store.countPending(user.devPub, now), 0);
   store.close();
 });
+
+
+test("display names are mutable profile metadata and do not replace chat codes", () => {
+  const store = new Store(":memory:");
+  const deps = makeDeps(store);
+  const user = makeIdentity();
+  const { sock, conn } = register(deps, store, user, "names-user");
+  const code = store.profileByDevice(user.devPub)!.chat_code;
+  handleMessage(deps, sock, conn, jsonFrame(OP.PROFILE_SET, { displayName: "Андрей Владимирович" }));
+  assert.equal(sock.json(OP.PROFILE).displayName, "Андрей Владимирович");
+  assert.equal(store.profileByDevice(user.devPub)!.chat_code, code);
+  sock.clear();
+  handleMessage(deps, sock, conn, jsonFrame(OP.PROFILE_SET, { displayName: "Новое имя" }));
+  assert.equal(sock.json(OP.PROFILE).displayName, "Новое имя");
+  sock.clear();
+  handleMessage(deps, sock, conn, jsonFrame(OP.PROFILE_SET, { displayName: "" }));
+  assert.equal(sock.json(OP.PROFILE).displayName, null);
+  store.close();
+});

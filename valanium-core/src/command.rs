@@ -145,6 +145,8 @@ pub enum Command {
     UsernameLookup { name: String },
     /// Локальная книга отношений: контакты, одобренные, запросы, блокировки.
     DirectoryList,
+    ContactName { device: String, name: String },
+    ProfileName { name: String },
     /// Изменить положение собеседника.
     DirectorySet { device: String, standing: crate::directory::Standing },
     /// Забыть о собеседнике целиком.
@@ -348,6 +350,7 @@ pub enum Event {
     Conversations { items: Vec<ConversationItem> },
     Fingerprint { identity: String, fingerprint: String },
     Profile {
+        display_name: Option<String>,
         device: String,
         chat_code: String,
         handle: Option<String>,

@@ -797,5 +797,9 @@ export default {
   "Установлена актуальная версия": "You are up to date",
   "Перезапустить и обновить": "Restart and update",
   "Не удалось установить обновление. Проверьте обновления ещё раз.": "Could not install the update. Check for updates again.",
-  "Valanium автоматически скачивает новые версии внутри приложения и проверяет подпись и SHA-256. В режиме Tor обновления идут через onion. Перезапуск — по вашему нажатию, аккаунт и переписка сохраняются.": "Valanium downloads new versions in the app and verifies their signature and SHA-256. In Tor mode, updates use onion routing. Restart when you choose; your account and chats are preserved."
+  "Valanium автоматически скачивает новые версии внутри приложения и проверяет подпись и SHA-256. В режиме Tor обновления идут через onion. Перезапуск — по вашему нажатию, аккаунт и переписка сохраняются.": "Valanium downloads new versions in the app and verifies their signature and SHA-256. In Tor mode, updates use onion routing. Restart when you choose; your account and chats are preserved.",
+  "Локальное имя контакта": "Local contact name",
+  "Видимость задаётся в настройках имени профиля. Поиск по имени отсутствует.": "Visibility follows the profile-name privacy setting. Not searchable.",
+  "Видно только на этом устройстве. Пустое имя возвращает подпись из профиля.": "Only visible on this device. Leave empty to use the profile name.",
+  "Указать имя профиля": "Set display name",
 };

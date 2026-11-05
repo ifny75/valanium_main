@@ -174,6 +174,8 @@ pub struct Features {
 
 #[derive(Debug, Deserialize)]
 pub struct ProfilePayload {
+    #[serde(default, rename = "displayName")]
+    pub display_name: Option<String>,
     pub device: String,
     #[serde(rename = "chatCode")]
     pub chat_code: String,

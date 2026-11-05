@@ -60,6 +60,7 @@ export interface PostRow {
 }
 
 export interface ProfileRow {
+  display_name?: string | null;
   identity: Bytes;
   chat_code: string;
   avatar_mime: string | null;
@@ -177,6 +178,7 @@ export class Store {
     }[];
     if (columns.length === 0) return;
     const has = (name: string) => columns.some((column) => column.name === name);
+    if (!has("display_name")) this.#db.exec("ALTER TABLE profiles ADD COLUMN display_name TEXT");
     if (!has("emblem")) this.#db.exec("ALTER TABLE profiles ADD COLUMN emblem TEXT");
     if (!has("color")) this.#db.exec("ALTER TABLE profiles ADD COLUMN color TEXT");
   }
@@ -459,6 +461,12 @@ export class Store {
       )
       .get(identity) as { device_pub: Bytes } | undefined;
     return row?.device_pub;
+  }
+
+  updateDisplayName(identity: Bytes, name: string | null, now: number): ProfileRow {
+    this.ensureProfile(identity, now);
+    this.#db.prepare("UPDATE profiles SET display_name = ?, updated_at = ? WHERE identity = ?").run(name, now, identity);
+    return this.ensureProfile(identity, now);
   }
 
   updateAvatar(identity: Bytes, mime: string | null, avatar: Bytes | null, now: number): ProfileRow {

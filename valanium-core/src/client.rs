@@ -615,6 +615,18 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             Err(_) => fail(sink, "bad_conversation", "conversation must be hex"),
         },
 
+        Command::ContactName { device, name } => {
+            let result = (|| -> Result<()> {
+                let raw = hex::decode(device).map_err(|_| CoreError::BadFrame)?;
+                if raw.len() != KEY_LEN { return Err(CoreError::BadKeyLength); }
+                let name = checked_display_name(name)?;
+                let mut directory = load_directory(store);
+                directory.note(device, None, None, now_millis());
+                directory.entries.get_mut(device).unwrap().display_name = if name.is_empty() { None } else { Some(name) };
+                save_directory(store, &directory)
+            })();
+            match result { Ok(()) => sink(directory_event(store)), Err(err) => fail(sink,"contact_name",&err.to_string()) }
+        }
         Command::DirectorySet { device, standing } => {
             let mut directory = load_directory(store);
             directory.set(device, *standing, now_millis());
@@ -831,6 +843,7 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             }
             Command::ProfileGet { .. }
             | Command::ProfileSet { .. }
+            | Command::ProfileName { .. }
             | Command::ProfileDecor { .. }
             | Command::AdminGet { .. }
             | Command::SupportGet { .. }
@@ -1334,6 +1347,26 @@ async fn announce_devices(
 /// видит только очередной непрозрачный конверт. Тем, с кем беседа ещё не
 /// заведена, выдача откладывается: без канала передать секрет некуда, а
 /// отправлять его в открытую нельзя.
+async fn announce_display_name(socket: &mut Socket, store: &Store, mls: &mut Mls, sink: &EventSink, live: &mut Live) -> Result<()> {
+    let Some(raw) = store.load_setting("own_display_name")? else { return Ok(()) };
+    let own: String = serde_json::from_slice(&raw)?;
+    let privacy = load_privacy_checked(store)?;
+    let directory = load_directory(store);
+    for (device, group) in store.list_conversations()? {
+        let peer = hex::encode(&device);
+        if blocked(store, &peer) || mls.inspect(&group).is_err() || ensure_pin_allows(store, &peer).is_err() { continue; }
+        let name = if privacy.profile_name.permits(&peer, directory.relation(&peer)) { own.as_str() } else { "" };
+        let key = format!("profile-name-sent:{peer}");
+        let encoded = serde_json::to_vec(name)?;
+        if store.load_setting(&key)?.as_deref() == Some(encoded.as_slice()) { continue; }
+        let device: [u8; KEY_LEN] = device.try_into().map_err(|_| CoreError::BadKeyLength)?;
+        let body = format!("{}{}", crate::access::CONTROL_PREFIX, serde_json::json!({"displayName":name}));
+        encrypt_and_send(socket, store, mls, sink, &group, PendingSend { device, body, stored:true }, &mut live.outbox, None).await?;
+        store.save_setting(&key, &encoded)?;
+    }
+    Ok(())
+}
+
 async fn grant_missing(
     socket: &mut Socket,
     store: &Store,
@@ -1341,6 +1374,7 @@ async fn grant_missing(
     sink: &EventSink,
     live: &mut Live,
 ) -> Result<()> {
+    announce_display_name(socket, store, mls, sink, live).await?;
     let mut access = load_access(store);
     let peers = deserving(store);
     let mut changed = false;
@@ -2087,6 +2121,11 @@ async fn sync_server_privacy(socket: &mut Socket, store: &Store,
         None => None,
     };
     if let Some(privacy) = &privacy {
+        if let Some(raw) = store.load_setting("own_display_name")? {
+            let own: String = serde_json::from_slice(&raw)?;
+            let public = privacy.profile_name.scope == crate::privacy::Scope::Everyone && privacy.profile_name.deny.is_empty();
+            send(socket, proto::json_frame(op::PROFILE_SET, &serde_json::json!({"displayName": if public { own } else { String::new() }}))?).await?;
+        }
         let restricted = privacy.direct_messages.scope != crate::privacy::Scope::Everyone;
         send(socket, proto::access_set_frame(if restricted { "passes" } else { "everyone" })?).await?;
         let mut access = load_access(store);
@@ -3102,6 +3141,19 @@ async fn pump(
                             fail(sink, "profiles_unavailable", "server does not support profiles yet");
                         }
                     }
+                    Command::ProfileName { name } => {
+                        match checked_display_name(&name) {
+                            Ok(name) => {
+                                store.save_setting("own_display_name", &serde_json::to_vec(&name)?)?;
+                                let privacy = load_privacy_checked(store)?;
+                                let public = privacy.profile_name.scope == crate::privacy::Scope::Everyone && privacy.profile_name.deny.is_empty();
+                                let published_name = if public { name } else { String::new() };
+                                send(&mut socket, proto::json_frame(op::PROFILE_SET, &serde_json::json!({"displayName": published_name}))?).await?;
+                                announce_display_name(&mut socket, store, mls, sink, live).await?;
+                            },
+                            Err(err) => fail(sink,"profile_name",&err.to_string()),
+                        }
+                    }
                     Command::ProfileDecor { emblem, color } => {
                         if greeting.decor {
                             // Значок и цвет прячутся тем же правилом, что и
@@ -3596,7 +3648,8 @@ async fn on_frame(
             flush_anonymous(socket, store, sink, live, sealed_sender_available, anon_tx).await?;
         }
         op::PROFILE => {
-            let profile: proto::ProfilePayload = proto::parse_json(body)?;
+            let mut profile: proto::ProfilePayload = proto::parse_json(body)?;
+            profile.display_name = profile.display_name.as_deref().and_then(|name| checked_display_name(name).ok()).filter(|name| !name.is_empty());
             let published: Option<(Option<String>,Option<String>)> = store.load_setting("pending_avatar_publication")?
                 .and_then(|raw|serde_json::from_slice(&raw).ok());
             if profile.device==hex::encode(store.load_credentials()?.device_pub())
@@ -3611,6 +3664,13 @@ async fn on_frame(
                 }
                 store.save_setting("pending_avatar_publication",b"null")?;
                 flush_anonymous(socket,store,sink,live,sealed_sender_available,anon_tx).await?;
+            }
+            let name_key = if profile.device == hex::encode(store.load_credentials()?.device_pub()) {
+                "own_display_name".to_owned()
+            } else { format!("peer-display-name:{}", profile.device) };
+            if let Some(raw) = store.load_setting(&name_key)? {
+                let name: String = serde_json::from_slice(&raw)?;
+                profile.display_name = if name.is_empty() { None } else { Some(name) };
             }
             // Аватар мог приехать запечатанным. Ключ есть — открываем, нет —
             // отдаём наверх пустоту: интерфейс покажет инициалы.
@@ -3628,6 +3688,7 @@ async fn on_frame(
                 profile.color,
             );
             sink(Event::Profile {
+                display_name: profile.display_name,
                 device: profile.device,
                 chat_code: profile.chat_code,
                 handle: profile.handle,
@@ -3834,6 +3895,11 @@ async fn on_envelope(
                         let mut keys = load_peer_profile_keys(store);
                         keys.insert(device.clone(), key);
                         store.save_setting(PEER_PROFILE_KEYS, &serde_json::to_vec(&keys)?)?;
+                        store.save_mls(&mls.signer_public(), &mls.snapshot())?;
+                        send(socket, proto::profile_get_frame(&device)?).await?;
+                    }
+                    Some(Control::DisplayName(name)) => {
+                        store.save_setting(&format!("peer-display-name:{device}"), &serde_json::to_vec(&name)?)?;
                         store.save_mls(&mls.signer_public(), &mls.snapshot())?;
                         send(socket, proto::profile_get_frame(&device)?).await?;
                     }
@@ -4854,6 +4920,15 @@ fn fail(sink: &EventSink, code: &str, message: &str) {
     sink(Event::Failed { code: code.to_string(), message: message.to_string() });
 }
 
+fn checked_display_name(name: &str) -> Result<String> {
+    let value = name.trim();
+    if value.chars().count() > 80 || value.chars().any(|c| c.is_control()
+        || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) {
+        return Err(CoreError::Rejected("invalid_display_name".into()));
+    }
+    Ok(value.to_owned())
+}
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4877,6 +4952,61 @@ mod tests {
         let winner=async{tokio::time::sleep(Duration::from_millis(10)).await;Ok(7)};
         assert_eq!(first_success(loser,winner).await.unwrap(),7);assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
     }
+    #[tokio::test]
+    async fn display_name_changes_and_revocation_travel_inside_mls() {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let store = TempStore::new("private-display-name");
+        let (_, mut alice, mut bob, device, _) = established_pair(&store.0);
+        let mut privacy = crate::privacy::Privacy::default();
+        privacy.profile_name.scope = crate::privacy::Scope::Approved;
+        store.0.save_setting(PRIVACY_KEY, &serde_json::to_vec(&privacy).unwrap()).unwrap();
+        store.0.save_setting("own_display_name", &serde_json::to_vec("Андрей Владимирович").unwrap()).unwrap();
+        let mut directory = load_directory(&store.0);
+        directory.set(&hex::encode(device), crate::directory::Standing::Approved, 1);
+        save_directory(&store.0, &directory).unwrap();
+        let (pipe, _peer) = tokio::io::duplex(4096);
+        let stream: Box<dyn NetworkStream> = Box::new(pipe);
+        let mut socket = WebSocketStream::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None).await;
+        let sink: EventSink = Arc::new(|_| {});
+        let mut live = Live::default();
+        announce_display_name(&mut socket, &store.0, &mut alice, &sink, &mut live).await.unwrap();
+        announce_display_name(&mut socket, &store.0, &mut alice, &sink, &mut live).await.unwrap();
+        assert_eq!(crate::anon_queue::load(&store.0).unwrap().len(), 1);
+        privacy.profile_name.scope = crate::privacy::Scope::Nobody;
+        store.0.save_setting(PRIVACY_KEY, &serde_json::to_vec(&privacy).unwrap()).unwrap();
+        announce_display_name(&mut socket, &store.0, &mut alice, &sink, &mut live).await.unwrap();
+        let queue = crate::anon_queue::load(&store.0).unwrap();
+        assert_eq!(queue.len(), 2);
+        for (envelope, expected) in queue.iter().zip(["Андрей Владимирович", ""]) {
+            assert!(!envelope.ciphertext.windows(6).any(|w| w == "Анд".as_bytes()));
+            match bob.process(&envelope.ciphertext).unwrap() {
+                Incoming::Message { plaintext, .. } => {
+                    let body = String::from_utf8_lossy(crate::padding::strip(&plaintext));
+                    assert_eq!(crate::access::parse_signal(&body), Some(crate::access::Control::DisplayName(expected.into())));
+                }
+                _ => panic!("expected encrypted display name"),
+            }
+        }
+    }
+
+    #[test]
+    fn contact_names_are_local_persisted_and_do_not_change_approval() {
+        let store = TempStore::new("local-contact-name");
+        let peer = hex::encode([2; KEY_LEN]);
+        let mut directory = load_directory(&store.0);
+        directory.set(&peer, crate::directory::Standing::Approved, 1);
+        save_directory(&store.0, &directory).unwrap();
+        let sink: EventSink = Arc::new(|_| {});
+        assert!(handle_local(&Command::ContactName { device: peer.clone(), name: " Андрей Владимирович ".into() }, &store.0, &sink));
+        let entry = load_directory(&store.0).entries.remove(&peer).unwrap();
+        assert_eq!(entry.display_name.as_deref(), Some("Андрей Владимирович"));
+        assert_eq!(entry.standing, crate::directory::Standing::Approved);
+        handle_local(&Command::ContactName { device: peer.clone(), name: "".into() }, &store.0, &sink);
+        assert_eq!(load_directory(&store.0).entries[&peer].display_name, None);
+        assert!(checked_display_name(&"а".repeat(81)).is_err());
+        assert!(checked_display_name("name\nspoof").is_err());
+    }
+
     #[test] fn prioritized_applications_still_decrypt_in_both_orders(){
         let store=TempStore::new("priority-mls");let (_credentials,mut alice,mut bob,device,group)=established_pair(&store.0);
         for (kind,id) in [("image","photo"),("text","text")]{

@@ -724,6 +724,13 @@ function onProfileSet(deps: Deps, sock: Socket, conn: ConnData, body: Uint8Array
     decor?: unknown;
   };
   if (!payload || typeof payload !== "object") throw new BadInput("profile payload required");
+  if ("displayName" in payload) {
+    const name = (payload as { displayName?: unknown }).displayName;
+    if (typeof name !== "string" || Array.from(name.trim()).length > 80
+        || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(name)) throw new BadInput("invalid display name");
+    sendProfile(sock, deps.store.updateDisplayName(conn.identity!, name.trim() || null, deps.now()), conn.devicePub!);
+    return;
+  }
 
   // Значок и цвет приходят отдельно от аватара: менять одно, не трогая другое.
   if ("emblem" in payload || "color" in payload || "decor" in payload) {
@@ -801,7 +808,7 @@ function validateAvatarMagic(mime: string, bytes: Uint8Array): void {
 
 function sendProfile(
   sock: Socket,
-  profile: { identity: Uint8Array; chat_code: string; avatar_mime: string | null;
+  profile: { display_name?: string | null; identity: Uint8Array; chat_code: string; avatar_mime: string | null;
     avatar: Uint8Array | null; emblem: string | null; color: string | null;
     decor: Uint8Array | null; updated_at: number },
   device: Uint8Array,
@@ -809,7 +816,8 @@ function sendProfile(
   sock.send(jsonFrame(OP.PROFILE, {
     device: toHex(device),
     chatCode: profile.chat_code,
-    // Всегда пусто: человекочитаемое имя сервер больше не хранит. Поле
+    displayName: profile.display_name ?? null,
+    // Legacy handle stays empty; the display label has its own non-searchable field. Поле
     // осталось в кадре ради выпущенных клиентов — они его разбирают, а
     // отсутствие поля приняли бы за битый профиль.
     handle: null,
@@ -967,6 +975,7 @@ function onUsernameLookup(deps: Deps, sock: Socket, conn: ConnData, body: Uint8A
     found: true,
     device: toHex(device),
     chatCode: profile.chat_code,
+    displayName: profile.display_name ?? null,
     avatarMime: profile.avatar_mime,
     avatarBase64: profile.avatar ? Buffer.from(profile.avatar).toString("base64") : null,
     emblem: profile.emblem,

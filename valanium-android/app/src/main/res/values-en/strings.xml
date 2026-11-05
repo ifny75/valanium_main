@@ -441,4 +441,8 @@
     <string name="privacy_maximum_hint">Onion, hidden name lookup and messages from approved contacts. Online status, read receipts, typing indicators and link previews are disabled. Allow exceptions are reset; blocks are preserved. Previously disclosed information cannot be revoked.</string>
     <string name="privacy_offline_hint">Rules are saved offline. Server lookup and access settings update after connecting. You can then change each rule separately.</string>
     <string name="security_section_title">Security</string>
+    <string name="display_name_title">Display name</string>
+    <string name="contact_alias_title">Local contact name</string>
+    <string name="display_name_hint">Visibility follows the profile-name privacy setting. Not searchable. The name does not verify identity.</string>
+    <string name="contact_alias_hint">Only visible on this device. Leave empty to use the profile name.</string>
 </resources>

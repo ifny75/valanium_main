@@ -257,7 +257,13 @@ function short(hex) {
 }
 
 function initials(hex) {
-  return (hex || "--").slice(0, 2).toUpperCase();
+  const name = directory.get(hex)?.display_name || profileFor(hex)?.display_name;
+  if (name) {
+    const words = name.trim().split(/\s+/u);
+    return (words.length > 1 ? Array.from(words[0])[0] + Array.from(words[1])[0]
+      : Array.from(words[0]).slice(0, 2).join("")).toLocaleUpperCase();
+  }
+  return Array.from(hex || "--").slice(0, 2).join("").toUpperCase();
 }
 
 function copyText(text, success) {
@@ -885,11 +891,35 @@ function profileFor(device) {
   return state.profiles.get(device) ?? null;
 }
 
+async function editDisplayName(device, own) {
+  const current = own ? profileFor(device)?.display_name : directory.get(device)?.display_name;
+  const modal = document.createElement("div"); modal.className = "modal";
+  const form = document.createElement("form"); form.className = "modal-card";
+  const title = document.createElement("h2"); title.textContent = tr(own ? "Имя профиля" : "Локальное имя контакта");
+  const hint = document.createElement("p"); hint.className = "modal-copy";
+  hint.textContent = tr(own ? "Видимость задаётся в настройках имени профиля. Поиск по имени отсутствует."
+    : "Видно только на этом устройстве. Пустое имя возвращает подпись из профиля.");
+  const input = document.createElement("input"); input.type = "text"; input.maxLength = 80; input.value = current || "";
+  const buttons = document.createElement("div"); buttons.className = "setting-actions";
+  const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "ghost-button";
+  cancel.textContent = tr("Отмена"); cancel.onclick = () => modal.remove();
+  const save = document.createElement("button"); save.type = "submit"; save.className = "ghost-button"; save.textContent = tr("Сохранить");
+  buttons.append(cancel, save); form.append(title, hint, input, buttons); modal.append(form); document.body.append(modal);
+  modal.addEventListener("keydown", event => { if (event.key === "Escape") modal.remove(); });
+  form.addEventListener("submit", async event => {
+    event.preventDefault(); save.disabled = true;
+    try { await submit(own ? {type:"profile_name",name:input.value} : {type:"contact_name",device,name:input.value}); modal.remove(); }
+    catch (error) { toast(String(error)); save.disabled = false; }
+  });
+  input.focus(); input.select();
+}
+
 function displayName(device) {
   const profile = profileFor(device);
   const known = directory.get(device);
-  if (profile?.chat_code) return profile.chat_code;
   if (known?.display_name) return known.display_name;
+  if (profile?.display_name) return profile.display_name;
+  if (profile?.chat_code) return profile.chat_code;
   return trTemplate`Пользователь ${initials(device)}`;
 }
 
@@ -2264,6 +2294,14 @@ const handlers = {
         avatarThumbnail(event.avatar_mime,event.avatar_base64).then(data=>{if(data&&generation===avatarEditGeneration&&state.profiles.get(state.device)?.avatar_base64===event.avatar_base64)return submit({type:"profile_set",avatar_mime:"image/jpeg",avatar_base64:data});}).catch(()=>{}).finally(()=>{avatarThumbnailPending=false;});
       }
       state.chatCode = event.chat_code;
+      let editName = document.getElementById("edit-display-name");
+      if (!editName) {
+        editName = document.createElement("button"); editName.id = "edit-display-name";
+        editName.className = "ghost-button"; editName.type = "button";
+        editName.addEventListener("click", () => editDisplayName(state.device, true));
+        $("profile-chat-code").parentElement.appendChild(editName);
+      }
+      editName.textContent = event.display_name || tr("Указать имя профиля");
       $("my-chat-code").textContent = event.chat_code;
       $("profile-chat-code").textContent = event.chat_code;
       applyAvatar(document.querySelector("#my-device .profile-avatar"), state.device);
@@ -2315,6 +2353,11 @@ const handlers = {
     for (const item of event.entries) directory.set(item.device, item);
     renderDirectory();
     renderConversations();
+    if (state.current && directory.has(state.current)) {
+      paintName($("peer-device"), state.current);
+      applyAvatar($("peer-avatar"), state.current);
+    }
+    if (peerCard) { paintName($("peer-modal-name"), peerCard); applyAvatar($("peer-modal-avatar"), peerCard); }
   },
 
   peer_typing(event) {
@@ -4668,6 +4711,8 @@ function renderSearchHit(event) {
   const copy = document.createElement("div");
   const name = document.createElement("b");
   name.textContent = displayName(event.device);
+  name.title = tr("Локальное имя контакта");
+  name.addEventListener("click", () => editDisplayName(event.device, false));
   const handle = document.createElement("small");
   handle.textContent = event.chat_code || event.query || short(event.device);
   copy.append(name, handle);
@@ -5540,6 +5585,8 @@ function openPeerCard(device) {
   const entry = directory.get(device);
 
   paintName($("peer-modal-name"), device);
+  $("peer-modal-name").title = tr("Локальное имя контакта");
+  $("peer-modal-name").onclick = () => editDisplayName(device, false);
   applyAvatar($("peer-modal-avatar"), device);
   $("peer-modal-username").textContent = profile?.chat_code || short(device);
   $("peer-modal-standing").textContent = STANDING_LABELS[entry?.standing] ?? tr("не в контактах");
