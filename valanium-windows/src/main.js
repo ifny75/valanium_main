@@ -1,3 +1,4 @@
+const bulkSelection = { kind: null, ids: new Set(), conversation: null };
 import { createUpdater } from "./updater.js";
 import { wallpaperPhoto, prepareWallpaper } from "./wallpaper.js";
 import { avatarThumbnail } from "./avatar.js";
@@ -153,6 +154,7 @@ function sendRead(peer, ids) {
 }
 
 function showScreen(screen) {
+  if (screen !== "screen-main") clearBulkSelection();
   if (screen === "screen-route") {
     chosenTransport = preferences.transport;
     for (const option of document.querySelectorAll(".route-option"))
@@ -1077,6 +1079,77 @@ function setConversationPreview(conversation, body, at = Date.now()) {
   }
 }
 
+function pinnedChats() {
+  return new Set(preferences.pinnedChats?.[state.device] ?? []);
+}
+function clearBulkSelection() {
+  bulkSelection.kind = null; bulkSelection.ids.clear(); bulkSelection.conversation = null;
+  document.querySelectorAll(".bulk-selected").forEach(node => node.classList.remove("bulk-selected"));
+  document.getElementById("bulk-toolbar")?.remove();
+}
+function toggleBulkSelection(kind, id) {
+  if (bulkSelection.kind !== kind) clearBulkSelection();
+  bulkSelection.kind = kind;
+  bulkSelection.conversation = conversationOf(state.current);
+  if (!bulkSelection.ids.delete(id)) bulkSelection.ids.add(id);
+  if (!bulkSelection.ids.size) { clearBulkSelection(); return; }
+  paintBulkSelection();
+}
+function paintBulkSelection() {
+  document.getElementById("bulk-toolbar")?.remove();
+  for (const node of document.querySelectorAll("#messages li[data-message-id]")) {
+    node.classList.toggle("bulk-selected", bulkSelection.kind === "messages" && bulkSelection.ids.has(node.dataset.messageId));
+  }
+  for (const node of document.querySelectorAll("#conversations li[data-peer]")) {
+    node.classList.toggle("bulk-selected", bulkSelection.kind === "chats" && bulkSelection.ids.has(node.dataset.peer));
+  }
+  if (!bulkSelection.kind) return;
+  const toolbar = document.createElement("div");
+  toolbar.id = "bulk-toolbar"; toolbar.setAttribute("role", "toolbar");
+  const count = document.createElement("b"); count.textContent = `${tr("Выбрано")}: ${bulkSelection.ids.size}`;
+  toolbar.append(count);
+  const action = (label, run) => {
+    const button = document.createElement("button"); button.type = "button"; button.textContent = tr(label);
+    button.addEventListener("click", run); toolbar.append(button);
+  };
+  action(bulkSelection.kind === "chats" ? "Закрепить / открепить" : "Копировать", () => {
+    if (bulkSelection.kind === "chats") {
+      const pins = pinnedChats();
+      const unpin = [...bulkSelection.ids].every(id => pins.has(id));
+      for (const id of bulkSelection.ids) unpin ? pins.delete(id) : pins.add(id);
+      preferences.pinnedChats ??= {};
+      preferences.pinnedChats[state.device] = [...pins]; savePreferences();
+      clearBulkSelection(); renderConversations();
+    } else {
+      const text = [...$("messages").querySelectorAll("li[data-message-id]")]
+        .filter(node => bulkSelection.ids.has(node.dataset.messageId))
+        .map(node => node.dataset.copyText).filter(Boolean).join("\n");
+      if (text) copyText(text, tr("Скопировано")); else toast(tr("Нет текста для копирования"));
+      clearBulkSelection();
+    }
+  });
+  action("Удалить у себя", () => {
+    const kind = bulkSelection.kind, ids = [...bulkSelection.ids], conversation = bulkSelection.conversation;
+    const commands = ids.map(id => isGroupKey(id)
+      ? { type: "group_forget", group: groupIdOf(id) }
+      : { type: "delete_conversation", conversation: state.conversations.get(id)?.conversation })
+      .filter(command => command.group || command.conversation);
+    confirmAction(`${tr("Удалить у себя")} · ${ids.length}`, tr("Данные исчезнут с этого устройства. У собеседника они останутся."), () => {
+      if (kind === "chats") for (const command of commands) submit(command);
+      else for (const id of ids) submit({ type: "delete_message", conversation, id, for_both: false });
+      clearBulkSelection();
+    });
+  });
+  action("Отмена", clearBulkSelection);
+  document.body.append(toolbar);
+}
+$("messages").addEventListener("click", event => {
+  const node = event.target.closest("li[data-message-id]");
+  if (!node || (bulkSelection.kind !== "messages" && !event.ctrlKey && !event.metaKey)) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  toggleBulkSelection("messages", node.dataset.messageId);
+}, true);
+
 function renderConversations() {
   const list = $("conversations");
   // Адрес и код в поле — это не запрос к списку: список не фильтруем.
@@ -1100,7 +1173,9 @@ function renderConversations() {
   // Группы и диалоги живут в одном списке, но раскладываются раздельно —
   // сортируем каждый набор по своей свежести.
   const groupsByRecency = [...state.groups].sort((a, b) => recency(b[1]) - recency(a[1]));
-  const chatsByRecency = [...state.conversations].sort((a, b) => recency(b[1]) - recency(a[1]));
+  const pins = pinnedChats();
+  const chatsByRecency = [...state.conversations].sort((a, b) =>
+    Number(pins.has(b[0])) - Number(pins.has(a[0])) || recency(b[1]) - recency(a[1]));
 
   for (const [id, group] of groupsByRecency) {
     const searchable = `${group.title} ${group.kind}`.toLowerCase();
@@ -1110,10 +1185,13 @@ function renderConversations() {
 
     const item = document.createElement("li");
     item.classList.toggle("active", key === state.current);
+    item.dataset.peer = key;
+    item.classList.toggle("bulk-selected", bulkSelection.kind === "chats" && bulkSelection.ids.has(key));
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-button";
     button.title = group.title;
+    button.addEventListener("contextmenu", event => { event.preventDefault(); toggleBulkSelection("chats", key); });
 
     const avatar = document.createElement("span");
     avatar.className = "conversation-avatar group";
@@ -1122,7 +1200,7 @@ function renderConversations() {
     const copy = document.createElement("span");
     copy.className = "conversation-copy";
     const name = document.createElement("b");
-    name.textContent = group.title || tr("Без названия");
+    name.textContent = (pins.has(key) ? "📌 " : "") + (group.title || tr("Без названия"));
     const tag = document.createElement("span");
     tag.className = "kind-tag";
     // «Закрытый» — чтобы не спутать с публичным каналом на вкладке рядом:
@@ -1152,6 +1230,7 @@ function renderConversations() {
       для обновления открытой группы, и ранний выход там сломал бы обновление.
     */
     button.addEventListener("click", () => {
+      if (bulkSelection.kind === "chats") { toggleBulkSelection("chats", key); return; }
       if (state.current === key) return;
       selectConversation(key);
     });
@@ -1166,11 +1245,16 @@ function renderConversations() {
     visible += 1;
     const item = document.createElement("li");
     item.classList.toggle("active", peer === state.current);
+    item.dataset.peer = peer;
+    item.classList.toggle("bulk-selected", bulkSelection.kind === "chats" && bulkSelection.ids.has(peer));
 
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-button";
     button.title = peer;
+    button.addEventListener("contextmenu", event => {
+      event.preventDefault(); toggleBulkSelection("chats", peer);
+    });
 
     const avatar = document.createElement("span");
     avatar.className = "conversation-avatar";
@@ -1180,6 +1264,7 @@ function renderConversations() {
     copy.className = "conversation-copy";
     const name = document.createElement("b");
     paintName(name, peer);
+    if (pins.has(peer)) name.prepend("📌 ");
     const preview = document.createElement("span");
     preview.textContent = entry.preview || (entry.conversation ? tr("Сообщений пока нет") : tr("Новое устройство"));
     copy.append(name, preview);
@@ -1192,6 +1277,7 @@ function renderConversations() {
       button.appendChild(badge);
     }
     button.addEventListener("click", () => {
+      if (bulkSelection.kind === "chats") { toggleBulkSelection("chats", peer); return; }
       // См. пояснение выше: уже открытый чат не переоткрываем.
       if (state.current === peer) return;
       selectConversation(peer);
@@ -1200,6 +1286,9 @@ function renderConversations() {
     list.appendChild(item);
   }
 
+  // Pinned personal chats and groups share the same top section.
+  [...list.children].sort((a, b) => Number(pins.has(b.dataset.peer))-Number(pins.has(a.dataset.peer)))
+    .forEach(item => list.append(item));
   syncUnread();
 
   if (visible === 0) {
@@ -1218,6 +1307,7 @@ function renderConversations() {
 }
 
 function selectConversation(peer) {
+  clearBulkSelection();
   // Позицию покидаемого чата запоминаем: вернуться в середину переписки и
   // оказаться внизу — это потерянное место чтения.
   const leaving = conversationOf(state.current);
@@ -1311,6 +1401,7 @@ function closeImageViewer() {
 $("messages").addEventListener("click", (event) => {
   const image = event.target.closest(".message-image");
   if (!image) return;
+  $("image-viewer").dataset.recipient = state.current;
   $("image-viewer-photo").src = image.src;
   $("image-viewer-photo").alt = image.alt;
   const caption = image.alt === tr("Фото") ? "" : image.alt;
@@ -1318,6 +1409,14 @@ $("messages").addEventListener("click", (event) => {
   $("image-viewer-caption").classList.toggle("hidden", !caption);
   $("image-viewer").classList.remove("hidden");
   $("image-viewer-close").focus();
+});
+$("image-viewer-edit").addEventListener("click", async () => {
+  const uri = $("image-viewer-photo").src;
+  const recipient = $("image-viewer").dataset.recipient;
+  if (!uri.startsWith("data:image/")) return;
+  const file = await (await fetch(uri)).blob();
+  closeImageViewer();
+  await openEditor(file, "message", recipient);
 });
 $("image-viewer-close").addEventListener("click", closeImageViewer);
 $("image-viewer").addEventListener("click", (event) => {
@@ -1433,6 +1532,7 @@ function buildMessage({ outgoing, body, created_at, delivery: evidence }, peer, 
   const item = document.createElement("li");
   item.className = outgoing ? "out" : "in";
   if (content.id) item.dataset.messageId = content.id;
+  item.dataset.copyText = content.text || content.caption || "";
   item.dataset.deliveryConversation = deliveryConversation ?? "";
   const avatar = document.createElement("span");
   avatar.className = "message-avatar";
@@ -3137,6 +3237,7 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key !== "Escape") return;
+  if (bulkSelection.kind) { clearBulkSelection(); return; }
   if (!$("image-viewer").classList.contains("hidden")) return closeImageViewer();
   // Закрываем по одному слою за нажатие: Escape в открытом окне исключений не
   // должен заодно захлопывать и настройки под ним.
@@ -3166,9 +3267,11 @@ boot();
  * камеры и временем — при этом теряются. Это не побочный эффект, а одна из
  * причин гнать фотографию через canvas, а не отправлять файл как есть.
  */
+let editorGestureCleanup = null;
 const editor = {
   /** Исходник, уже повёрнутый и отражённый, в рабочем разрешении. */
   work: null,
+  strokes: [], drawing: false, zoom: 1, panX: 0, panY: 0,
   /** Кадр в координатах `work`. */
   crop: null,
   rotation: 0,
@@ -3238,6 +3341,7 @@ function rebuildWork() {
 
 /** Кадр по умолчанию: всё изображение, подрезанное под выбранное соотношение. */
 function resetCrop() {
+  editor.zoom = 1; editor.panX = editor.panY = 0;
   const { width, height } = editor.work;
   if (!editor.ratio) {
     editor.crop = { x: 0, y: 0, width, height };
@@ -3276,10 +3380,16 @@ function drawEditor() {
   const ctx = canvas.getContext("2d", { alpha: false });
   ctx.filter = filterString();
   ctx.drawImage(work, 0, 0, width, height);
+  ctx.filter = "none";
+  ctx.save(); ctx.scale(width/work.width, height/work.height); drawEditorStrokes(ctx); ctx.restore();
+  $("editor-viewport").style.width = `${width}px`;
+  $("editor-viewport").style.height = `${height}px`;
+  stage.style.height = `${height}px`;
+  updateEditorViewport();
   editor.view = { width, height };
 
   positionCrop();
-  updateEstimate();
+  scheduleEstimate();
 }
 
 function positionCrop() {
@@ -3308,6 +3418,10 @@ function renderPhoto(maxBase64, startQuality) {
   ctx.drawImage(editor.work, crop.x, crop.y, crop.width, crop.height,
     0, 0, canvas.width, canvas.height);
 
+  ctx.filter = "none";
+  ctx.save(); ctx.scale(canvas.width/crop.width, canvas.height/crop.height);
+  ctx.translate(-crop.x, -crop.y); drawEditorStrokes(ctx); ctx.restore();
+
   let quality = startQuality;
   let data = "";
   do {
@@ -3325,6 +3439,7 @@ function editorLimit() {
 
 /** Показывает вес результата: иначе «слишком большое» прилетает уже при отправке. */
 function updateEstimate() {
+  if (!editor.work) return;
   const { data, width, height, tooBig } = renderPhoto(editorLimit(), Number($("editor-quality").value) / 100);
   const kb = Math.round((data.length * 0.75) / 1024);
   $("editor-size").textContent = tooBig
@@ -3342,7 +3457,8 @@ function syncEditorOutputs() {
   $("editor-quality-value").textContent = $("editor-quality").value;
 }
 
-async function openEditor(file, target) {
+async function openEditor(file, target, recipient = state.current) {
+  editor.recipient = recipient;
   try {
     editor.source = await createImageBitmap(file);
   } catch {
@@ -3350,6 +3466,8 @@ async function openEditor(file, target) {
     return;
   }
   editor.target = target;
+  editor.strokes = []; editor.drawing = false;
+  $("editor-draw").classList.remove("active");
   editor.rotation = 0;
   editor.flipped = false;
   const square = target === "avatar" || target === "channel-icon";
@@ -3377,10 +3495,12 @@ async function openEditor(file, target) {
 }
 
 function closeEditor() {
+  editorGestureCleanup?.();
   $("photo-editor").classList.add("hidden");
   editor.source?.close?.();
   editor.source = null;
   editor.work = null;
+  editor.strokes = [];
 }
 
 // --- перетаскивание рамки -----------------------------------------------------
@@ -3392,9 +3512,53 @@ function closeEditor() {
  * тачпадом, а слушатели на window не теряют жест, если курсор ушёл за край
  * рамки, — без этого она залипала бы в последнем положении.
  */
+function drawEditorStrokes(ctx) {
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  for (const stroke of editor.strokes) {
+    ctx.strokeStyle = stroke.color; ctx.lineWidth = stroke.width;
+    ctx.beginPath(); ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (const point of stroke.points) ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+  }
+}
+function updateEditorViewport() {
+  $("editor-viewport").style.transform = `translate(${editor.panX}px, ${editor.panY}px) scale(${editor.zoom})`;
+  $("editor-zoom").value = editor.zoom;
+  $("editor-zoom-value").textContent = `${editor.zoom.toFixed(1)}×`;
+}
+$("editor-zoom").addEventListener("input", event => {
+  editor.zoom = Number(event.target.value); editor.panX = editor.panY = 0; updateEditorViewport();
+});
+$("editor-draw").addEventListener("click", () => {
+  editor.drawing = !editor.drawing; $("editor-draw").classList.toggle("active", editor.drawing);
+});
+$("editor-undo-stroke").addEventListener("click", () => { editor.strokes.pop(); drawEditor(); });
+$("editor-stage").addEventListener("pointerdown", event => {
+  if (!editor.drawing && !(editor.zoom > 1 && !event.target.dataset.handle)) return;
+  if (event.button !== 0) return;
+  event.preventDefault(); event.stopPropagation();
+  const start = { x: event.clientX, y: event.clientY, panX: editor.panX, panY: editor.panY };
+  const bounds = $("editor-canvas").getBoundingClientRect();
+  const point = e => ({ x: clamp((e.clientX-bounds.left)/bounds.width*editor.work.width, 0, editor.work.width),
+    y: clamp((e.clientY-bounds.top)/bounds.height*editor.work.height, 0, editor.work.height) });
+  const stroke = editor.drawing ? { color: $("editor-ink").value, width: Number($("editor-brush").value), points: [point(event)] } : null;
+  if (stroke) { const first = stroke.points[0]; stroke.points.push({ x: first.x+.01, y: first.y }); editor.strokes.push(stroke); drawEditor(); }
+  const move = e => {
+    if (stroke) { stroke.points.push(point(e)); drawEditor(); }
+    else {
+      const maxX = editor.view.width*(editor.zoom-1)/2, maxY = editor.view.height*(editor.zoom-1)/2;
+      editor.panX = clamp(start.panX+e.clientX-start.x, -maxX, maxX);
+      editor.panY = clamp(start.panY+e.clientY-start.y, -maxY, maxY); updateEditorViewport();
+    }
+  };
+  const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); editorGestureCleanup = null; scheduleEstimate(); };
+  editorGestureCleanup?.(); editorGestureCleanup = up;
+  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+}, true);
+
 $("editor-crop").addEventListener("pointerdown", (event) => {
   const handle = event.target.dataset ? event.target.dataset.handle : null;
-  const scale = editor.view.width / editor.work.width;
+  const scale = editor.view.width / editor.work.width * editor.zoom;
   // Точка начала жеста и исходный кадр — раздельно. В одном объекте поля `x` и
   // `y` у них называются одинаково, и кадр затирал бы позицию указателя: жест
   // считался бы от угла картинки, а рамка дёргалась бы к краю вместо того,
@@ -3413,9 +3577,13 @@ $("editor-crop").addEventListener("pointerdown", (event) => {
   const onUp = () => {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    editorGestureCleanup = null;
   };
+  editorGestureCleanup?.(); editorGestureCleanup = onUp;
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
 });
 
 function moveCrop(start, dx, dy) {
@@ -3476,6 +3644,10 @@ $("photo-editor").addEventListener("click", (event) => {
 });
 
 $("editor-rotate").addEventListener("click", () => {
+  const oldWidth = editor.work.width, oldHeight = editor.work.height;
+  for (const stroke of editor.strokes) for (const point of stroke.points) {
+    const x = point.x; point.x = oldHeight-point.y; point.y = x;
+  }
   editor.rotation = (editor.rotation + 90) % 360;
   rebuildWork();
   resetCrop();
@@ -3483,12 +3655,17 @@ $("editor-rotate").addEventListener("click", () => {
 });
 
 $("editor-flip").addEventListener("click", () => {
+  for (const stroke of editor.strokes) for (const point of stroke.points) {
+    if (editor.rotation % 180 === 0) point.x = editor.work.width-point.x;
+    else point.y = editor.work.height-point.y;
+  }
   editor.flipped = !editor.flipped;
   rebuildWork();
   drawEditor();
 });
 
 $("editor-reset").addEventListener("click", () => {
+  editor.strokes = [];
   editor.rotation = 0;
   editor.flipped = false;
   for (const input of ["editor-brightness", "editor-contrast", "editor-saturation"]) {
@@ -3552,7 +3729,7 @@ $("editor-send").addEventListener("click", async () => {
     return;
   }
 
-  const peer = state.current;
+  const peer = editor.recipient;
   if (!peer) {
     closeEditor();
     return;
@@ -6103,7 +6280,7 @@ $("messages").addEventListener("contextmenu", (event) => {
 let messageSwipe = null;
 $("messages").addEventListener("pointerdown", (event) => {
   const item = event.target.closest("li[data-message-id]");
-  if (!item || event.button !== 0 || event.isPrimary === false
+  if (bulkSelection.kind === "messages" || !item || event.ctrlKey || event.metaKey || event.button !== 0 || event.isPrimary === false
       || event.target.closest("button, a, input, textarea, select, audio, video")) return;
   const box = item.getBoundingClientRect();
   const list = $("messages");
@@ -6161,6 +6338,7 @@ function openMessageMenu(item, x, y) {
   const text = item.querySelector(".body")?.textContent ?? "";
 
   const entries = [
+    [tr("Выбрать"), () => toggleBulkSelection("messages", id)],
     [tr("Ответить"), () => startReply(id, text)],
     [tr("Копировать текст"), () => copyText(text, tr("Скопировано"))],
     [tr("Удалить у себя"), () => confirmDelete(id, false), true],

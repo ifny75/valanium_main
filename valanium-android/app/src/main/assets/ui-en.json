@@ -218,5 +218,22 @@
   "Скрыто": "Hidden",
   "Отправитель": "Sender",
   "Текст": "Text",
-  "Отправитель и текст": "Sender and text"
+  "Отправитель и текст": "Sender and text",
+  "Выбрать": "Select",
+  "Выбрано": "Selected",
+  "Закрепить / открепить": "Pin / unpin",
+  "Удалить у себя": "Delete for me",
+  "Нет текста для копирования": "No text to copy",
+  "Изменить и отправить": "Edit and send",
+  "Рисовать": "Draw",
+  "Кадрировать": "Crop",
+  "Цвет": "Color",
+  "Красный": "Red",
+  "Жёлтый": "Yellow",
+  "Чёрный": "Black",
+  "Отменить штрих": "Undo stroke",
+  "Кисть": "Brush",
+  "Масштаб просмотра": "View zoom",
+  "При увеличении перетаскивайте фото для просмотра. Для обрезки тяните углы рамки.": "When zoomed in, drag the photo to pan. Drag frame corners to crop.",
+  "Данные исчезнут с этого устройства. У собеседника они останутся.": "Data will be removed from this device. Your contact keeps their copy."
 }

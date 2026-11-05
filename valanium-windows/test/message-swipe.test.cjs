@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function fixture(outgoing, left, right) {
+function fixture(outgoing, left, right, selecting = false) {
   const handlers = {};
   let captured = false, menus = 0;
   const item = { style: {}, classList: { contains: () => outgoing },
@@ -18,6 +18,7 @@ function fixture(outgoing, left, right) {
   const start = source.indexOf("// Swipe toward the center;");
   assert.ok(start >= 0);
   vm.runInNewContext(source.slice(start, source.indexOf("function openMessageMenu(", start)), {
+    bulkSelection: { kind: selecting ? "messages" : null },
     $: () => list, document: { addEventListener: (name, fn) => { handlers[name] = fn; } },
     getComputedStyle: () => ({ paddingLeft: "0px", paddingRight: "0px" }),
     openMessageMenu: () => { menus++; },
@@ -64,4 +65,10 @@ test("an unrelated pointer release cannot cancel the active gesture", () => {
   f.emit("pointerdown", 200); f.emit("pointermove", 100);
   f.emit("pointerup", 100, 0, 2); f.emit("pointerup", 100);
   assert.equal(f.menus(), 1);
+});
+
+test("message selection suppresses swipe actions", () => {
+  const f = fixture(true, 48, 360, true);
+  f.emit("pointerdown", 240); f.emit("pointermove", 60); f.emit("pointerup", 60);
+  assert.equal(f.menus(), 0);
 });

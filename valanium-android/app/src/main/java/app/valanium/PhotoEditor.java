@@ -9,6 +9,7 @@ import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.Base64;
@@ -68,6 +69,32 @@ final class PhotoEditor {
     private int contrast = 100;
     private int saturation = 100;
 
+    private static final class Stroke {
+        final Path path = new Path();
+        final int color;
+        final float width;
+        Stroke(int color, float width) { this.color = color; this.width = width; }
+    }
+    private final java.util.List<Stroke> strokes = new java.util.ArrayList<>();
+    private boolean drawing;
+    private int ink = Color.RED;
+    private float brushWidth = 8f;
+
+    private void drawStrokes(Canvas canvas) {
+        Paint brush = new Paint(Paint.ANTI_ALIAS_FLAG);
+        brush.setStyle(Paint.Style.STROKE);
+        brush.setStrokeCap(Paint.Cap.ROUND);
+        brush.setStrokeJoin(Paint.Join.ROUND);
+        for (Stroke stroke : strokes) {
+            brush.setColor(stroke.color); brush.setStrokeWidth(stroke.width);
+            canvas.drawPath(stroke.path, brush);
+        }
+    }
+
+    private void transformStrokes(Matrix matrix) {
+        for (Stroke stroke : strokes) stroke.path.transform(matrix);
+    }
+
     private CropView view;
     private TextView size;
     private Button send;
@@ -110,6 +137,23 @@ final class PhotoEditor {
         root.addView(zoomControl);
         if (ratio == 0) root.addView(ratioRow());
         root.addView(toolRow());
+        LinearLayout drawingTools = new LinearLayout(activity);
+        drawingTools.addView(tool(I18n.t("Рисовать"), () -> {
+            drawing = !drawing;
+            ((Button)drawingTools.getChildAt(0)).setText(I18n.t(drawing ? "Кадрировать" : "Рисовать"));
+        }, 0));
+        drawingTools.addView(tool(I18n.t("Цвет"), () -> {
+            int[] palette = {Color.RED, Color.YELLOW, Color.GREEN, Color.BLUE, Color.WHITE, Color.BLACK};
+            new AlertDialog.Builder(activity).setTitle(I18n.t("Цвет"))
+                    .setItems(new String[]{I18n.t("Красный"), I18n.t("Жёлтый"), I18n.t("Зелёный"), I18n.t("Синий"), I18n.t("Белый"), I18n.t("Чёрный")},
+                        (d, index) -> { ink = palette[index]; drawingTools.getChildAt(1).setBackgroundTintList(android.content.res.ColorStateList.valueOf(ink)); }).show();
+        }, dp(4)));
+        drawingTools.addView(tool(I18n.t("Отменить штрих"), () -> {
+            if (!strokes.isEmpty()) strokes.remove(strokes.size() - 1);
+            view.invalidate(); updateEstimate();
+        }, dp(4)));
+        root.addView(drawingTools);
+        root.addView(slider(I18n.t("Кисть"), 2, 40, 8, value -> brushWidth = value));
         root.addView(slider(I18n.t("Яркость"), 50, 160, brightness, value -> {
             brightness = value;
             view.invalidate();
@@ -247,6 +291,12 @@ final class PhotoEditor {
                 Math.round(crop.right), Math.round(crop.bottom));
         canvas.drawBitmap(work, src, new Rect(0, 0, width, height), paint);
 
+        canvas.save();
+        canvas.scale((float)width / crop.width(), (float)height / crop.height());
+        canvas.translate(-crop.left, -crop.top);
+        drawStrokes(canvas);
+        canvas.restore();
+
         int attempt = quality;
         String encoded = null;
         while (attempt >= 40) {
@@ -318,6 +368,10 @@ final class PhotoEditor {
         row.setLayoutParams(params);
 
         row.addView(tool(I18n.t("Повернуть"), () -> {
+            Matrix turn = new Matrix();
+            if (flipped) turn.setValues(new float[]{0, 1, 0, -1, 0, work.getWidth(), 0, 0, 1});
+            else turn.setValues(new float[]{0, -1, work.getHeight(), 1, 0, 0, 0, 0, 1});
+            transformStrokes(turn);
             rotation = (rotation + 90) % 360;
             rebuildWork();
             resetCrop();
@@ -325,12 +379,16 @@ final class PhotoEditor {
             updateEstimate();
         }, 0));
         row.addView(tool(I18n.t("Отразить"), () -> {
+            Matrix mirror = new Matrix();
+            mirror.setValues(new float[]{-1, 0, work.getWidth(), 0, 1, 0, 0, 0, 1});
+            transformStrokes(mirror);
             flipped = !flipped;
             rebuildWork();
             view.invalidate();
             updateEstimate();
         }, dp(4)));
         row.addView(tool(I18n.t("Сбросить"), () -> {
+            strokes.clear();
             rotation = 0;
             flipped = false;
             brightness = contrast = saturation = 100;
@@ -455,32 +513,27 @@ final class PhotoEditor {
         void resetViewport() { zoom=1f;panX=panY=0; if(zoomBar!=null)zoomBar.setProgress(0); }
         void zoomTo(float wanted,float focusX,float focusY) {
             if(getWidth()==0||getHeight()==0)return;
-            RectF frame=cropOnScreen();float before=scale();
+            float before=scale();
             float anchorX=(focusX-offsetX())/before,anchorY=(focusY-offsetY())/before;
-            float base=before/zoom;
-            float minimum=Math.min(MIN_CROP,Math.min(work.getWidth(),work.getHeight()));
-            float limit=Math.max(1f,Math.min(5f,Math.min(frame.width(),frame.height())/(base*minimum)));
-            zoom=Math.max(1f,Math.min(limit,wanted));float after=scale();
+            zoom=Math.max(1f,Math.min(5f,wanted));
+            float after=scale();
             panX=focusX-anchorX*after-(getWidth()-work.getWidth()*after)/2;
             panY=focusY-anchorY*after-(getHeight()-work.getHeight()*after)/2;
-            // Keep the picture covering the same frame even when the pinch
-            // focus is close to an edge. Clamping only the crop made it jump.
-            float originX=clamp(offsetX(),frame.right-work.getWidth()*after,frame.left);
-            float originY=clamp(offsetY(),frame.bottom-work.getHeight()*after,frame.top);
-            panX=originX-(getWidth()-work.getWidth()*after)/2;
-            panY=originY-(getHeight()-work.getHeight()*after)/2;
-            float width=Math.min(work.getWidth(),Math.max(MIN_CROP,frame.width()/after));
-            float height=Math.min(work.getHeight(),Math.max(MIN_CROP,frame.height()/after));
-            if(ratio!=0){width=Math.min(width,height*ratio);height=width/ratio;}
-            float left=clamp((frame.left-offsetX())/after,0,work.getWidth()-width);
-            float top=clamp((frame.top-offsetY())/after,0,work.getHeight()-height);
-            crop.set(left,top,left+width,top+height);
+            constrainPan();
             if(zoomBar!=null){zoomBar.setProgress(Math.round((zoom-1)*100));zoomBar.setContentDescription(I18n.t("Масштаб")+" "+String.format(java.util.Locale.getDefault(),"%.1f×",zoom));}
             if(zoomLabel!=null)zoomLabel.setText(I18n.t("Масштаб")+" "+String.format(java.util.Locale.getDefault(),"%.1f×",zoom));
             invalidate();removeCallbacks(estimate);postDelayed(estimate,150);
         }
 
-        @Override protected void onDetachedFromWindow(){removeCallbacks(estimate);super.onDetachedFromWindow();}
+        private void constrainPan() {
+            float maxX = Math.max(0, (work.getWidth()*scale()-getWidth())/2);
+            float maxY = Math.max(0, (work.getHeight()*scale()-getHeight())/2);
+            panX=clamp(panX,-maxX,maxX); panY=clamp(panY,-maxY,maxY);
+        }
+
+        private Stroke activeStroke;
+
+        @Override protected void onDetachedFromWindow(){removeCallbacks(estimate);removeCallbacks(estimateTask);super.onDetachedFromWindow();}
 
         private RectF cropOnScreen() {
             float s = scale();
@@ -497,6 +550,11 @@ final class PhotoEditor {
                     offsetX() + work.getWidth() * s, offsetY() + work.getHeight() * s);
             imagePaint.setColorFilter(filter());
             canvas.drawBitmap(work, null, target, imagePaint);
+            canvas.save();
+            canvas.translate(offsetX(), offsetY()); canvas.scale(s, s);
+            canvas.clipRect(0, 0, work.getWidth(), work.getHeight());
+            drawStrokes(canvas);
+            canvas.restore();
 
             // Затемнение вне рамки — четырьмя полосами: без него не видно, что
             // именно уйдёт в сообщение.
@@ -516,11 +574,27 @@ final class PhotoEditor {
             if(event.getActionMasked()==MotionEvent.ACTION_DOWN)transformed=false;
             scaler.onTouchEvent(event); gestures.onTouchEvent(event);
             if(scaler.isInProgress()||event.getPointerCount()>1||transformed){
+                activeStroke = null;
                 getParent().requestDisallowInterceptTouchEvent(true);
                 if(event.getActionMasked()==MotionEvent.ACTION_UP)updateEstimate();
                 return true;
             }
             float s = scale();
+            if (drawing) {
+                getParent().requestDisallowInterceptTouchEvent(true);
+                float x = clamp((event.getX()-offsetX())/s, 0, work.getWidth());
+                float y = clamp((event.getY()-offsetY())/s, 0, work.getHeight());
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    activeStroke = new Stroke(ink, brushWidth);
+                    activeStroke.path.moveTo(x, y); activeStroke.path.lineTo(x + .01f, y);
+                    strokes.add(activeStroke);
+                } else if (event.getActionMasked() == MotionEvent.ACTION_MOVE && activeStroke != null) {
+                    activeStroke.path.lineTo(x, y);
+                } else if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    activeStroke = null; updateEstimate();
+                }
+                invalidate(); return true;
+            }
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
                     RectF box = cropOnScreen();
@@ -540,7 +614,7 @@ final class PhotoEditor {
                 case MotionEvent.ACTION_MOVE: {
                     float dx = (event.getX() - startX) / s;
                     float dy = (event.getY() - startY) / s;
-                    if(handle==null&&zoom>1.01f){crop=moved(-dx,-dy);panX=startPanX-(crop.left-startCrop.left)*s;panY=startPanY-(crop.top-startCrop.top)*s;}
+                    if(handle==null&&zoom>1.01f){panX=startPanX+dx*s;panY=startPanY+dy*s;constrainPan();}
                     else crop = handle == null ? moved(dx, dy) : resized(dx, dy);
                     invalidate();
                     return true;

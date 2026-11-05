@@ -74,6 +74,10 @@ import app.valanium.core.Core;
 /** Нативный мобильный интерфейс поверх общего Rust-ядра Valanium. */
 public final class MainActivity extends Activity implements Events.Listener {
     private static long backgroundedAt = -1L;
+    private android.view.ActionMode selectionMode;
+    private boolean selectingChats;
+    private final Set<String> selectedItems = new LinkedHashSet<>();
+
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
 
@@ -667,6 +671,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onStop() {
+        if (selectionMode != null) selectionMode.finish();
         if(appUpdates!=null)appUpdates.pause();
         ui.removeCallbacks(activityExpiry);
         peerTypingUntil.clear();
@@ -1849,6 +1854,9 @@ public final class MainActivity extends Activity implements Events.Listener {
     private void setDividers(String mode) {
         appearancePreferences.edit().putString("dividers", mode).apply();
         applyDividers();
+        highlightSegment("soft".equals(mode) ? R.id.dividers_soft
+                : "none".equals(mode) ? R.id.dividers_none : R.id.dividers_full,
+                R.id.dividers_full, R.id.dividers_soft, R.id.dividers_none);
     }
 
     private void applyDividers() {
@@ -2102,6 +2110,10 @@ public final class MainActivity extends Activity implements Events.Listener {
      * обрезать его вслепую — значит промахиваться.
      */
     private void openEditor(Bitmap source, boolean avatar) {
+        openEditor(source, avatar, currentPeer);
+    }
+
+    private void openEditor(Bitmap source, boolean avatar, String recipient) {
         int limit = avatar ? 80_000 : 700_000;
         new PhotoEditor(this, source, avatar ? 1f : 0f, limit, avatar?384:1600, (base64, width, height) -> {
             if (avatar) {
@@ -2110,10 +2122,10 @@ public final class MainActivity extends Activity implements Events.Listener {
                 toast(I18n.t("Аватар загружается…"));
                 return;
             }
-            if (currentPeer == null) return;
+            if (recipient == null) return;
             String body = encodeContent("image", logicalId(), null, base64);
-            submit(Commands.send(currentPeer, body));
-            addBubble(body, true);
+            submit(Commands.send(recipient, body));
+            if (recipient.equals(currentPeer)) addBubble(body, true);
         }).show();
     }
 
@@ -3433,6 +3445,15 @@ public final class MainActivity extends Activity implements Events.Listener {
                 messageActions(item.body, item.outgoing, currentPeer), accentColor(), item.outgoing);
         swipe.setLayoutParams(params);
         row.addView(swipe);
+        String messageId = parseContent(item.body).optString("id");
+        if (selectionMode != null && !selectingChats && !messageId.isEmpty()) {
+            View selection = new View(this);
+            selection.setBackgroundColor(selectedItems.contains(messageId) ? ((accentColor() & 0x00ffffff) | 0x44000000) : Color.TRANSPARENT);
+            selection.setContentDescription((selectedItems.contains(messageId) ? "✓ " : "○ ") + parseContent(item.body).optString("text", I18n.t("Фото")));
+            selection.setFocusable(true);
+            selection.setOnClickListener(v -> toggleSelection(messageId, false));
+            row.addView(selection, new FrameLayout.LayoutParams(-1, -1));
+        }
         if (created && motionEnabled()) {
             row.setAlpha(0f);
             row.setTranslationY(dp(8));
@@ -3529,7 +3550,10 @@ public final class MainActivity extends Activity implements Events.Listener {
         Profile profile = profiles.get(peer);
         ConversationPreview preview = previews.get(peer);
         applyAvatar(holder.avatar, profile, initials(displayName(peer)));
-        holder.title.setText(nameWithEmblem(peer));
+        holder.title.setText((selectedItems.contains(peer) && selectingChats ? "✓ " : "")
+                + (pinnedChats().contains(peer) ? "📌 " : "") + nameWithEmblem(peer));
+        row.setBackgroundResource(R.drawable.panel_glass);
+        if (selectingChats && selectedItems.contains(peer)) row.setBackgroundColor(((accentColor() & 0x00ffffff) | 0x44000000));
         holder.title.setTextColor(themeText());
         holder.subtitle.setText(previewText(preview));
         holder.time.setText(previewTime(preview));
@@ -3546,7 +3570,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         } else {
             holder.badge.setVisibility(View.GONE);
         }
-        row.setOnClickListener(v -> selectPeer(peer));
+        row.setOnClickListener(v -> {
+            if (selectionMode != null && selectingChats) toggleSelection(peer, true);
+            else selectPeer(peer);
+        });
+        row.setOnLongClickListener(v -> { toggleSelection(peer, true); return true; });
         installPressFeedback(row);
         if (created && motionEnabled()) {
             row.setAlpha(0f);
@@ -3571,6 +3599,7 @@ public final class MainActivity extends Activity implements Events.Listener {
      * «назад» с любой вкладки закрывает приложение, а не гоняет по кругу.
      */
     private void switchTab(View screen) {
+        if (selectionMode != null) selectionMode.finish();
         getWindow().getDecorView().performHapticFeedback(
                 android.view.HapticFeedbackConstants.CLOCK_TICK);
         if (screen == currentScreen) {
@@ -3737,6 +3766,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void show(View screen) {
+        if (selectionMode != null && screen != currentScreen) selectionMode.finish();
         currentScreen = screen;
         if(chatWallpaperLayer!=null)chatWallpaperLayer.setVisibility(screen==screenConversation?View.VISIBLE:View.GONE);
         if (screen == screenConversation) composer.requestFocus();
@@ -3914,7 +3944,13 @@ public final class MainActivity extends Activity implements Events.Listener {
         for (String peer : conversations.keySet()) {
             if (listFilter.isEmpty() || haystack(peer).contains(listFilter)) found.add(peer);
         }
+        Set<String> pins = pinnedChats();
+        found.sort((a, b) -> Boolean.compare(pins.contains(b), pins.contains(a)));
         return found;
+    }
+
+    private Set<String> pinnedChats() {
+        return new HashSet<>(appearancePreferences.getStringSet("pinned_chats:" + myDeviceHex, java.util.Collections.emptySet()));
     }
 
     private String haystack(String peer) {
@@ -4061,6 +4097,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void selectPeer(String peer) {
+        if (selectionMode != null) selectionMode.finish();
         // Позицию покидаемой беседы запоминаем: вернуться в середину переписки
         // и оказаться внизу — это потерянное место чтения.
         String leaving = conversations.get(currentPeer);
@@ -4412,9 +4449,10 @@ public final class MainActivity extends Activity implements Events.Listener {
                     try {
                         byte[] fullBytes = Base64.decode(encoded, Base64.NO_WRAP);
                         Bitmap full = BitmapFactory.decodeByteArray(fullBytes, 0, fullBytes.length);
-                        new PhotoViewer(this, full == null ? bitmap : full).show();
+                        Bitmap original = full == null ? bitmap : full;
+                        new PhotoViewer(this, original, () -> openEditor(original, false, peer)).show();
                     } catch (RuntimeException error) {
-                        new PhotoViewer(this, bitmap).show();
+                        new PhotoViewer(this, bitmap, () -> openEditor(bitmap, false, peer)).show();
                     }
                 });
                 bubble.addView(image);
@@ -4475,7 +4513,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         bubble.setLayoutParams(params);
 
         bubble.setOnClickListener(view -> showMessageMenu(body, outgoing, peer));
-        bubble.setOnLongClickListener(view -> { showMessageMenu(body, outgoing, peer); return true; });
+        bubble.setOnLongClickListener(view -> {
+            String selectedId = parseContent(body).optString("id");
+            if (!selectedId.isEmpty()) toggleSelection(selectedId, false); else showMessageMenu(body, outgoing, peer);
+            return true;
+        });
         bubble.setContentDescription(I18n.t("Сообщение. Нажмите для действий"));
         return bubble;
     }
@@ -4585,6 +4627,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         String quote = !text.isEmpty() ? text : "image".equals(type) ? I18n.t("Фото") : I18n.t("Голосовое сообщение");
         java.util.List<SwipeMessageLayout.Action> actions = new ArrayList<>();
         if (!id.isEmpty()) {
+            actions.add(new SwipeMessageLayout.Action(I18n.t("Выбрать"), "✓", () -> toggleSelection(id, false)));
             actions.add(new SwipeMessageLayout.Action(I18n.t("Ответить"), "↩", () -> { setReply(id, quote); focusComposer(); }));
             actions.add(new SwipeMessageLayout.Action(I18n.t("Реакция"), "♡", () -> chooseMessageReaction(peer, id, quote)));
         }
@@ -4598,6 +4641,76 @@ public final class MainActivity extends Activity implements Events.Listener {
             actions.add(new SwipeMessageLayout.Action(I18n.t("Удалить"), "×", () -> chooseMessageDeletion(conversation, id, outgoing)));
         }
         return actions;
+    }
+
+    private void toggleSelection(String id, boolean chats) {
+        if (selectionMode != null && selectingChats != chats) selectionMode.finish();
+        if (selectionMode == null) {
+            selectingChats = chats;
+            selectionMode = startActionMode(new android.view.ActionMode.Callback() {
+                public boolean onCreateActionMode(android.view.ActionMode mode, android.view.Menu menu) {
+                    menu.add(0, 1, 0, I18n.t(chats ? "Закрепить / открепить" : "Копировать"));
+                    menu.add(0, 2, 1, I18n.t("Удалить у себя"));
+                    return true;
+                }
+                public boolean onPrepareActionMode(android.view.ActionMode mode, android.view.Menu menu) { return false; }
+                public boolean onActionItemClicked(android.view.ActionMode mode, android.view.MenuItem item) {
+                    if (item.getItemId() == 1) {
+                        if (chats) {
+                            Set<String> pins = pinnedChats();
+                            if (pins.containsAll(selectedItems)) pins.removeAll(selectedItems); else pins.addAll(selectedItems);
+                            appearancePreferences.edit().putStringSet("pinned_chats:" + myDeviceHex, pins).apply();
+                        } else {
+                            StringBuilder text = new StringBuilder();
+                            ChatPage page = pages.get(conversations.get(currentPeer));
+                            if (page != null) for (TimelineItem message : page.timeline) {
+                                JSONObject content = parseContent(message.body);
+                                if (!message.separator && selectedItems.contains(content.optString("id"))) {
+                                    String line = content.optString("text");
+                                    if (!line.isEmpty()) { if (text.length() > 0) text.append("\n"); text.append(line); }
+                                }
+                            }
+                            if (text.length() > 0) copyToClipboard(text.toString(), I18n.t("Скопировано"));
+                            else toast(I18n.t("Нет текста для копирования"));
+                        }
+                        mode.finish();
+                    } else {
+                        List<String> ids = new ArrayList<>(selectedItems);
+                        String conversation = conversations.get(currentPeer);
+                        List<String> threads = new ArrayList<>();
+                        if (chats) for (String selected : ids) {
+                            String thread = conversations.get(selected);
+                            if (!TextUtils.isEmpty(thread)) threads.add(thread);
+                        }
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle(I18n.t("Удалить у себя") + " · " + ids.size())
+                                .setMessage(R.string.delete_mine_hint)
+                                .setPositiveButton(R.string.delete, (d, which) -> {
+                                    if (chats) for (String thread : threads) submit(Commands.deleteConversation(thread));
+                                    else if (!TextUtils.isEmpty(conversation)) for (String selected : ids)
+                                        submit(Commands.deleteMessage(conversation, selected, false));
+                                    mode.finish();
+                                }).setNegativeButton(R.string.cancel, null).show();
+                    }
+                    return true;
+                }
+                public void onDestroyActionMode(android.view.ActionMode mode) {
+                    selectionMode = null;
+                    selectedItems.clear();
+                    refreshSelectionRows();
+                }
+            });
+        }
+        if (selectionMode == null) return;
+        if (!selectedItems.add(id)) selectedItems.remove(id);
+        if (selectedItems.isEmpty()) { selectionMode.finish(); return; }
+        selectionMode.setTitle(I18n.t("Выбрано") + ": " + selectedItems.size());
+        refreshSelectionRows();
+    }
+
+    private void refreshSelectionRows() {
+        if (messageListAdapter != null) messageListAdapter.notifyDataSetChanged();
+        if (chatListAdapter != null) renderPeers();
     }
 
     private void showMessageMenu(String body, boolean outgoing, String peer) {
@@ -5389,6 +5502,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     public void onBackPressed() {
+        if (selectionMode != null) { selectionMode.finish(); return; }
         if (voiceRecorder != null) {
             // Первое «назад» во время записи отменяет её, а не закрывает экран.
             stopRecording(false);

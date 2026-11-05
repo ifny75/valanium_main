@@ -26,10 +26,16 @@ import android.widget.TextView;
 final class PhotoViewer {
     private final Activity activity;
     private final Bitmap bitmap;
+    private final Runnable onEdit;
 
     PhotoViewer(Activity activity, Bitmap bitmap) {
+        this(activity, bitmap, null);
+    }
+
+    PhotoViewer(Activity activity, Bitmap bitmap, Runnable onEdit) {
         this.activity = activity;
         this.bitmap = bitmap;
+        this.onEdit = onEdit;
     }
 
     void show() {
@@ -64,6 +70,18 @@ final class PhotoViewer {
                 Gravity.TOP | Gravity.END);
         closeParams.setMargins(0, dp(20), dp(16), 0);
         root.addView(close, closeParams);
+
+        if (onEdit != null) {
+            TextView edit = new TextView(activity);
+            edit.setText(I18n.t("Изменить и отправить"));
+            edit.setTextColor(Color.WHITE);
+            edit.setPadding(dp(16), dp(14), dp(16), dp(14));
+            edit.setBackground(round(0xCC171719, 0x553F3F44));
+            edit.setOnClickListener(v -> { dialog.dismiss(); onEdit.run(); });
+            FrameLayout.LayoutParams editParams = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
+            editParams.setMargins(dp(16), dp(20), 0, 0);
+            root.addView(edit, editParams);
+        }
 
         TextView hint = new TextView(activity);
         hint.setText(I18n.t("Двойное касание · масштаб пальцами"));
