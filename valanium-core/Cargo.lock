@@ -5293,6 +5293,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "hex",
+ "hkdf",
  "if-addrs",
  "openmls",
  "openmls_basic_credential",

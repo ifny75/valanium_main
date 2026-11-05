@@ -77,7 +77,7 @@ final class PairingUi {
         int pad = (int)(20 * activity.getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);
         TextView explanation = new TextView(activity);
-        explanation.setText(I18n.t("Оба устройства должны быть в одной Wi-Fi сети. Подключается новое устройство без старой истории. Телефон продолжит работать. Подтвердите одинаковый код на обоих экранах."));
+        explanation.setText(I18n.t("Оба устройства должны быть в одной Wi-Fi сети. Переносятся чаты, сообщения и вложения. Телефон продолжит работать. Подтвердите одинаковый код на обоих экранах."));
         root.addView(explanation);
         status = new TextView(activity); status.setText(I18n.t("Ожидание сопряжения…")); root.addView(status);
         image = new ImageView(activity); image.setAdjustViewBounds(true); image.setBackgroundColor(Color.WHITE);
@@ -146,7 +146,11 @@ final class PairingUi {
         if ("listening".equals(state)) { session=id; qr=event.optString("qr"); if (dialog != null) renderQr(); return; }
         if ("connecting".equals(state)) { session=id; return; }
         if (!id.equals(session)) return;
-        if ("verify".equals(state)) {
+        if ("transferring".equals(state)) {
+            if (status != null) status.setText(I18n.t("Переносим чаты и сообщения… ") + event.optString("code"));
+            if (confirm != null) confirm.setVisibility(android.view.View.GONE);
+            if (image != null) image.setVisibility(android.view.View.GONE);
+        } else if ("verify".equals(state)) {
             if (dialog == null) open();
             status.setText(I18n.t("Сверьте код: ") + event.optString("code"));
             image.setVisibility(android.view.View.GONE); confirm.setVisibility(android.view.View.VISIBLE); confirm.setEnabled(true);
@@ -154,7 +158,7 @@ final class PairingUi {
             if (dialog != null) { dialog.setOnDismissListener(null); dialog.dismiss(); dialog=null; }
             if (image != null) image.setImageDrawable(null);
             qr="";session="";running=false;status(identity);
-            android.widget.Toast.makeText(activity,I18n.t("Устройство подключено. Старая история не переносится."),android.widget.Toast.LENGTH_LONG).show();
+            android.widget.Toast.makeText(activity,I18n.t("Устройство подключено. Чаты и история перенесены."),android.widget.Toast.LENGTH_LONG).show();
         } else if ("failed".equals(state)) fail();
     }
     void result(int code, Intent data) {

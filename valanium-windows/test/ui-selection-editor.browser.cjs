@@ -15,7 +15,7 @@ const server=http.createServer((req,res)=>{
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const origin=`http://127.0.0.1:${server.address().port}`;
  const executablePath=process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined);
- const browser=await chromium.launch({executablePath,args:['--no-sandbox']});
+ const browser=await chromium.launch({executablePath,args:['--no-sandbox','--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--autoplay-policy=no-user-gesture-required']});
  try {
  const page=await browser.newPage({viewport:{width:1440,height:1000}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -25,7 +25,7 @@ const server=http.createServer((req,res)=>{
   window.__TAURI__={core:{invoke:async(name,args)=>{window.nativeCalls.push({name,args});if(name==='submit')window.sent.push(JSON.parse(args.json));return name==='auto_unlock'?'locked':null;}},event:{listen:async()=>()=>{}}};
   navigator.clipboard.writeText=async text=>window.copied=text;
  });
- await page.route('**/main.js',route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,'main.js'),'utf8')+'\nwindow.testUI={state,pairing,handlers,editor,bulkSelection,groupKey,showScreen,renderConversations,selectConversation,toggleBulkSelection,clearBulkSelection,openEditor,renderPhoto,buildMessage,encodeContent,preferences,applyPreferences,history};'}));
+ await page.route('**/main.js',route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(root,'main.js'),'utf8')+'\nwindow.testUI={state,audioCalls,pairing,handlers,editor,bulkSelection,groupKey,showScreen,renderConversations,selectConversation,toggleBulkSelection,clearBulkSelection,openEditor,renderPhoto,buildMessage,encodeContent,preferences,applyPreferences,history};'}));
  await page.goto(origin);
  await page.waitForFunction(()=>window.testUI);
  await page.waitForTimeout(400);
@@ -96,7 +96,7 @@ const server=http.createServer((req,res)=>{
  await page.evaluate(()=>{testUI.pairing.stop();testUI.state.device='';testUI.showScreen('screen-entry');testUI.pairing.start(false);});
  await page.locator('#pairing-entry').click();
  assert.ok(await page.evaluate(()=>window.sent.some(x=>x.type==='pairing_listen')));
- await page.evaluate(()=>testUI.pairing.event({type:'pairing',session:'session-rx',state:'listening',qr:'valanium-pair:v1:test',qr_svg:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="white"/></svg>'}));
+ await page.evaluate(()=>testUI.pairing.event({type:'pairing',session:'session-rx',state:'listening',qr:'valanium-pair:v2:test',qr_svg:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="white"/></svg>'}));
  assert.equal(await page.locator('#pairing-modal img').isVisible(),true);
  await page.evaluate(()=>testUI.pairing.event({type:'pairing',session:'session-rx',state:'verify',code:'123456'}));
  assert.equal(await page.locator('#pairing-modal [data-pairing-confirm]').isVisible(),true);
@@ -112,7 +112,7 @@ const server=http.createServer((req,res)=>{
  });
  assert.equal(await page.locator('#pairing-offer').count(),1);
  await page.locator('#pairing-offer button').first().click();
- await page.locator('#pairing-modal textarea').fill('valanium-pair:v1:test');
+ await page.locator('#pairing-modal textarea').fill('valanium-pair:v2:test');
  await page.locator('#pairing-modal button').filter({hasText:'Подключить по коду'}).click();
  await page.evaluate(()=>{
   testUI.pairing.event({type:'pairing',session:'session-tx',state:'connecting'});
@@ -131,7 +131,38 @@ const server=http.createServer((req,res)=>{
  assert.equal(await page.locator('#pairing-modal').count(),1);
  await page.locator('#pairing-modal button').filter({hasText:'Закрыть'}).click();
  assert.equal(await page.locator('#pairing-modal').count(),0);
+ // Actual browser microphone + AudioWorklet capture, explicit accept and mute.
+ await page.evaluate(()=>{
+  window.microphoneRequests=0;window.callStreams=[];
+  const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia=async options=>{window.microphoneRequests++;const stream=await original(options);window.callStreams.push(stream);return stream;};
+  void testUI.audioCalls.start('a'.repeat(64));
+ });
+ await page.waitForFunction(()=>window.sent.some(x=>x.type==='call_start'));
+ await page.waitForTimeout(200);
+ assert.equal(await page.evaluate(()=>window.sent.filter(x=>x.type==='call_audio').length),0);
+ await page.evaluate(()=>testUI.handlers.call_status({call_id:'1'.repeat(32),peer_device:'a'.repeat(64),status:'connecting'}));
+ await page.waitForFunction(()=>window.sent.filter(x=>x.type==='call_audio').length>=3);
+ assert.equal(await page.evaluate(()=>window.sent.find(x=>x.type==='call_audio').data.length),2560);
+ await page.locator('#call-panel button').filter({hasText:'Выключить микрофон'}).click();
+ const mutedCount=await page.evaluate(()=>window.sent.filter(x=>x.type==='call_audio').length);await page.waitForTimeout(250);
+ assert.equal(await page.evaluate(()=>window.sent.filter(x=>x.type==='call_audio').length),mutedCount);
+ await page.locator('#call-panel button').filter({hasText:'Завершить'}).click();
+ assert.equal(await page.evaluate(()=>window.callStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))),true);
+ const micRequests=await page.evaluate(()=>window.microphoneRequests);
+ await page.evaluate(()=>testUI.handlers.call_status({call_id:'2'.repeat(32),peer_device:'a'.repeat(64),status:'incoming'}));
+ assert.equal(await page.evaluate(()=>window.microphoneRequests),micRequests);
+ await page.locator('#call-panel button').filter({hasText:'Принять',exact:true}).click();
+ await page.waitForFunction(()=>window.sent.some(x=>x.type==='call_accept'&&x.call_id==='2'.repeat(32)));
+ await page.evaluate(()=>testUI.handlers.call_status({call_id:'2'.repeat(32),peer_device:'a'.repeat(64),status:'ended'}));
+ assert.equal(await page.evaluate(()=>window.callStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))),true);
+ await page.evaluate(()=>{
+  testUI.handlers.group({group:'archived',kind:'group',title:'History',owner:'owner',members:[],history_only:true});
+  testUI.selectConversation(testUI.groupKey('archived'));
+ });
+ assert.equal(await page.locator('#composer').isDisabled(),true);
+ assert.match(await page.locator('#composer').getAttribute('placeholder'),/История группы/);
  assert.deepEqual(errors,[]);
- console.log('PASS: selection/copy, chat/group pins and deletion, delete confirmation, dividers, zoom invariance, drawing/undo, captured photo recipient, QR pairing UI and explicit confirmation; no page errors');
+ console.log('PASS: selection/copy, chat/group pins and deletion, delete confirmation, dividers, zoom invariance, drawing/undo, captured photo recipient, QR pairing UI, browser audio capture/mute/consent/cleanup; no page errors');
  } finally { await browser.close(); server.close(); }
 })().catch(e=>{console.error(e);server.close();process.exitCode=1;});

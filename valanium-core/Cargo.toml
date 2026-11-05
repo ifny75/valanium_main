@@ -21,6 +21,7 @@ ton = []
 tor-embedded = ["dep:arti-client", "dep:tor-rtcompat", "dep:tor-proto", "dep:tor-linkspec"]
 
 [dependencies]
+hkdf = "0.12"
 snow = "0.9.6"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 if-addrs = "0.13"

@@ -1,3 +1,5 @@
+import { createCalls } from "./calls.js";
+let audioCalls;
 import { createPairing } from "./pairing.js";
 let pairing;
 const bulkSelection = { kind: null, ids: new Set(), conversation: null };
@@ -156,6 +158,7 @@ function sendRead(peer, ids) {
 }
 
 function showScreen(screen) {
+  if(screen==="screen-entry")audioCalls?.close();
   if (["screen-locked", "screen-migrate", "screen-boot"].includes(screen)) pairing?.stop();
   if (screen !== "screen-main") clearBulkSelection();
   if (screen === "screen-route") {
@@ -1358,11 +1361,11 @@ function selectConversation(peer) {
   $("messages").classList.remove("hidden");
   // В чужом канале писать нельзя: пишет только владелец. Ограничение честное —
   // отправленное всё равно отвергнут получатели.
-  const readOnly = Boolean(group) && group.kind === "channel" && group.owner !== state.device;
+  const readOnly = Boolean(group) && (group.history_only || (group.kind === "channel" && group.owner !== state.device));
   for (const id of ["composer", "send", "attach-image", "record-voice", "emoji-open"]) {
     $(id).disabled = readOnly;
   }
-  $("composer").placeholder = readOnly ? tr("В этот канал пишет только владелец") : tr("Сообщение…");
+  $("composer").placeholder = group?.history_only ? tr("История группы. Для отправки пригласите это устройство в группу.") : readOnly ? tr("В этот канал пишет только владелец") : tr("Сообщение…");
   renderConversations();
 
   // Через conversationOf, а не через entry: у группы записи в state.conversations
@@ -2025,6 +2028,7 @@ function peerOf(conversation) {
 
 const callChecks = new Map();
 const handlers = {
+  call_audio(event) { audioCalls?.event(event); },
   pairing(event) { pairing?.event(event); },
   pairing_found(event) { pairing?.event(event); },
   diagnostics(event) {
@@ -2164,6 +2168,7 @@ const handlers = {
   group(event) {
     const known = state.groups.get(event.group);
     state.groups.set(event.group, {
+      history_only: Boolean(event.history_only),
       kind: event.kind,
       title: event.title,
       owner: event.owner,
@@ -2572,6 +2577,7 @@ const handlers = {
   },
 
   call_status(event) {
+    audioCalls?.event({type:"call_status",...event});
     const id=event.call_id;
     if(event.status==="checking") {
       toast(tr("Проверяем поддержку звонков по защищённому каналу…"));
@@ -2583,6 +2589,7 @@ const handlers = {
     }
   },
   failed(event) {
+    if (event.code?.startsWith("call_")) audioCalls?.failure();
     if (event.code === "pairing") { pairing?.failed(); return; }
     if (event.code === "privacy_preset") { maximumPrivacyPending = false; $("privacy-maximize").disabled = false; }
     if (event.code === "anonymous_delivery_waiting") { toast(getLanguage() === "en" ? "Anonymous delivery is pending. The app will retry through Tor." : event.message); return; }
@@ -3263,6 +3270,7 @@ document.addEventListener("keydown", (event) => {
   $("verification").classList.add("hidden");
 });
 
+audioCalls = createCalls({send:submit,tr,nameOf:displayName,notify:showDesktopNotification,ringEnabled:()=>Boolean(preferences.notificationSound)});
 pairing = createPairing({ send: submit, invoke, tr, hasIdentity: () => Boolean(state.device) });
 listen("valanium:pairing-foreground", ({ payload }) => {
   if (!payload) pairing.stop();
@@ -6248,7 +6256,7 @@ $("call-button")?.addEventListener("click", (e) => {
   e.preventDefault();
   const callPeer=state.current;
   if(!/^[a-f0-9]{64}$/.test(callPeer??"")){toast(tr("Откройте личный диалог для проверки звонка"));return;}
-  confirmAction(tr("Звонки · первый этап"),tr("Можно проверить защищённый канал звонка. Микрофон не включается: передача звука пока разрабатывается. Проверить поддержку у собеседника?"),()=>submit({type:"call_probe",recipient_device:callPeer}));
+  void audioCalls.start(callPeer);
 });
 
 $("chat-search-input").addEventListener("input", runSearch);

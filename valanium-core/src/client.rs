@@ -30,17 +30,17 @@ use crate::store::Store;
 
 pub type EventSink = Arc<dyn Fn(Event) + Send + Sync>;
 
-trait NetworkStream: AsyncRead + AsyncWrite + Unpin + Send {}
+pub(crate) trait NetworkStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> NetworkStream for T {}
 
-type Socket = WebSocketStream<MaybeTlsStream<Box<dyn NetworkStream>>>;
+pub(crate) type Socket = WebSocketStream<MaybeTlsStream<Box<dyn NetworkStream>>>;
 
 /// Открывает WebSocket напрямую либо через локальный Tor SOCKS5.
 ///
 /// Onion-имя никогда не резолвится системным DNS: строка назначения передаётся
 /// SOCKS-прокси как имя. По умолчанию это Tor/Orbot на `127.0.0.1:9050`;
 /// нестандартный порт можно задать `VALANIUM_TOR_SOCKS`.
-async fn open_socket(url: &str) -> Result<Socket> {
+pub(crate) async fn open_socket(url: &str) -> Result<Socket> {
     let request = crate::edge::ws_request(url)?;
     let uri = request.uri();
     let host = uri
@@ -63,11 +63,9 @@ async fn open_socket(url: &str) -> Result<Socket> {
                 .map_err(|err| CoreError::Transport(format!("Tor SOCKS5 недоступен: {err}")))?,
         )
     } else {
-        Box::new(
-            TcpStream::connect((host.as_str(), port))
-                .await
-                .map_err(|err| CoreError::Transport(err.to_string()))?,
-        )
+        let stream = TcpStream::connect((host.as_str(), port)).await.map_err(|err| CoreError::Transport(err.to_string()))?;
+        let _=stream.set_nodelay(true);
+        Box::new(stream)
     };
 
     delivery_timing(if valid_onion_host(&host) { "socks_connect" } else { "tcp_connect" }, started);
@@ -397,6 +395,7 @@ fn is_transport(error: &CoreError) -> bool {
 }
 
 pub struct Engine {
+    call_cancel: Arc<crate::calls::Cancellation>,
     pairing_cancel: Arc<crate::pairing::Cancellation>,
     commands: mpsc::UnboundedSender<Command>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -413,10 +412,14 @@ impl Engine {
 
         let (tx, rx) = mpsc::unbounded_channel();
         let pairing_commands = tx.downgrade();
+        let call_commands = tx.downgrade();
+        let call_cancel = Arc::new(crate::calls::Cancellation::default());
+        let call_runtime_cancel = Arc::clone(&call_cancel);
         let pairing_cancel = Arc::new(crate::pairing::Cancellation::default());
         let pairing_runtime_cancel = Arc::clone(&pairing_cancel);
         let ownership = crate::engine_lock::acquire(&db_path)?;
         let store = Store::open(&db_path, &password)?;
+        store.clear_link_stage(None)?;
 
         let thread = std::thread::Builder::new()
             .name("valanium-core".into())
@@ -432,14 +435,15 @@ impl Engine {
                         return;
                     }
                 };
-                runtime.block_on(crate::pairing::scope(pairing_commands, pairing_runtime_cancel, run(rx, store, sink)));
+                runtime.block_on(crate::calls::scope(call_commands, call_runtime_cancel, crate::pairing::scope(pairing_commands, pairing_runtime_cancel, Box::pin(run(rx, store, sink)))));
             })
             .map_err(|_| CoreError::Transport("cannot spawn core thread".into()))?;
 
-        Ok(Self { commands: tx, thread: Some(thread), pairing_cancel })
+        Ok(Self { commands: tx, thread: Some(thread), pairing_cancel, call_cancel })
     }
 
     pub fn submit(&self, command: Command) -> Result<()> {
+        if let Command::CallEnd{call_id}|Command::CallReject{call_id}=&command { self.call_cancel.stop(call_id); }
         if matches!(&command, Command::PairingCancel) { self.pairing_cancel.stop(false); }
         if matches!(&command, Command::PairingDiscover { enabled: false }) { self.pairing_cancel.stop(true); }
         self.commands
@@ -468,6 +472,12 @@ impl Engine {
 /// connected», если про второе место забывали, — на этом и попался
 /// `recovery_code`, который нужен как раз тогда, когда клиент подключён.
 fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
+    if crate::calls::local(command, sink) { return true; }
+    if let Command::PairingCleanup { session } = command { let _=store.clear_link_stage(Some(session)); return true; }
+    if let Command::PairingStage { session, seq, payload, done } = command {
+        let ok=crate::pairing::valid_receiver(session)&&store.stage_link_record(session,*seq,payload).is_ok();
+        if let Ok(mut done)=done.lock(){if let Some(done)=done.take(){let _=done.send(ok);}}return true;
+    }
     if let Command::PairingInstall { session, payload, done } = command {
         let ok = crate::pairing::install(session, payload, store);
         if ok { sink(status(store)); }
@@ -591,6 +601,7 @@ fn handle_local(command: &Command, store: &Store, sink: &EventSink) -> bool {
             for (group_id, _kind, raw) in store.list_groups().unwrap_or_default() {
                 if let Ok(meta) = serde_json::from_slice::<GroupMeta>(&raw) {
                     sink(Event::Group {
+                        history_only: store.load_setting(&format!("history-only-group:{}",hex::encode(&group_id))).ok().flatten().is_some(),
                         group: hex::encode(&group_id),
                         kind: meta.kind,
                         title: meta.title,
@@ -854,6 +865,8 @@ async fn run(mut commands: mpsc::UnboundedReceiver<Command>, store: Store, sink:
             Command::Send { recipient_device, body } => {
                 queue_offline(&store, &sink, &recipient_device, &body);
             }
+            Command::CallDispatch { .. } => {},
+            Command::CallStart { .. } | Command::CallAccept { .. } => fail(&sink,"call_not_connected","Подключитесь к сети перед началом звонка"),
             Command::ProfileGet { .. }
             | Command::ProfileSet { .. }
             | Command::ProfileName { .. }
@@ -2753,6 +2766,7 @@ async fn pump(
     let mut last_received = tokio::time::Instant::now();
     let mut probe: Option<(tokio::time::Instant,Vec<u8>)> = None;
     let mut claims_since: Option<tokio::time::Instant> = None;
+    let mut devices_refreshed = tokio::time::Instant::now();
 
     loop {
         let anonymous_deadline = if authenticated && greeting.sealed_sender {
@@ -3029,10 +3043,33 @@ async fn pump(
                             Err(err) => fail(sink, "storage", &err.to_string()),
                         }
                     }
+                    Command::CallStart { recipient_device, call_id } => {
+                        let device=hex::decode(&recipient_device).map_err(|_|CoreError::BadFrame)?;
+                        let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Сначала откройте личную переписку");continue};
+                        if store.group(&group_id)?.is_some() || !mls.members(&group_id).map(|members|members.len()==2).unwrap_or(false) {
+                            fail(sink,"call_channel_not_ready","Защищённый канал ещё восстанавливается. Повторите звонок позже");continue;
+                        }
+                        if !permits_incoming_call(store,&device)? {fail(sink,"call_privacy","Звонки запрещены настройками приватности");continue;}
+                        match crate::calls::start(&recipient_device,call_id.as_deref(),sink) {
+                            Ok(signal)=> { encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?; },
+                            Err(_)=>fail(sink,"call_busy","Уже идёт другой звонок"),
+                        }
+                    }
+                    Command::CallAccept { call_id } => {
+                        if let Ok((peer,signal))=crate::calls::accept(&call_id,sink) {
+                            let device=hex::decode(peer).map_err(|_|CoreError::BadFrame)?;let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                            if let Some(group_id)=store.conversation_with(&device)? { encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?; }
+                        }
+                    }
+                    Command::CallDispatch { peer, signal } => {
+                        let device=hex::decode(peer).map_err(|_|CoreError::BadFrame)?;let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
+                        if let Some(group_id)=store.conversation_with(&device)? { encrypt_and_send(&mut socket,store,mls,sink,&group_id,PendingSend{device,body:signal.body(),stored:true},&mut live.outbox,None).await?; }
+                    }
                     Command::CallProbe { recipient_device } => {
                         let device=hex::decode(&recipient_device).map_err(|_|CoreError::BadFrame)?;
                         let device:[u8;KEY_LEN]=device.try_into().map_err(|_|CoreError::BadKeyLength)?;
-                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Open a conversation first");continue};
+                        let Some(group_id)=store.conversation_with(&device)? else {fail(sink,"call_no_conversation","Сначала откройте личную переписку");continue};
                         let Some(signal)=live.calls.start(&recipient_device,now_millis()) else {fail(sink,"call_probe_pending","A capability check is already pending");continue};
                         if !permits_activity(store,&signal.body(),&device)? {fail(sink,"call_privacy","Calls are disabled by your privacy rule");continue}
                         let id=signal.id.clone();
@@ -3262,6 +3299,7 @@ async fn pump(
                         }
                     }
                     Command::GroupSend { group, body } => {
+                        if store.load_setting(&format!("history-only-group:{group}"))?.is_some(){fail(sink,"group_history_only","Для отправки пригласите это устройство в группу");continue;}
                         let Ok(group_id) = hex::decode(&group) else {
                             fail(sink, "bad_group", "идентификатор группы неразборчив");
                             continue;
@@ -3580,6 +3618,10 @@ async fn pump(
                 flush_anonymous(&mut socket, store, sink, live, greeting.sealed_sender, &anon_tx).await?;
             }
             _ = ticker.tick() => {
+                if authenticated && greeting.devices && devices_refreshed.elapsed() >= Duration::from_secs(60) {
+                    send(&mut socket,proto::device_list_frame()?).await?;
+                    devices_refreshed=tokio::time::Instant::now();
+                }
                 if authenticated {
                     repair_missing_channels(&mut socket,store,mls,sink,&mut pending).await?;
                     for waiting in pending_sends(store)? {
@@ -3979,8 +4021,13 @@ async fn on_envelope(
                     }
                     Some(Control::Call(signal)) => {
                         let now=now_millis();
-                        if signal.fresh(now) {
-                            if signal.action==crate::calls::Action::Probe && permits_incoming_call(store,&sender_device)? && calls.answer(&device,&signal,now) {
+                        let personal=store.group(&group_id)?.is_none()&&mls.members(&group_id).map(|members|members.len()==2).unwrap_or(false);
+                        if personal && signal.fresh(now) {
+                            if !matches!(signal.action,crate::calls::Action::Probe|crate::calls::Action::Unavailable) {
+                                if signal.action!=crate::calls::Action::Offer || permits_incoming_call(store,&sender_device)? {
+                                    if let Some(response)=crate::calls::incoming(&device,&signal,sink) {queue_private_message(store,mls,&group_id,&PendingSend{device:sender_device,body:response.body(),stored:true})?;}
+                                }
+                            } else if signal.action==crate::calls::Action::Probe && permits_incoming_call(store,&sender_device)? && calls.answer(&device,&signal,now) {
                                 let response=crate::calls::Signal{action:crate::calls::Action::Unavailable,..signal};
                                 queue_private_message(store,mls,&group_id,&PendingSend{device:sender_device,body:response.body(),stored:true})?;
                             } else if calls.complete(&device,&signal,now) {
@@ -4147,6 +4194,7 @@ fn group_event(mls: &Mls, store: &Store, group_id: &[u8], meta: &GroupMeta) -> E
     }
 
     Event::Group {
+        history_only: false,
         group: hex::encode(group_id),
         kind: meta.kind.clone(),
         title: meta.title.clone(),

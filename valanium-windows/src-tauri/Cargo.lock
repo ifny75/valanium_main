@@ -5117,6 +5117,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "hex",
+ "hkdf",
  "if-addrs",
  "openmls",
  "openmls_basic_credential",
@@ -5142,7 +5143,7 @@ dependencies = [
 
 [[package]]
 name = "valanium-windows"
-version = "0.13.20"
+version = "0.13.21"
 dependencies = [
  "hex",
  "rand_core 0.6.4",

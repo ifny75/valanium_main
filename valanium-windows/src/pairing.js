@@ -24,6 +24,9 @@ export function createPairing({ send, invoke, tr, hasIdentity }) {
       image.src = `data:image/svg+xml;base64,${btoa(svg)}`; image.hidden = false;
       state.textContent = tr('Отсканируйте этот QR на устройстве с аккаунтом. QR действует 3 минуты.');
       modal.querySelector('[data-pairing-code]').value = qr;
+    } else if (event.state === 'transferring') {
+      image.hidden=true; modal.querySelector('[data-pairing-confirm]').hidden=true;
+      state.textContent=tr('Переносим чаты и сообщения… ')+event.code;
     } else if (event.state === 'verify') {
       image.hidden = true;
       modal.querySelector('[data-pairing-code]').value = '';
@@ -41,7 +44,7 @@ export function createPairing({ send, invoke, tr, hasIdentity }) {
     receiving = !hasIdentity();
     modal = field('div'); modal.className = 'modal'; modal.id = 'pairing-modal'; modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true');
     const card = field('div'); card.className = 'modal-card pairing-card';
-    card.append(field('h2', 'Подключение аккаунта'), field('p', 'Оба устройства должны быть в одной Wi-Fi сети. Подключается новое устройство без старой истории. Телефон продолжит работать. Подтвердите одинаковый код на обоих экранах.'));
+    card.append(field('h2', 'Подключение аккаунта'), field('p', 'Оба устройства должны быть в одной Wi-Fi сети. Переносятся чаты, сообщения и вложения. Телефон продолжит работать. Подтвердите одинаковый код на обоих экранах.'));
     card.append(field('p', 'При запросе Windows разрешите доступ к частной сети. Гостевая Wi-Fi сеть может блокировать связь между устройствами.'));
     const state = field('p', 'Ожидание сопряжения…'); state.dataset.pairingState = ''; state.setAttribute('aria-live', 'polite'); card.append(state);
     const image = field('img'); image.alt = tr('QR подключения устройства'); image.hidden = true; card.append(image);
@@ -79,11 +82,12 @@ export function createPairing({ send, invoke, tr, hasIdentity }) {
       update(event); return;
     }
     if (event.session !== session) return;
-    if (event.state === 'verify') { open(); update(event); }
+    if (event.state === 'transferring') update(event);
+    else if (event.state === 'verify') { open(); update(event); }
     else if (event.state === 'failed') update(event);
     else if (event.state === 'complete') {
       modal?.remove(); modal = null; session = qr = svg = ''; active = false;
-      const result = field('div'); result.className = 'pairing-offer'; result.textContent = tr('Устройство подключено. Старая история не переносится.'); document.body.append(result); setTimeout(() => result.remove(), 8000);
+      const result = field('div'); result.className = 'pairing-offer'; result.textContent = tr('Устройство подключено. Чаты и история перенесены.'); document.body.append(result); setTimeout(() => result.remove(), 8000);
       start(hasIdentity());
     }
   }

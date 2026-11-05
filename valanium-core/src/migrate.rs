@@ -51,6 +51,8 @@ pub struct ArchiveMessage {
     pub body: String,
 }
 
+impl Drop for ArchiveMessage { fn drop(&mut self) { use zeroize::Zeroize; self.body.zeroize(); } }
+
 /// Содержимое аккаунта в открытом виде. Живёт только в памяти и только между
 /// `Store::export_archive` и запечатыванием.
 #[derive(Serialize, Deserialize)]

@@ -79,6 +79,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     private final Set<String> selectedItems = new LinkedHashSet<>();
 
     private PairingUi pairingUi;
+    private CallUi callUi;
     private boolean foregroundAuthorized;
     private boolean warmCoreUnlock;
 
@@ -545,6 +546,11 @@ public final class MainActivity extends Activity implements Events.Listener {
         findViewById(R.id.open_admin).setOnClickListener(v -> openAdmin());
         wireAdmin();
         wireData();
+        callUi=new CallUi(this,new CallUi.Host(){
+            public void send(JSONObject command){submit(command.toString());}
+            public void begin(String id,boolean audio){stopLocalPolling();ValaniumService.start(MainActivity.this);CallAudioService.start(MainActivity.this,id,audio);}
+            public String name(String peer){return displayName(peer);}
+        });
         pairingUi = new PairingUi(this, new PairingUi.Host() {
             public void send(String command) { submit(command); }
             public String unlock() throws Exception { return new LocalSecretStore(MainActivity.this).load(); }
@@ -684,6 +690,7 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     @Override
     protected void onStop() {
+        if (callUi != null) callUi.suspend();
         if (pairingUi != null) pairingUi.stop();
         if (selectionMode != null) selectionMode.finish();
         if(appUpdates!=null)appUpdates.pause();
@@ -696,7 +703,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         stopVoicePlayback();
         stopLocalPolling();
         Events.unsubscribe(this);
-        if(!BackgroundDelivery.persistent(this)){
+        if(!BackgroundDelivery.persistent(this)&&!CallAudioService.active()){
             ValaniumService.stop(this);
             if(ValaniumService.core().isOpen())ValaniumService.core().submit(Commands.disconnect());
         }
@@ -707,6 +714,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
             int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if(requestCode==CallUi.PERMISSION){callUi.permission(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED);return;}
         if (requestCode == MICROPHONE_PERMISSION_REQUEST) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startRecording();
@@ -1982,12 +1990,8 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void showCallPreview() {
-        if(currentPeer==null||!currentPeer.matches("[a-f0-9]{64}")){toast(I18n.t("Откройте личный диалог для проверки звонка"));return;}
-        final String peer=currentPeer;
-        new AlertDialog.Builder(this).setTitle(I18n.t("Звонки · первый этап"))
-            .setMessage(I18n.t("Можно проверить защищённый канал звонка. Микрофон не включается: передача звука пока разрабатывается. Проверить поддержку у собеседника?"))
-            .setPositiveButton(I18n.t("Проверить поддержку"),(dialog,which)->submit(Commands.callProbe(peer)))
-            .setNegativeButton(I18n.t("Отмена"),null).show();
+        if(currentPeer==null||!currentPeer.matches("[a-f0-9]{64}")){toast(I18n.t("Откройте личный диалог для звонка"));return;}
+        callUi.start(currentPeer);
     }
 
     private void chooseAvatar() {
@@ -2433,6 +2437,7 @@ public final class MainActivity extends Activity implements Events.Listener {
         startEventDelivery();
         BackgroundDelivery.schedule(this);
         submit(Commands.status());
+        submit("{\"type\":\"call_state\"}");
         submit(Commands.conversations());
         ValaniumService.watchNetwork(this);
         submit(Commands.probeConnection());
@@ -3009,6 +3014,7 @@ public final class MainActivity extends Activity implements Events.Listener {
                 access = event;
                 break;
             case "call_status":
+                if(callUi!=null)callUi.event(event);
                 String callPeer=event.optString("peer_device");
                 Runnable oldCheck=callProbeTimeouts.remove(callPeer);if(oldCheck!=null)ui.removeCallbacks(oldCheck);
                 if ("checking".equals(event.optString("status"))) {
@@ -3116,6 +3122,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void onFailed(JSONObject event) {
+        if(event.optString("code").startsWith("call_")&&callUi!=null)callUi.error();
         if ("pairing".equals(event.optString("code")) && pairingUi != null) { pairingUi.fail(); return; }
         String code = event.optString("code");
         if("call_probe_pending".equals(code)){toast(I18n.t("Проверка звонка уже идёт. Дождитесь ответа или завершения ожидания."));return;}
@@ -3788,6 +3795,7 @@ public final class MainActivity extends Activity implements Events.Listener {
     }
 
     private void show(View screen) {
+        if(screen==screenEntry && callUi!=null)callUi.reset();
         if (selectionMode != null && screen != currentScreen) selectionMode.finish();
         currentScreen = screen;
         if(chatWallpaperLayer!=null)chatWallpaperLayer.setVisibility(screen==screenConversation?View.VISIBLE:View.GONE);

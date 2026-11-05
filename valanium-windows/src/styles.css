@@ -3263,3 +3263,5 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 .pairing-offer{position:fixed;bottom:24px;right:24px;z-index:300;max-width:350px;background:var(--bg);color:var(--text);padding:20px;border:1px solid var(--accent);border-radius:20px;box-shadow:0 12px 40px #0008}
 .pairing-offer button{margin:8px 8px 0 0}
 .pairing-discovery{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px}
+
+.call-panel{position:fixed;right:24px;top:80px;z-index:400;width:min(380px,90vw);padding:24px;display:flex;flex-wrap:wrap;gap:14px;border:1px solid var(--accent);border-radius:24px;background:var(--bg);color:var(--text);box-shadow:0 20px 70px #0008}.call-panel h2,.call-panel p,.call-panel small{width:100%;margin:0}.call-panel small{opacity:.65}.call-panel button{flex:1;padding:12px}

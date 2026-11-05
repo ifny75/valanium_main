@@ -1,3 +1,4 @@
+import { callRelay, CALL_JOIN, CALL_MEDIA } from "./calls.ts";
 import { sha256 } from "@noble/hashes/sha2";
 import { config, PROTOCOL_VERSION } from "../config.ts";
 import { log } from "../log.ts";
@@ -165,7 +166,7 @@ export function handleOpen(deps: Deps, sock: Socket, conn: ConnData): void {
       */
       features: {
         profiles: true, recovery: true, usernames: true, passes: true, decor: true,
-        devices: true,
+        devices: true, callRelay: true,
         /**
          * Билеты на анонимную отправку (`TICKET_REQUEST`/`SEND_ANON`). Спрашивать
          * заранее нужно по той же причине, что и для остальных полей `features`:
@@ -193,6 +194,7 @@ export function handleOpen(deps: Deps, sock: Socket, conn: ConnData): void {
 }
 
 export function handleClose(deps: Deps, sock: Socket, conn: ConnData): void {
+  callRelay.leave(sock);
   // Только если этот сокет действительно был учтён: close приходит и на те,
   // что мы закрыли сами, и вычесть их дважды значило бы уйти в минус.
   if (conn.counted) {
@@ -220,7 +222,16 @@ export function handleMessage(deps: Deps, sock: Socket, conn: ConnData, msg: Uin
   const body = msg.subarray(1);
 
   try {
+    if (callRelay.has(sock) && op !== CALL_MEDIA && op !== OP.PING) { sock.end(CLOSE.PROTOCOL,"media socket only"); return; }
     switch (op) {
+      case CALL_JOIN:
+        if (conn.identity || !callRelay.join(sock, body, deps.now())) { sock.end(CLOSE.PROTOCOL,"call join rejected"); return; }
+        if (conn.nonce) { deps.nonces.consume(conn.nonce,deps.now()); conn.nonce=null; }
+        if (conn.anonymous) { conn.anonymous=false; deps.connections.settled(); }
+        return;
+      case CALL_MEDIA:
+        callRelay.media(sock,body,deps.now());
+        return;
       case OP.PING:
         sock.send(frame(OP.PONG), true);
         return;

@@ -25,13 +25,15 @@ use tokio::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
-const PREFIX: &str = "valanium-pair:v1:";
+const PREFIX: &str = "valanium-pair:v2:";
 const DISCOVERY_PORT: u16 = 49173;
 const MAGIC: &str = "valanium-pair-discovery-v1";
 const LIFETIME: Duration = Duration::from_secs(180);
 const IO_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_FRAME: usize = 4096;
 const MAX_PAYLOAD: usize = 2 * 1024 * 1024;
+const MAX_RECORD: usize = 16 * 1024 * 1024;
+const TRANSFER: Duration = Duration::from_secs(3600);
 const NOISE: &str = "Noise_NNpsk0_25519_ChaChaPoly_SHA256";
 
 tokio::task_local! {
@@ -45,6 +47,7 @@ tokio::task_local! {
 #[derive(Default)]
 pub(crate) struct Cancellation {
     sessions: std::sync::Mutex<Vec<tokio::task::AbortHandle>>,
+    epoch: std::sync::atomic::AtomicU64,
     discovery: std::sync::Mutex<Vec<tokio::task::AbortHandle>>,
 }
 impl Cancellation {
@@ -60,6 +63,9 @@ impl Cancellation {
         }
     }
     pub(crate) fn stop(&self, discovery: bool) {
+        if !discovery {
+            self.epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
         let handles = if discovery {
             &self.discovery
         } else {
@@ -73,6 +79,19 @@ impl Cancellation {
     }
 }
 
+struct Export {
+    payload: Zeroizing<Vec<u8>>,
+    history: Option<mpsc::Receiver<Result<Zeroizing<Vec<u8>>>>>,
+}
+impl Export {
+    fn receiver() -> Self {
+        Self {
+            payload: Zeroizing::new(Vec::new()),
+            history: None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Manager {
     active: Option<Active>,
@@ -81,7 +100,8 @@ struct Manager {
 struct Active {
     id: String,
     sending: bool,
-    control: Option<oneshot::Sender<Option<Zeroizing<Vec<u8>>>>>,
+    epoch: u64,
+    control: Option<oneshot::Sender<Option<Export>>>,
     task: JoinHandle<()>,
 }
 impl Drop for Active {
@@ -182,7 +202,7 @@ fn local_peer(ip: Ipv4Addr) -> bool {
         })
 }
 fn prologue(id: &str) -> Vec<u8> {
-    format!("valanium-account-link-v1:{id}").into_bytes()
+    format!("valanium-account-link-v2:{id}").into_bytes()
 }
 fn handshake(id: &str, psk: &[u8], initiator: bool) -> Result<snow::HandshakeState> {
     let params = NOISE.parse().map_err(|_| bad())?;
@@ -200,8 +220,10 @@ async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
         return Err(bad());
     }
     timeout(IO_TIMEOUT, async {
-        stream.write_u32(data.len() as u32).await?;
-        stream.write_all(data).await
+        let mut frame = Vec::with_capacity(data.len() + 4);
+        frame.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        frame.extend_from_slice(data);
+        stream.write_all(&frame).await
     })
     .await
     .map_err(io_error)?
@@ -259,10 +281,15 @@ async fn exchange(
         write_frame(stream, &buffer[..n]).await?;
     }
     let hash = Sha256::digest(state.get_handshake_hash());
-    let code = format!(
-        "{:06}",
-        u32::from_be_bytes(hash[..4].try_into().unwrap()) % 1_000_000
-    );
+    // 64-bit transcript comparison. The QR PSK is the main authenticator;
+    // keep the manual comparison strong even if somebody photographs the QR.
+    let code = hex::encode(&hash[..8])
+        .to_uppercase()
+        .as_bytes()
+        .chunks(4)
+        .map(|part| std::str::from_utf8(part).unwrap().to_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
     Ok((state.into_transport_mode().map_err(|_| bad())?, code))
 }
 
@@ -324,9 +351,7 @@ fn install_link(store: &Store, bytes: &[u8]) -> Result<()> {
     })
 }
 
-async fn confirm(
-    control: oneshot::Receiver<Option<Zeroizing<Vec<u8>>>>,
-) -> Result<Zeroizing<Vec<u8>>> {
+async fn confirm(control: oneshot::Receiver<Option<Export>>) -> Result<Export> {
     timeout(LIFETIME, control)
         .await
         .map_err(io_error)?
@@ -357,10 +382,27 @@ fn emit(sink: &EventSink, session: &str, state: &str, code: &str, qr: &str) {
 async fn receiver(
     listener: TcpListener,
     invite: Invitation,
-    control: oneshot::Receiver<Option<Zeroizing<Vec<u8>>>>,
+    control: oneshot::Receiver<Option<Export>>,
     commands: mpsc::WeakUnboundedSender<Command>,
     sink: EventSink,
 ) -> Result<()> {
+    struct Cleanup {
+        session: String,
+        commands: mpsc::WeakUnboundedSender<Command>,
+    }
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            if let Some(commands) = self.commands.upgrade() {
+                let _ = commands.send(Command::PairingCleanup {
+                    session: self.session.clone(),
+                });
+            }
+        }
+    }
+    let _cleanup = Cleanup {
+        session: invite.id.clone(),
+        commands: commands.clone(),
+    };
     let end = Instant::now() + LIFETIME;
     // The UDP task belongs to this listener and is aborted when it closes.
     let announcement = announce(invite.id.clone(), invite.port).await;
@@ -378,6 +420,7 @@ async fn receiver(
             .await
             .map_err(io_error)?
             .map_err(io_error)?;
+        let _ = stream.set_nodelay(true);
         if !matches!(address.ip(), std::net::IpAddr::V4(ip) if is_lan(ip)) {
             continue;
         }
@@ -395,6 +438,39 @@ async fn receiver(
     send(&mut stream, &mut noise, b"confirmed-v1").await?;
     receive_confirmation(&mut stream, &mut noise).await?;
     let payload = receive_payload(&mut stream, &mut noise).await?;
+    if payload.is_empty() || payload.len() > MAX_PAYLOAD {
+        return Err(bad());
+    }
+    emit(&sink, &invite.id, "transferring", "0", "");
+    let mut seq = 0u64;
+    loop {
+        let record = receive_payload(&mut stream, &mut noise).await?;
+        if record.is_empty() {
+            break;
+        }
+        let (done, completed) = oneshot::channel();
+        commands
+            .upgrade()
+            .ok_or_else(bad)?
+            .send(Command::PairingStage {
+                session: invite.id.clone(),
+                seq,
+                payload: record,
+                done: std::sync::Mutex::new(Some(done)),
+            })
+            .map_err(|_| bad())?;
+        if !timeout(Duration::from_secs(60), completed)
+            .await
+            .map_err(io_error)?
+            .map_err(io_error)?
+        {
+            return Err(bad());
+        }
+        seq += 1;
+        if seq % 32 == 0 {
+            emit(&sink, &invite.id, "transferring", &seq.to_string(), "");
+        }
+    }
     let (done, completed) = oneshot::channel();
     commands
         .upgrade()
@@ -405,7 +481,7 @@ async fn receiver(
             done: std::sync::Mutex::new(Some(done)),
         })
         .map_err(|_| bad())?;
-    if !timeout(IO_TIMEOUT, completed)
+    if !timeout(Duration::from_secs(600), completed)
         .await
         .map_err(io_error)?
         .map_err(io_error)?
@@ -420,7 +496,7 @@ async fn receiver(
 }
 async fn sender(
     invite: Invitation,
-    control: oneshot::Receiver<Option<Zeroizing<Vec<u8>>>>,
+    control: oneshot::Receiver<Option<Export>>,
     sink: EventSink,
 ) -> Result<()> {
     let mut connected = None;
@@ -436,13 +512,36 @@ async fn sender(
         }
     }
     let mut stream = connected.ok_or_else(|| io_error("connect"))?;
+    let _ = stream.set_nodelay(true);
     let (mut noise, code) = exchange(&mut stream, &invite, true).await?;
     emit(&sink, &invite.id, "verify", &code, "");
-    let payload = confirm(control).await?;
+    let mut exported = confirm(control).await?;
     send(&mut stream, &mut noise, b"confirmed-v1").await?;
     receive_confirmation(&mut stream, &mut noise).await?;
-    send_payload(&mut stream, &mut noise, &payload).await?;
-    if &*receive(&mut stream, &mut noise).await? != b"installed-v1" {
+    send_payload(&mut stream, &mut noise, &exported.payload).await?;
+    let mut history = exported.history.take().ok_or_else(bad)?;
+    let mut count = 0u64;
+    emit(&sink, &invite.id, "transferring", "0", "");
+    while let Some(record) = history.recv().await {
+        let record = record?;
+        send_payload(&mut stream, &mut noise, &record).await?;
+        count += 1;
+        if count % 32 == 0 {
+            emit(&sink, &invite.id, "transferring", &count.to_string(), "");
+        }
+    }
+    send(&mut stream, &mut noise, &0u32.to_be_bytes()).await?;
+    let wire = timeout(
+        Duration::from_secs(600),
+        read_frame_without_timeout(&mut stream),
+    )
+    .await
+    .map_err(io_error)??;
+    let mut confirmation = Zeroizing::new(vec![0; wire.len()]);
+    let len = noise
+        .read_message(&wire, &mut confirmation)
+        .map_err(|_| bad())?;
+    if &confirmation[..len] != b"installed-v1" {
         return Err(bad());
     }
     emit(&sink, &invite.id, "complete", "", "");
@@ -453,7 +552,7 @@ async fn send_payload(
     noise: &mut snow::TransportState,
     payload: &[u8],
 ) -> Result<()> {
-    if payload.is_empty() || payload.len() > MAX_PAYLOAD {
+    if payload.is_empty() || payload.len() > MAX_RECORD {
         return Err(bad());
     }
     send(stream, noise, &(payload.len() as u32).to_be_bytes()).await?;
@@ -469,7 +568,7 @@ async fn receive_payload(
     let header = receive(stream, noise).await?;
     let bytes: [u8; 4] = header.as_slice().try_into().map_err(|_| bad())?;
     let len = u32::from_be_bytes(bytes) as usize;
-    if len == 0 || len > MAX_PAYLOAD {
+    if len > MAX_RECORD {
         return Err(bad());
     }
     let mut payload = Zeroizing::new(Vec::with_capacity(len));
@@ -619,6 +718,9 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                     }
                 }
                 Command::PairingCancel => {
+                    if let Some(active) = manager.active.as_ref() {
+                        store.clear_link_stage(Some(&active.id))?;
+                    }
                     manager.active = None;
                     emit(sink, "", "cancelled", "", "");
                 }
@@ -633,9 +735,22 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                         if !store.password_matches(&key)? {
                             return Err(CoreError::StoreLocked);
                         }
-                        export_link(store)?
+                        let payload = export_link(store)?;
+                        let path = store.path();
+                        let (tx, rx) = mpsc::channel(2);
+                        tokio::task::spawn_blocking(move || {
+                            let result = Store::open(&path, &key)
+                                .and_then(|snapshot| snapshot.stream_link_snapshot(&tx));
+                            if let Err(error) = result {
+                                let _ = tx.blocking_send(Err(error));
+                            }
+                        });
+                        Export {
+                            payload,
+                            history: Some(rx),
+                        }
                     } else {
-                        Zeroizing::new(Vec::new())
+                        Export::receiver()
                     };
                     active
                         .control
@@ -649,6 +764,7 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                         return Err(CoreError::Rejected("identity_exists".into()));
                     }
                     manager.active = None;
+                    store.clear_link_stage(None)?;
                     let addresses: Vec<_> = interfaces().into_iter().map(|a| a.ip).collect();
                     if addresses.is_empty() {
                         return Err(CoreError::Rejected("pairing_wifi_unavailable".into()));
@@ -674,7 +790,7 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                     let session = id.clone();
                     let task = tokio::spawn(async move {
                         if timeout(
-                            LIFETIME,
+                            TRANSFER,
                             receiver(listener, invite, confirmed, tx, Arc::clone(&callback)),
                         )
                         .await
@@ -687,6 +803,8 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                     manager.active = Some(Active {
                         id: id.clone(),
                         sending: false,
+                        epoch: CANCELLATION
+                            .with(|cancel| cancel.epoch.load(std::sync::atomic::Ordering::Acquire)),
                         control: Some(control),
                         task,
                     });
@@ -703,7 +821,7 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                     let callback = Arc::clone(sink);
                     let session = id.clone();
                     let task = tokio::spawn(async move {
-                        if timeout(LIFETIME, sender(invite, confirmed, Arc::clone(&callback)))
+                        if timeout(TRANSFER, sender(invite, confirmed, Arc::clone(&callback)))
                             .await
                             .map_or(true, |r| r.is_err())
                         {
@@ -714,6 +832,8 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
                     manager.active = Some(Active {
                         id: id.clone(),
                         sending: true,
+                        epoch: CANCELLATION
+                            .with(|cancel| cancel.epoch.load(std::sync::atomic::Ordering::Acquire)),
                         control: Some(control),
                         task,
                     });
@@ -734,6 +854,22 @@ pub(crate) fn handle(command: &Command, store: &Store, sink: &EventSink) -> bool
     true
 }
 
+pub(crate) fn valid_receiver(session: &str) -> bool {
+    MANAGER
+        .try_with(|cell| {
+            cell.borrow().active.as_ref().is_some_and(|a| {
+                a.id == session
+                    && !a.sending
+                    && a.control.is_none()
+                    && !a.task.is_finished()
+                    && CANCELLATION.with(|cancel| {
+                        cancel.epoch.load(std::sync::atomic::Ordering::Acquire) == a.epoch
+                    })
+            })
+        })
+        .unwrap_or(false)
+}
+
 pub(crate) fn install(session: &str, payload: &[u8], store: &Store) -> bool {
     MANAGER
         .try_with(|cell| {
@@ -741,7 +877,18 @@ pub(crate) fn install(session: &str, payload: &[u8], store: &Store) -> bool {
             let valid = manager.active.as_ref().is_some_and(|a| {
                 a.id == session && !a.sending && a.control.is_none() && !a.task.is_finished()
             });
-            valid && install_link(store, payload).is_ok()
+            valid
+                && store
+                    .atomic(|| {
+                        install_link(store, payload)?;
+                        store.install_link_history(session)?;
+                        store.clear_link_stage(Some(session))?;
+                        if !valid_receiver(session) {
+                            return Err(bad());
+                        }
+                        Ok(())
+                    })
+                    .is_ok()
         })
         .unwrap_or(false)
 }
@@ -791,7 +938,7 @@ mod tests {
             self.engine.as_ref().unwrap().submit(command).unwrap();
         }
         fn wait(&self, expected: &str) -> (String, String) {
-            let end = std::time::Instant::now() + Duration::from_secs(15);
+            let end = std::time::Instant::now() + Duration::from_secs(60);
             loop {
                 match self
                     .events
@@ -883,6 +1030,27 @@ mod tests {
             .store()
             .save_setting("directory", &directory_bytes)
             .unwrap();
+        let chat = b"restored-chat";
+        let peer = [0xaa; 32];
+        let long =
+            serde_json::json!({"type":"text","text":"history-content ".repeat(40_000)}).to_string();
+        {
+            let db = source.store();
+            db.set_conversation(&peer, chat).unwrap();
+            for i in 0..3 {
+                db.insert_message(
+                    &[i + 1; 16],
+                    chat,
+                    i % 2 == 0,
+                    100 + i as i64,
+                    long.as_bytes(),
+                )
+                .unwrap();
+            }
+            db.insert_message(&[9;16],chat,false,200,b"\xe2\x81\xa3OBS1:{\"v\":1,\"type\":\"image\",\"id\":\"photo\",\"data\":\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW2kAAAAASUVORK5CYII=\"}").unwrap();
+            db.save_mls(&[7; 32], b"old-device-state-must-not-be-cloned")
+                .unwrap();
+        }
         target.send(Command::PairingListen);
         let (id, qr) = target.wait("listening");
         source.send(Command::PairingConnect { qr: qr.clone() });
@@ -912,6 +1080,18 @@ mod tests {
         let linked = target.store().load_credentials().unwrap();
         assert_eq!(linked.identity.public(), credentials.identity.public());
         assert_ne!(linked.device.public(), credentials.device.public());
+        {
+            let restored = target.store();
+            let items = restored.list_messages(chat, 20, None).unwrap();
+            assert_eq!(items.len(), 4);
+            assert!(items.iter().any(|message| message.body == long.as_bytes()));
+            assert!(items
+                .iter()
+                .any(|message| String::from_utf8_lossy(&message.body).contains("iVBORw0KGgo")));
+            assert!(restored.load_mls().unwrap().is_none());
+            assert_eq!(restored.conversation_with(&peer).unwrap().unwrap(), chat);
+        }
+
         assert_eq!(
             target.store().load_setting("directory").unwrap().unwrap(),
             directory_bytes
@@ -1044,7 +1224,10 @@ mod tests {
         )
         .await;
         assert!(result.map_or(true, |result| result.is_err()));
-        assert!(events.try_recv().is_err());
+        assert!(!matches!(
+            events.try_recv(),
+            Ok(Command::PairingInstall { .. })
+        ));
         assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port))
             .await
             .is_err());
