@@ -13,8 +13,8 @@ android {
         // 26 — минимум, где есть каналы уведомлений и нормальный foreground-сервис.
         minSdk = 26
         targetSdk = 35
-        versionCode = 47
-        versionName = "0.7.25"
+        versionCode = 48
+        versionName = "0.7.26"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         // Device logout tests must never operate on the user's installed account.
         if (providers.gradleProperty("isolatedTest").isPresent) {
