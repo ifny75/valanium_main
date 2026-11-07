@@ -3746,12 +3746,52 @@ public final class MainActivity extends Activity implements Events.Listener {
         row.addView(swipe);
         String messageId = parseContent(item.body).optString("id");
         if (selectionMode != null && !selectingChats && !messageId.isEmpty()) {
+            boolean picked = selectedItems.contains(messageId);
+            int accent = accentColor();
+            // Bubbles make room for the check mark on the left instead of hiding under it.
+            params.leftMargin = dp(40);
+            swipe.setLayoutParams(params);
             View selection = new View(this);
-            selection.setBackgroundColor(selectedItems.contains(messageId) ? ((accentColor() & 0x00ffffff) | 0x44000000) : Color.TRANSPARENT);
-            selection.setContentDescription((selectedItems.contains(messageId) ? "✓ " : "○ ") + parseContent(item.body).optString("text", I18n.t("Фото")));
-            selection.setFocusable(true);
-            selection.setOnClickListener(v -> toggleSelection(messageId, false));
-            row.addView(selection, new FrameLayout.LayoutParams(-1, -1));
+            GradientDrawable highlight = new GradientDrawable();
+            highlight.setCornerRadius(dp(18));
+            if (picked) {
+                highlight.setColor((accent & 0x00ffffff) | 0x2E000000);
+                highlight.setStroke(dp(1), (accent & 0x00ffffff) | 0x66000000);
+            } else {
+                highlight.setColor(Color.TRANSPARENT);
+            }
+            selection.setBackground(highlight);
+            selection.setContentDescription((picked ? "✓ " : "○ ") + parseContent(item.body).optString("text", I18n.t("Фото")));
+            FrameLayout.LayoutParams area = new FrameLayout.LayoutParams(-1, -1);
+            row.addView(selection, 0, area);
+            TextView check = new TextView(this);
+            check.setGravity(Gravity.CENTER);
+            check.setTextSize(13);
+            check.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            GradientDrawable circle = new GradientDrawable();
+            circle.setShape(GradientDrawable.OVAL);
+            if (picked) {
+                circle.setColor(accent);
+                check.setText("✓");
+                check.setTextColor(Color.luminance(accent) > .4 ? Color.rgb(16, 16, 16) : Color.WHITE);
+            } else {
+                circle.setColor(Color.TRANSPARENT);
+                circle.setStroke(dp(2), mutedText());
+            }
+            check.setBackground(circle);
+            check.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            FrameLayout.LayoutParams mark = new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.START | Gravity.CENTER_VERTICAL);
+            mark.leftMargin = dp(6);
+            row.addView(check, mark);
+            // While selecting, a tap anywhere on the row toggles it rather than opening menus.
+            View tapArea = new View(this);
+            tapArea.setOnClickListener(v -> toggleSelection(messageId, false));
+            tapArea.setContentDescription(selection.getContentDescription());
+            row.addView(tapArea, new FrameLayout.LayoutParams(-1, -1));
+            if (motionEnabled()) {
+                swipe.setScaleX(picked ? 0.98f : 1f);
+                swipe.setScaleY(picked ? 0.98f : 1f);
+            }
         }
         if (created && motionEnabled()) {
             row.setAlpha(0f);
@@ -4972,7 +5012,6 @@ public final class MainActivity extends Activity implements Events.Listener {
         String quote = !text.isEmpty() ? text : "image".equals(type) ? I18n.t("Фото") : I18n.t("Голосовое сообщение");
         java.util.List<SwipeMessageLayout.Action> actions = new ArrayList<>();
         if (!id.isEmpty()) {
-            actions.add(new SwipeMessageLayout.Action(I18n.t("Выбрать"), "✓", () -> toggleSelection(id, false)));
             actions.add(new SwipeMessageLayout.Action(I18n.t("Ответить"), "↩", () -> { setReply(id, quote); focusComposer(); }));
             actions.add(new SwipeMessageLayout.Action(I18n.t("Реакция"), "♡", () -> chooseMessageReaction(peer, id, quote)));
         }
@@ -4994,8 +5033,15 @@ public final class MainActivity extends Activity implements Events.Listener {
             selectingChats = chats;
             selectionMode = startActionMode(new android.view.ActionMode.Callback() {
                 public boolean onCreateActionMode(android.view.ActionMode mode, android.view.Menu menu) {
-                    menu.add(0, 1, 0, I18n.t(chats ? "Закрепить / открепить" : "Копировать"));
-                    menu.add(0, 2, 1, I18n.t("Удалить у себя"));
+                    ColorStateList tint = ColorStateList.valueOf(themeText());
+                    android.view.MenuItem first = menu.add(0, 1, 0, I18n.t(chats ? "Закрепить / открепить" : "Копировать"));
+                    first.setIcon(chats ? R.drawable.ic_pin : R.drawable.ic_copy);
+                    first.setIconTintList(tint);
+                    first.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS);
+                    android.view.MenuItem delete = menu.add(0, 2, 1, I18n.t("Удалить у себя"));
+                    delete.setIcon(R.drawable.ic_delete);
+                    delete.setIconTintList(ColorStateList.valueOf(Color.rgb(237, 104, 96)));
+                    delete.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS);
                     return true;
                 }
                 public boolean onPrepareActionMode(android.view.ActionMode mode, android.view.Menu menu) { return false; }
@@ -5060,6 +5106,11 @@ public final class MainActivity extends Activity implements Events.Listener {
 
     private void showMessageMenu(String body, boolean outgoing, String peer) {
         java.util.List<SwipeMessageLayout.Action> actions = messageActions(body, outgoing, peer);
+        String selectable = parseContent(body).optString("id");
+        if (!selectable.isEmpty()) {
+            actions.add(Math.min(1, actions.size()),
+                    new SwipeMessageLayout.Action(I18n.t("Выбрать"), "✓", () -> toggleSelection(selectable, false)));
+        }
         if (actions.isEmpty()) return;
         String[] labels = new String[actions.size()];
         for (int i = 0; i < actions.size(); i++) labels[i] = actions.get(i).label;

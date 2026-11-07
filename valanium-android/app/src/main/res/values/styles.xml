@@ -15,6 +15,35 @@
         <item name="android:navigationBarColor">@color/valanium_black</item>
         <item name="android:statusBarColor">@color/valanium_black</item>
         <item name="android:windowLightStatusBar">false</item>
+        <!-- Selection bar in the app's own look instead of the grey platform one. -->
+        <item name="android:actionModeBackground">@drawable/action_mode_bg</item>
+        <item name="android:actionModeStyle">@style/Valanium.ActionMode</item>
+        <item name="android:actionMenuTextAppearance">@style/Valanium.ActionMenuText</item>
+    </style>
+
+    <style name="Valanium.ActionMode" parent="android:style/Widget.Material.ActionMode">
+        <item name="android:background">@drawable/action_mode_bg</item>
+        <item name="android:titleTextStyle">@style/Valanium.ActionModeTitle</item>
+    </style>
+
+    <style name="Valanium.ActionMode.Light">
+        <item name="android:background">@drawable/action_mode_bg_light</item>
+        <item name="android:titleTextStyle">@style/Valanium.ActionModeTitle.Light</item>
+    </style>
+
+    <style name="Valanium.ActionModeTitle.Light">
+        <item name="android:textColor">#FF101010</item>
+    </style>
+
+    <style name="Valanium.ActionModeTitle" parent="android:style/TextAppearance.Material.Widget.ActionMode.Title">
+        <item name="android:fontFamily">@font/inter_medium</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:textColor">@color/valanium_white</item>
+    </style>
+
+    <style name="Valanium.ActionMenuText" parent="android:style/TextAppearance.Material.Widget.ActionBar.Menu">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:fontFamily">@font/inter_medium</item>
     </style>
 
     <style name="Valanium.Wordmark" parent="">
@@ -443,6 +472,8 @@
     </style>
     <style name="Valanium.Theme.Light" parent="Valanium.Theme">
         <item name="android:alertDialogTheme">@style/Valanium.Dialog.Light</item>
+        <item name="android:actionModeBackground">@drawable/action_mode_bg_light</item>
+        <item name="android:actionModeStyle">@style/Valanium.ActionMode.Light</item>
         <item name="android:textColorPrimary">#FF101010</item>
         <item name="android:textColorSecondary">#FF5B5B63</item>
         <item name="android:colorBackground">#FFF8F8FA</item>
