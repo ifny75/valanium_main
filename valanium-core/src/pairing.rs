@@ -188,7 +188,11 @@ fn interfaces() -> Vec<if_addrs::Ifv4Addr> {
                 return None;
             }
             match interface.addr {
-                if_addrs::IfAddr::V4(addr) if is_lan(addr.ip) && !addr.ip.is_loopback() => {
+                // A /32 is a point-to-point tunnel (e.g. a VPN adapter not named wg/tun):
+                // nothing else on the Wi-Fi can reach it, it only slows the connection down.
+                if_addrs::IfAddr::V4(addr)
+                    if is_lan(addr.ip) && !addr.ip.is_loopback() && addr.netmask != Ipv4Addr::BROADCAST =>
+                {
                     Some(addr)
                 }
                 _ => None,

@@ -115,9 +115,6 @@ final class PairingUi {
             Button offer = new Button(activity, null, 0, R.style.Valanium_Button_Dark); offer.setAllCaps(false);
             offer.setText(I18n.t("Показать QR для нового устройства"));
             offer.setOnClickListener(v -> send("pairing_offer")); root.addView(offer);
-            EditText input = new EditText(activity); input.setHint(I18n.t("Код сопряжения с другого устройства")); input.setSingleLine(true); root.addView(input);
-            Button connect = new Button(activity, null, 0, R.style.Valanium_Button_Dark); connect.setAllCaps(false); connect.setText(I18n.t("Подключить по коду"));
-            connect.setOnClickListener(v -> { String value = input.getText().toString().trim(); input.setText(""); command("pairing_connect", "qr", value); }); root.addView(connect);
         } else {
             Button refresh = new Button(activity, null, 0, R.style.Valanium_Button_Dark); refresh.setAllCaps(false); refresh.setText(I18n.t("Создать новый QR")); refresh.setOnClickListener(v -> send("pairing_listen")); root.addView(refresh);
             Button copy = new Button(activity, null, 0, R.style.Valanium_Button_Dark); copy.setAllCaps(false); copy.setText(I18n.t("Копировать код подключения"));
@@ -129,6 +126,10 @@ final class PairingUi {
                 ((android.content.ClipboardManager)activity.getSystemService(Activity.CLIPBOARD_SERVICE)).setPrimaryClip(clip);
             }); root.addView(copy);
         }
+        // Manual entry works in both directions: when the camera cannot read the other screen.
+        EditText input = new EditText(activity); input.setHint(I18n.t("Код сопряжения с другого устройства")); input.setSingleLine(true); root.addView(input);
+        Button connect = new Button(activity, null, 0, R.style.Valanium_Button_Dark); connect.setAllCaps(false); connect.setText(I18n.t("Подключить по коду"));
+        connect.setOnClickListener(v -> { String value = input.getText().toString().trim(); input.setText(""); command("pairing_connect", "qr", value); }); root.addView(connect);
         ThemeSurfaces.apply(root, prefs.getInt("accent_color",0xff9770ff), "light".equals(prefs.getString("theme","dark")));
         ScrollView scroll = new ScrollView(activity); scroll.addView(root);
         dialog = new AlertDialog.Builder(activity).setTitle(I18n.t("Подключение аккаунта"))

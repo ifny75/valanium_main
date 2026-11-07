@@ -3180,6 +3180,8 @@ public final class MainActivity extends Activity implements Events.Listener {
                 }
                 setMyDevice(event.optString("device"));
                 invite.setText("");
+                // The sign-up screen was waiting to *receive* an account; now this device is a source.
+                if (pairingUi != null) { pairingUi.stop(); pairingUi.status(true); }
                 break;
             case "authenticated":
                 deliveryOnline = true;
