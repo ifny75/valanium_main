@@ -64,6 +64,35 @@ struct Active {
     audio: Option<mpsc::Sender<Frame>>,
     task: JoinHandle<()>,
 }
+/// Microphone frames skip the engine's command queue. That queue waits whenever the
+/// main loop is busy with the server (slow Tor writes, history sync), and a frame
+/// that waited more than 250 ms was dropped: the other side heard silence while
+/// incoming audio, which never went through the queue, kept playing.
+type Tap = (mpsc::WeakSender<Frame>, Arc<AtomicBool>);
+static TAPS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Tap>>> =
+    std::sync::LazyLock::new(Default::default);
+fn open_tap(id: &str, tx: &mpsc::Sender<Frame>, muted: &Arc<AtomicBool>) {
+    if let Ok(mut taps) = TAPS.lock() {
+        taps.retain(|_, (tx, _)| tx.strong_count() > 0);
+        taps.insert(id.to_owned(), (tx.downgrade(), Arc::clone(muted)));
+    }
+}
+/// Called straight from `Engine::submit`, on the caller's thread.
+pub(crate) fn microphone(call_id: &str, data: &str, captured_at: Option<i64>) {
+    if captured_at.is_some_and(|at| now().saturating_sub(at) > 250 || at.saturating_sub(now()) > 5000) {
+        return;
+    }
+    if data.len() != audio::SAMPLES * 4 {
+        return;
+    }
+    let Some((tx, muted)) = TAPS.lock().ok().and_then(|taps| taps.get(call_id).cloned()) else { return };
+    if muted.load(Ordering::Acquire) {
+        return;
+    }
+    let (Some(tx), Ok(bytes)) = (tx.upgrade(), hex::decode(data)) else { return };
+    let pcm = Zeroizing::new(bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect());
+    let _ = tx.try_send(Frame { pcm, captured: Instant::now() });
+}
 impl Drop for Active {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::Release);
@@ -192,6 +221,7 @@ fn connect(active: &mut Active, sink: &EventSink) {
     active.task.abort();
     active.phase = "connecting";
     let (tx, rx) = mpsc::channel(4);
+    open_tap(&active.id, &tx, &active.muted);
     active.audio = Some(tx);
     let peer = active.peer.clone();
     let id = active.id.clone();
@@ -367,36 +397,7 @@ pub(crate) fn local(command: &Command, sink: &EventSink) -> bool {
                 call_id,
                 data,
                 captured_at,
-            } => {
-                if let Some(a) = state
-                    .active
-                    .as_ref()
-                    .filter(|a| &a.id == call_id && !a.muted.load(Ordering::Acquire))
-                {
-                    if captured_at.is_some_and(|at| {
-                        now().saturating_sub(at) > 250 || at.saturating_sub(now()) > 5000
-                    }) {
-                        return;
-                    }
-                    if data.len() != audio::SAMPLES * 4 {
-                        return;
-                    }
-                    if let Ok(bytes) = hex::decode(data) {
-                        let pcm = Zeroizing::new(
-                            bytes
-                                .chunks_exact(2)
-                                .map(|b| i16::from_le_bytes([b[0], b[1]]))
-                                .collect(),
-                        );
-                        if let Some(tx) = &a.audio {
-                            let _ = tx.try_send(Frame {
-                                pcm,
-                                captured: Instant::now(),
-                            });
-                        }
-                    }
-                }
-            }
+            } => microphone(call_id, data, *captured_at),
             _ => {}
         }
     });

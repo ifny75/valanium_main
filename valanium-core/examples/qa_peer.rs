@@ -64,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut n = 0;
     let mut call: Option<String> = None;
     let mut phase = 0f32;
+    let (mut heard, mut loudest) = (0u64, 0f64);
     loop {
         let e = match events.recv_timeout(std::time::Duration::from_millis(40)) {
             Ok(e) => e,
@@ -81,6 +82,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(error) => return Err(error.into()),
         };
+        if e["type"] == "call_audio" {
+            // How much of the other side's microphone actually arrives, and whether it is silence.
+            let bytes = hex::decode(e["data"].as_str().unwrap_or_default()).unwrap_or_default();
+            let sum: f64 = bytes.chunks_exact(2).map(|b| { let s = i16::from_le_bytes([b[0], b[1]]) as f64; s * s }).sum();
+            heard += 1;
+            loudest = loudest.max((sum / (bytes.len() / 2).max(1) as f64).sqrt());
+            if heard % 25 == 0 { println!("HEARD frames={heard} rms_max={loudest:.0}"); loudest = 0.0; }
+            continue;
+        }
         if e["type"] == "call_status" {
             println!("CALL {} {}", e["call_id"], e["status"]);
             let id = e["call_id"].as_str().unwrap_or_default().to_string();

@@ -535,6 +535,10 @@ impl Engine {
     }
 
     pub fn submit(&self, command: Command) -> Result<()> {
+        if let Command::CallAudio { call_id, data, captured_at } = &command {
+            crate::calls::microphone(call_id, data, *captured_at);
+            return Ok(());
+        }
         if let Command::CallEnd{call_id}|Command::CallReject{call_id}=&command { self.call_cancel.stop(call_id); }
         if matches!(&command, Command::PairingCancel) { self.pairing_cancel.stop(false); }
         if matches!(&command, Command::PairingDiscover { enabled: false }) { self.pairing_cancel.stop(true); }
