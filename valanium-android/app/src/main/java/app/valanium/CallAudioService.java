@@ -29,6 +29,11 @@ public final class CallAudioService extends Service implements Events.Listener {
     private PowerManager.WakeLock wake;
     private final java.util.concurrent.ArrayBlockingQueue<short[]> queue=new java.util.concurrent.ArrayBlockingQueue<>(8);
     public static boolean active(){return instance!=null||requested;}
+    // Live voice levels for the call screen and banner; numbers only, never audio.
+    private static volatile float peerLevel,ownLevel;private static volatile long peerAt,ownAt;
+    static float peerLevel(){return SystemClock.uptimeMillis()-peerAt>250?0f:peerLevel;}
+    static float ownLevel(){CallAudioService s=instance;return s==null||s.muted||SystemClock.uptimeMillis()-ownAt>250?0f:ownLevel;}
+    private static float level(short[] pcm){double sum=0;for(int i=0;i<pcm.length;i+=2)sum+=(double)pcm[i]*pcm[i];return (float)Math.min(1.0,Math.sqrt(Math.sqrt(sum/(pcm.length/2.0))/3500.0));}
     public static boolean isMuted(){return instance!=null&&instance.muted;}
     @SuppressWarnings("deprecation") public static boolean isSpeaker(){return instance!=null&&(instance.manager==null?instance.speakerWanted:instance.manager.isSpeakerphoneOn());}
     @Override public boolean foregroundInterface(){return false;}
@@ -93,7 +98,7 @@ public final class CallAudioService extends Service implements Events.Listener {
             if(muted){if(recording){record.stop();recording=false;}Thread.sleep(40);at=0;continue;}
             if(!recording){record.startRecording();recording=true;}
             int n=record.read(pcm,at,pcm.length-at,AudioRecord.READ_BLOCKING);if(n<0)throw new IllegalStateException();at+=n;
-            if(at==pcm.length){StringBuilder hex=new StringBuilder(2560);for(short sample:pcm){int value=sample&65535;for(int b:new int[]{value&255,value>>>8}){hex.append(Character.forDigit(b>>>4,16));hex.append(Character.forDigit(b&15,16));}}
+            if(at==pcm.length){ownLevel=level(pcm);ownAt=SystemClock.uptimeMillis();StringBuilder hex=new StringBuilder(2560);for(short sample:pcm){int value=sample&65535;for(int b:new int[]{value&255,value>>>8}){hex.append(Character.forDigit(b>>>4,16));hex.append(Character.forDigit(b&15,16));}}
                 if(!muted)ValaniumService.core().submit(new JSONObject().put("type","call_audio").put("call_id",id).put("data",hex.toString()).put("captured_at",System.currentTimeMillis()).toString());at=0;java.util.Arrays.fill(pcm,(short)0);}
         }}catch(Exception error){if(running){send("call_end",id);new Handler(Looper.getMainLooper()).post(this::stopSelf);}}finally{java.util.Arrays.fill(pcm,(short)0);}
     }
@@ -101,7 +106,7 @@ public final class CallAudioService extends Service implements Events.Listener {
             short[] pcm=queue.poll(100,java.util.concurrent.TimeUnit.MILLISECONDS);if(pcm!=null){if(track.write(pcm,0,pcm.length,AudioTrack.WRITE_BLOCKING)<0)throw new IllegalStateException();java.util.Arrays.fill(pcm,(short)0);}
         }}catch(Exception error){if(running){send("call_end",id);new Handler(Looper.getMainLooper()).post(this::stopSelf);}} }
     @Override public void onEvent(JSONObject event){if(!id.equals(event.optString("call_id")))return;
-        if("call_audio".equals(event.optString("type"))){String data=event.optString("data");if(data.length()!=2560)return;short[] pcm=new short[640];try{for(int i=0;i<640;i++){int lo=Integer.parseInt(data.substring(i*4,i*4+2),16),hi=Integer.parseInt(data.substring(i*4+2,i*4+4),16);pcm[i]=(short)(lo|(hi<<8));}if(!queue.offer(pcm)){short[] old=queue.poll();if(old!=null)java.util.Arrays.fill(old,(short)0);queue.offer(pcm);}}catch(RuntimeException ignored){}return;}
+        if("call_audio".equals(event.optString("type"))){String data=event.optString("data");if(data.length()!=2560)return;short[] pcm=new short[640];try{for(int i=0;i<640;i++){int lo=Integer.parseInt(data.substring(i*4,i*4+2),16),hi=Integer.parseInt(data.substring(i*4+2,i*4+4),16);pcm[i]=(short)(lo|(hi<<8));}peerLevel=level(pcm);peerAt=SystemClock.uptimeMillis();if(!queue.offer(pcm)){short[] old=queue.poll();if(old!=null)java.util.Arrays.fill(old,(short)0);queue.offer(pcm);}}catch(RuntimeException ignored){}return;}
         if("call_status".equals(event.optString("type"))){String state=event.optString("status");if("connecting".equals(state)||"active".equals(state))audio();else if(!"ringing".equals(state)&&!"incoming".equals(state))stopSelf();}
     }
     @SuppressWarnings("deprecation") private void shutdown(){running=false;if(record!=null)try{record.stop();}catch(RuntimeException ignored){}if(track!=null)try{track.pause();track.flush();}catch(RuntimeException ignored){}

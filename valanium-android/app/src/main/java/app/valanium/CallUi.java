@@ -9,7 +9,12 @@ import org.json.JSONObject;
 /** Visible consent and controls; the service owns audio across Activity changes. */
 final class CallUi {
  static final int PERMISSION=4788;
- interface Host{void send(JSONObject command);void begin(String id,boolean audio);String name(String peer);void avatar(TextView view,String peer);}
+ interface Host{void send(JSONObject command);void begin(String id,boolean audio);String name(String peer);void avatar(TextView view,String peer);void banner(View view);}
+ private static final java.util.List<String> LIVE=java.util.List.of("ringing","connecting","active");
+ // Survives a recreated Activity, so the timer does not restart after rotation.
+ private static String timedId="";private static long activeSince;
+ private boolean minimized;private LinearLayout banner;private TextView bannerTime,statusView;
+ private final Runnable ticker=new Runnable(){public void run(){tick();if(!id.isEmpty()&&(minimized||dialog!=null))activity.getWindow().getDecorView().postDelayed(this,1000);}};
  private final Activity activity;private final Host host;
  private String id="",peer="",state="";private android.media.Ringtone ringtone;
  private Dialog dialog;private LinearLayout root;private Runnable permission;
@@ -18,13 +23,13 @@ final class CallUi {
  private void send(String type){try{host.send(new JSONObject().put("type",type).put("call_id",id));}catch(Exception ignored){}}
  private void permit(Runnable run){if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)run.run();else{permission=run;activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},PERMISSION);}}
  void permission(boolean granted){Runnable run=permission;permission=null;if(granted){if(run!=null)run.run();else try{host.send(new JSONObject().put("type","call_state"));}catch(Exception ignored){}}else error();}
- void start(String who){if(id.isEmpty()&&CallAudioService.active()){try{host.send(new JSONObject().put("type","call_state"));}catch(Exception ignored){}return;}if(!id.isEmpty()&&java.util.List.of("incoming","ringing","connecting","active").contains(state)){paint();return;}
+ void start(String who){if(id.isEmpty()&&CallAudioService.active()){try{host.send(new JSONObject().put("type","call_state"));}catch(Exception ignored){}return;}if(!id.isEmpty()&&java.util.List.of("incoming","ringing","connecting","active").contains(state)){if(minimized)restore();else paint();return;}
   peer=who;long requested=++generation;permit(()->{if(generation!=requested)return;id=java.util.UUID.randomUUID().toString().replace("-","");state="ringing";paint();
    try{host.begin(id,false);host.send(new JSONObject().put("type","call_start").put("recipient_device",peer).put("call_id",id));}catch(Exception error){error();}
   });
  }
  void event(JSONObject event){String next=event.optString("call_id"),status=event.optString("status");
-  if("idle".equals(status)){if(!id.isEmpty()&&java.util.List.of("ringing","connecting").contains(state))return;if(dialog!=null)dialog.dismiss();id="";CallAudioService.finish(activity);return;}
+  if("idle".equals(status)){if(!id.isEmpty()&&java.util.List.of("ringing","connecting").contains(state))return;if(dialog!=null)dialog.dismiss();dialog=null;removeBanner();minimized=false;id="";CallAudioService.finish(activity);return;}
   if(!java.util.List.of("incoming","ringing","connecting","active","ended","failed","declined","busy","timeout").contains(status))return;
   if(!id.isEmpty()&&!id.equals(next)&&!"incoming".equals(status))return;
   // We already closed this screen ourselves; the core's final status must not reopen it.
@@ -32,6 +37,7 @@ final class CallUi {
   if(!"incoming".equals(status))stopRing();
   if("incoming".equals(status))generation++;
   id=next;peer=event.optString("peer_device");state=status;
+  if("active".equals(state)&&!id.equals(timedId)){timedId=id;activeSince=android.os.SystemClock.elapsedRealtime();}
   if(java.util.List.of("ended","failed","declined","busy","timeout").contains(state))CallAudioService.finish(activity);
   else if("connecting".equals(state)||"active".equals(state)){try{host.begin(id,true);}catch(Exception e){send("call_end");error();return;}}
   paint();
@@ -55,10 +61,19 @@ final class CallUi {
  private void paint(){
   if(!"incoming".equals(state))stopRing();
   if(activity.isFinishing()||activity.isDestroyed())return;
+  if(minimized){
+   if(LIVE.contains(state)){if(dialog!=null){dialog.dismiss();dialog=null;}showBanner();return;}
+   // Finished while the person was chatting: say so quietly instead of covering the chat.
+   removeBanner();minimized=false;
+   if(!"failed".equals(state)){Toast.makeText(activity,I18n.t(label(state)),Toast.LENGTH_SHORT).show();close();return;}
+  }
   if(dialog==null){
    dialog=new Dialog(activity,android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);dialog.setCancelable(false);
+   // Back minimizes a live call instead of being swallowed.
+   dialog.setOnKeyListener((d,code,key)->{if(code==android.view.KeyEvent.KEYCODE_BACK&&key.getAction()==android.view.KeyEvent.ACTION_UP&&LIVE.contains(state)){minimize();return true;}return false;});
    root=new LinearLayout(activity);root.setOrientation(LinearLayout.VERTICAL);root.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
-   dialog.setContentView(root);
+   FrameLayout frame=new FrameLayout(activity);frame.addView(root,new FrameLayout.LayoutParams(-1,-1));
+   dialog.setContentView(frame);
    android.view.Window window=dialog.getWindow();
    if(window!=null)window.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT,android.view.ViewGroup.LayoutParams.MATCH_PARENT);
   }
@@ -74,9 +89,14 @@ final class CallUi {
   TextView name=new TextView(activity);name.setText(host.name(peer));name.setTextColor(android.graphics.Color.WHITE);name.setTextSize(28);name.setGravity(android.view.Gravity.CENTER);
   name.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL));name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
   LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT);np.topMargin=dp(20);root.addView(name,np);
-  TextView status=new TextView(activity);String label=switch(state){case "incoming"->"Входящий звонок";case "ringing"->"Ожидание ответа…";case "connecting"->"Соединяем аудиоканал…";case "active"->"Звонок · сквозное шифрование";case "busy"->"У собеседника другой звонок";case "declined"->"Звонок отклонён";case "timeout"->"Нет ответа на звонок";case "failed"->"Соединение звонка потеряно";default->"Звонок завершён";};
-  status.setText(I18n.t(label));status.setTextColor(android.graphics.Color.argb(190,255,255,255));status.setTextSize(15);status.setGravity(android.view.Gravity.CENTER);
+  TextView status=new TextView(activity);statusView=status;status.setFontFeatureSettings("tnum");
+  status.setText(I18n.t(label(state)));status.setTextColor(android.graphics.Color.argb(190,255,255,255));status.setTextSize(15);status.setGravity(android.view.Gravity.CENTER);
   LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT);sp.topMargin=dp(6);root.addView(status,sp);
+  if(LIVE.contains(state)){
+   // The other side's voice; the bars stay low and still while nobody speaks.
+   VoiceBars voice=new VoiceBars(activity,CallAudioService::peerLevel,"active".equals(state)?accentOnDark(accent):android.graphics.Color.argb(90,255,255,255));
+   LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(58),dp(34));vp.topMargin=dp(18);vp.gravity=android.view.Gravity.CENTER_HORIZONTAL;root.addView(voice,vp);
+  }
   View spring=new View(activity);root.addView(spring,new LinearLayout.LayoutParams(1,0,1f));
   TextView privacy=new TextView(activity);privacy.setText(I18n.t("Звук через relay без Tor. Сервер видит IP участников, но не расшифровывает звук."));
   privacy.setTextColor(android.graphics.Color.argb(140,255,255,255));privacy.setTextSize(12);privacy.setGravity(android.view.Gravity.CENTER);
@@ -99,8 +119,53 @@ final class CallUi {
    root.postDelayed(()->{if(generation==shown&&finished.equals(id)&&java.util.List.of("ended","declined","busy","timeout").contains(state))close();},2200);
   }
   root.addView(row,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
+  FrameLayout frame=(FrameLayout)root.getParent();
+  for(int i=frame.getChildCount()-1;i>0;i--)frame.removeViewAt(i);
+  if(LIVE.contains(state)){
+   ImageButton minimize=new ImageButton(activity);minimize.setImageResource(R.drawable.ic_chevron);minimize.setRotation(90);
+   android.graphics.drawable.GradientDrawable glass=new android.graphics.drawable.GradientDrawable();glass.setShape(android.graphics.drawable.GradientDrawable.OVAL);glass.setColor(android.graphics.Color.argb(40,255,255,255));minimize.setBackground(glass);
+   minimize.setPadding(dp(12),dp(12),dp(12),dp(12));minimize.setScaleType(ImageView.ScaleType.FIT_CENTER);
+   minimize.setImageTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE));
+   minimize.setContentDescription(I18n.t("Свернуть звонок"));minimize.setOnClickListener(v->minimize());
+   FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(46),dp(46));mp.leftMargin=dp(18);mp.topMargin=dp(40);frame.addView(minimize,mp);
+  }
   dialog.show();
+  tick();restartTicker();
  }
+ private static String label(String state){return switch(state){case "incoming"->"Входящий звонок";case "ringing"->"Ожидание ответа…";case "connecting"->"Соединяем аудиоканал…";case "active"->"Звонок · сквозное шифрование";case "busy"->"У собеседника другой звонок";case "declined"->"Звонок отклонён";case "timeout"->"Нет ответа на звонок";case "failed"->"Соединение звонка потеряно";default->"Звонок завершён";};}
+ private static String elapsed(){long s=Math.max(0,(android.os.SystemClock.elapsedRealtime()-activeSince)/1000);return s>=3600?String.format(java.util.Locale.ROOT,"%d:%02d:%02d",s/3600,s/60%60,s%60):String.format(java.util.Locale.ROOT,"%02d:%02d",s/60,s%60);}
+ private void tick(){
+  boolean timed="active".equals(state)&&id.equals(timedId);
+  if(statusView!=null&&dialog!=null)statusView.setText(timed?elapsed()+" · "+I18n.t("Сквозное шифрование"):I18n.t(label(state)));
+  if(bannerTime!=null)bannerTime.setText(timed?elapsed():I18n.t(label(state)));
+ }
+ private void restartTicker(){View decor=activity.getWindow().getDecorView();decor.removeCallbacks(ticker);decor.postDelayed(ticker,1000);}
+ private static int accentOnDark(int accent){float[] hsv=new float[3];android.graphics.Color.colorToHSV(accent,hsv);hsv[2]=Math.max(hsv[2],.85f);hsv[1]=Math.min(hsv[1],.65f);return android.graphics.Color.HSVToColor(hsv);}
+ /** Leave the call running and go back to the chats; a bar on top brings it back. */
+ private void minimize(){minimized=true;if(dialog!=null){dialog.dismiss();dialog=null;}showBanner();}
+ void restore(){if(!minimized)return;minimized=false;removeBanner();paint();}
+ private void showBanner(){
+  if(banner==null){
+   banner=new LinearLayout(activity);banner.setOrientation(LinearLayout.HORIZONTAL);banner.setGravity(android.view.Gravity.CENTER_VERTICAL);
+   banner.setPadding(dp(16),0,dp(12),0);banner.setClickable(true);banner.setFocusable(true);banner.setOnClickListener(v->restore());
+   VoiceBars bars=new VoiceBars(activity,()->Math.max(CallAudioService.peerLevel(),CallAudioService.ownLevel()),android.graphics.Color.WHITE);
+   banner.addView(bars,new LinearLayout.LayoutParams(dp(26),dp(18)));
+   TextView who=new TextView(activity);who.setTextColor(android.graphics.Color.WHITE);who.setTextSize(14);who.setSingleLine(true);who.setEllipsize(android.text.TextUtils.TruncateAt.END);
+   who.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL));who.setTag("who");
+   LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f);wp.leftMargin=dp(12);banner.addView(who,wp);
+   bannerTime=new TextView(activity);bannerTime.setTextColor(android.graphics.Color.argb(230,255,255,255));bannerTime.setTextSize(13);bannerTime.setFontFeatureSettings("tnum");
+   banner.addView(bannerTime,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT));
+   ImageView open=new ImageView(activity);open.setImageResource(R.drawable.ic_chevron);open.setRotation(-90);open.setImageTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE));
+   LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(dp(18),dp(18));op.leftMargin=dp(8);banner.addView(open,op);
+   host.banner(banner);
+  }
+  int accent=accent();
+  banner.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,new int[]{blend(accent,android.graphics.Color.BLACK,.78f),blend(accent,android.graphics.Color.BLACK,.55f)}));
+  ((TextView)banner.findViewWithTag("who")).setText(host.name(peer));
+  banner.setContentDescription(I18n.t("Вернуться к звонку")+": "+host.name(peer));
+  tick();restartTicker();
+ }
+ private void removeBanner(){if(banner!=null){host.banner(null);banner=null;bannerTime=null;}}
  private void addControl(LinearLayout row,View control){
   LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f);row.addView(control,lp);
  }
@@ -113,6 +178,6 @@ final class CallUi {
  void suspend(){if("incoming".equals(state))try{CallAudioService.notifyState(activity,new JSONObject().put("type","call_status").put("call_id",id).put("status",state),false);}catch(Exception ignored){}hide();}
  void reset(){close();}
  void hide(){stopRing();if(dialog!=null){dialog.dismiss();dialog=null;}}
- private void close(){generation++;CallAudioService.finish(activity);hide();id="";state="";}
+ private void close(){generation++;CallAudioService.finish(activity);hide();removeBanner();minimized=false;id="";state="";}
  void error(){generation++;stopRing();if(!id.isEmpty())send("call_end");state="failed";CallAudioService.finish(activity);paint();}
 }

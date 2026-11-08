@@ -352,5 +352,8 @@
   "Пароль приложения": "App password",
   "Valanium заблокирован": "Valanium is locked",
   "Открыть": "Open",
-  "Проверяем пароль…": "Checking the password…"
+  "Проверяем пароль…": "Checking the password…",
+  "Свернуть звонок": "Minimize call",
+  "Вернуться к звонку": "Return to call",
+  "Сквозное шифрование": "End-to-end encrypted"
 }

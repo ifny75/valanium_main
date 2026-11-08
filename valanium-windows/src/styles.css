@@ -3275,24 +3275,49 @@ input[type="checkbox"]:focus-visible{outline:2px solid var(--accent);outline-off
 .pairing-discovery{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px}
 
 /* Call banner: a floating card, not a modal, so the chat stays usable. */
-.call-panel{position:fixed;top:24px;right:24px;z-index:400;width:min(400px,calc(100vw - 48px));display:grid;grid-template-columns:56px minmax(0,1fr) auto;grid-template-areas:"avatar copy actions" "note note note";align-items:center;gap:12px 14px;padding:16px 16px 12px;border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:22px;background:color-mix(in srgb,var(--panel-solid,#121214) 88%,transparent);color:var(--text);box-shadow:0 24px 70px #0009;backdrop-filter:blur(22px) saturate(1.15);-webkit-backdrop-filter:blur(22px) saturate(1.15);animation:call-in .26s cubic-bezier(.22,.61,.36,1) both}
-.call-panel[data-status="incoming"]{border-color:color-mix(in srgb,#34c759 55%,transparent)}
-.call-avatar{grid-area:avatar;width:56px;height:56px;display:grid;place-items:center;border-radius:50%;background-size:cover;background-position:center;color:#fff;font:600 18px/1 "Inter UI",sans-serif}
+.call-panel{--voice:0;--own:0;position:fixed;top:20px;right:20px;z-index:400;width:min(392px,calc(100vw - 40px));display:flex;flex-direction:column;gap:14px;padding:18px 18px 14px;overflow:hidden;border:1px solid color-mix(in srgb,var(--accent) 34%,transparent);border-radius:26px;background:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--accent) 30%,transparent),transparent 62%),linear-gradient(160deg,color-mix(in srgb,var(--panel-solid,#121214) 92%,var(--accent)),color-mix(in srgb,var(--panel-solid,#121214) 97%,transparent));color:var(--text);box-shadow:0 26px 70px #0008,0 0 0 1px #ffffff08 inset;backdrop-filter:blur(24px) saturate(1.2);-webkit-backdrop-filter:blur(24px) saturate(1.2);animation:call-in .28s cubic-bezier(.22,.61,.36,1) both;transition:width .22s ease,padding .22s ease,border-radius .22s ease}
+.call-panel[data-status="incoming"]{border-color:color-mix(in srgb,#34c759 55%,transparent);background:radial-gradient(120% 90% at 0% 0%,#34c75933,transparent 62%),linear-gradient(160deg,color-mix(in srgb,var(--panel-solid,#121214) 94%,#34c759),var(--panel-solid,#121214))}
+.call-panel[data-status="failed"],.call-panel[data-status="declined"],.call-panel[data-status="busy"]{border-color:color-mix(in srgb,#eb4040 45%,transparent)}
+.call-head{display:flex;align-items:center;gap:14px;min-width:0}
+.call-halo{position:relative;flex:none;width:56px;height:56px;border-radius:50%}
+.call-halo::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 70%,#fff);opacity:calc(var(--voice) * 1.2);transform:scale(calc(1 + var(--voice) * .12));transition:opacity .12s linear,transform .12s linear}
+.call-avatar{width:56px;height:56px;display:grid;place-items:center;border-radius:50%;background-size:cover;background-position:center;color:#fff;font:600 18px/1 "Inter UI",sans-serif;box-shadow:0 6px 18px #0006}
 .call-panel[data-status="incoming"] .call-avatar{animation:call-pulse 1.6s ease-out infinite}
-.call-copy{grid-area:copy;min-width:0;display:flex;flex-direction:column;gap:4px}
-.call-copy b{overflow:hidden;font:600 15px/1.2 "Inter UI",sans-serif;text-overflow:ellipsis;white-space:nowrap}
-.call-copy span{color:var(--muted);font-size:12.5px}
-.call-actions{grid-area:actions;display:flex;gap:10px}
-.call-control{width:44px;height:44px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--text) 12%,transparent);color:var(--text);cursor:pointer;transition:transform .12s ease,filter .12s ease}
-.call-control:hover{transform:translateY(-1px);filter:brightness(1.1)}
+.call-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.call-copy b{overflow:hidden;font:650 16px/1.2 "Inter UI",sans-serif;letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap}
+.call-copy span{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call-bars{flex:none;display:flex;align-items:center;gap:3px;height:26px;padding:0 2px}
+.call-bars i{display:block;width:4px;height:26px;border-radius:4px;background:color-mix(in srgb,var(--accent) 80%,#fff);transform:scaleY(.2);transform-origin:center}
+.call-panel:not([data-status="active"]) .call-bars i{background:color-mix(in srgb,var(--text) 30%,transparent)}
+.call-actions{display:flex;justify-content:center;gap:18px}
+.call-control{width:48px;height:48px;flex:none;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--text) 11%,transparent);color:var(--text);cursor:pointer;transition:transform .14s ease,filter .14s ease,background .14s ease}
+.call-control:hover{transform:translateY(-1px);filter:brightness(1.12)}
+.call-control:active{transform:scale(.94)}
+.call-control:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .call-control svg{width:22px;height:22px;fill:currentColor}
-.call-control.accept{background:#34c759;color:#fff}
-.call-control.decline{background:#eb4040;color:#fff}
+.call-control.accept{background:#34c759;color:#fff;box-shadow:0 8px 22px #34c75955}
+.call-control.decline{background:#eb4040;color:#fff;box-shadow:0 8px 22px #eb404055}
 .call-control.toggle.on{background:var(--text);color:var(--bg)}
-.call-panel small{grid-area:note;color:var(--muted);font-size:11px;opacity:.8}
+.call-control.toggle:not(.on){box-shadow:0 0 0 calc(var(--own) * 5px) color-mix(in srgb,var(--accent) 45%,transparent)}
+.call-control.fold{width:34px;height:34px;background:transparent;color:var(--muted)}
+.call-control.fold svg{width:20px;height:20px}
+.call-control.fold:hover{background:color-mix(in srgb,var(--text) 9%,transparent);color:var(--text)}
+.call-panel small{color:var(--muted);font-size:11px;line-height:1.4;text-align:center;opacity:.75}
+.call-panel.compact{width:min(300px,calc(100vw - 40px));gap:0;padding:8px 8px 8px 10px;border-radius:999px}
+.call-panel.compact .call-head{gap:10px;cursor:pointer}
+.call-panel.compact .call-halo,.call-panel.compact .call-avatar{width:34px;height:34px}
+.call-panel.compact .call-avatar{font-size:12px}
+.call-panel.compact .call-copy{gap:1px}
+.call-panel.compact .call-copy b{font-size:13.5px}
+.call-panel.compact .call-copy span{font-size:11.5px}
+.call-panel.compact .call-bars{height:20px}.call-panel.compact .call-bars i{height:20px;width:3px}
+.call-panel.compact{flex-direction:row;align-items:center;gap:8px}
+.call-panel.compact .call-head{flex:1;min-width:0}
+.call-panel.compact small,.call-panel.compact .call-actions .call-control:not(.decline){display:none}
+.call-panel.compact .call-control.decline{width:34px;height:34px;box-shadow:none}.call-panel.compact .call-control.decline svg{width:18px;height:18px}
 @keyframes call-in{from{opacity:0;transform:translateY(-12px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes call-pulse{0%{box-shadow:0 0 0 0 #34c75966}70%{box-shadow:0 0 0 12px #34c75900}100%{box-shadow:0 0 0 0 #34c75900}}
-@media(prefers-reduced-motion:reduce){.call-panel,.call-panel[data-status="incoming"] .call-avatar{animation:none}}
+@media(prefers-reduced-motion:reduce){.call-panel,.call-panel[data-status="incoming"] .call-avatar{animation:none}.call-panel,.call-halo::before,.call-control{transition:none}}
 
 /* Emblem and colour choice is retired; the row stays in markup only for older scripts. */
 .profile-detail.decor-row[hidden]{display:none!important}

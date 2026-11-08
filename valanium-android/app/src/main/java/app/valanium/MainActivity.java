@@ -535,6 +535,7 @@ public final class MainActivity extends Activity implements Events.Listener {
             public void begin(String id,boolean audio){stopLocalPolling();ValaniumService.start(MainActivity.this);CallAudioService.start(MainActivity.this,id,audio);}
             public String name(String peer){return displayName(peer);}
             public void avatar(TextView view,String peer){applyAvatar(view,profiles.get(peer),initials(displayName(peer)),peer);}
+            public void banner(View view){showCallBanner(view);}
         });
         pairingUi = new PairingUi(this, new PairingUi.Host() {
             public void send(String command) { submit(command); }
@@ -784,7 +785,12 @@ public final class MainActivity extends Activity implements Events.Listener {
             }
             boolean keyboard = keyboardInset > 0;
             // Content runs under the floating navigation island; only the keyboard pushes it up.
-            view.setPadding(dp(16), top, dp(16), keyboardInset);
+            systemTopInset = top;
+            if (callBanner != null) {
+                FrameLayout.LayoutParams strip = (FrameLayout.LayoutParams) callBanner.getLayoutParams();
+                if (strip.topMargin != top) { strip.topMargin = top; callBanner.setLayoutParams(strip); }
+            }
+            view.setPadding(dp(16), top + (callBanner == null ? 0 : dp(CALL_BANNER_DP)), dp(16), keyboardInset);
             // The conversation has no island, so its composer must clear the gesture/3-button bar itself.
             screenConversation.setPadding(screenConversation.getPaddingLeft(), screenConversation.getPaddingTop(),
                     screenConversation.getPaddingRight(), keyboard ? dp(6) : navigation + dp(6));
@@ -803,6 +809,27 @@ public final class MainActivity extends Activity implements Events.Listener {
             return windowInsets;
         });
         root.requestApplyInsets();
+    }
+
+    private static final int CALL_BANNER_DP = 44;
+    private View callBanner;
+    private int systemTopInset;
+
+    /** A minimized call lives in a strip under the status bar; the app moves down to make room. */
+    private void showCallBanner(View banner) {
+        FrameLayout windowContent = findViewById(android.R.id.content);
+        if (callBanner != null && callBanner != banner && callBanner.getParent() != null) {
+            ((ViewGroup) callBanner.getParent()).removeView(callBanner);
+        }
+        callBanner = banner;
+        if (banner != null && banner.getParent() == null && windowContent != null) {
+            FrameLayout.LayoutParams strip = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CALL_BANNER_DP));
+            strip.topMargin = systemTopInset;
+            windowContent.addView(banner, strip);
+            if (motionEnabled()) { banner.setAlpha(0f); banner.setTranslationY(-dp(12)); banner.animate().alpha(1f).translationY(0).setDuration(180).start(); }
+        }
+        View root = findViewById(R.id.app_root);
+        if (root != null) root.requestApplyInsets();
     }
 
     private void layoutStatusBarPanel(View root, int statusBarHeight) {
